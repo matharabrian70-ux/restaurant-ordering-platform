@@ -18,7 +18,10 @@ async function createRemoteOrder({ customer, phone, email, note, payment, items,
       businessId: BUSINESS_ID,
       customer: { name: customer, phone, email },
       items: items.map(item => ({
-        productId: item.id,
+        // The frontend currently uses catalog slugs (e.g. "burger"),
+        // while order_items.product_id is a UUID. Keep this null until
+        // the database product catalog is seeded and mapped to the slugs.
+        productId: null,
         name: item.name,
         quantity: item.qty,
         unitPrice: item.unit,

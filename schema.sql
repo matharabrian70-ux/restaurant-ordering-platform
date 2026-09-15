@@ -1,14 +1,16 @@
 -- Restaurant Ordering Platform database blueprint
 -- Designed for PostgreSQL. Keep business data separated by business_id.
 
-create table businesses (
+create extension if not exists pgcrypto;
+
+create table if not exists businesses (
   id uuid primary key,
   name text not null,
   slug text unique not null,
   created_at timestamptz not null default now()
 );
 
-create table customers (
+create table if not exists customers (
   id uuid primary key,
   business_id uuid not null references businesses(id),
   name text not null,
@@ -18,7 +20,7 @@ create table customers (
   unique (business_id, phone)
 );
 
-create table products (
+create table if not exists products (
   id uuid primary key,
   business_id uuid not null references businesses(id),
   name text not null,
@@ -30,7 +32,7 @@ create table products (
   created_at timestamptz not null default now()
 );
 
-create table orders (
+create table if not exists orders (
   id uuid primary key,
   business_id uuid not null references businesses(id),
   customer_id uuid not null references customers(id),
@@ -48,7 +50,7 @@ create table orders (
   unique (business_id, order_number)
 );
 
-create table order_items (
+create table if not exists order_items (
   id uuid primary key,
   order_id uuid not null references orders(id) on delete cascade,
   product_id uuid references products(id),
@@ -58,7 +60,7 @@ create table order_items (
   options jsonb not null default '{}'::jsonb
 );
 
-create table riders (
+create table if not exists riders (
   id uuid primary key,
   business_id uuid not null references businesses(id),
   name text not null,
@@ -69,7 +71,7 @@ create table riders (
   created_at timestamptz not null default now()
 );
 
-create table rider_trips (
+create table if not exists rider_trips (
   id uuid primary key,
   rider_id uuid not null references riders(id),
   order_id uuid not null references orders(id),
@@ -78,7 +80,7 @@ create table rider_trips (
   confirmed_by text
 );
 
-create table payments (
+create table if not exists payments (
   id uuid primary key,
   order_id uuid not null references orders(id) on delete cascade,
   provider text not null,
@@ -89,7 +91,7 @@ create table payments (
   created_at timestamptz not null default now()
 );
 
-create table receipts (
+create table if not exists receipts (
   id uuid primary key,
   order_id uuid not null unique references orders(id),
   receipt_number text not null unique,
@@ -97,12 +99,12 @@ create table receipts (
   issued_at timestamptz not null default now()
 );
 
-create index orders_business_created_idx on orders(business_id, created_at desc);
-create index orders_customer_idx on orders(customer_id, created_at desc);
-create index customers_phone_idx on customers(business_id, phone);
-create index customers_email_idx on customers(business_id, email);
-create index riders_business_idx on riders(business_id, active);
-create index trips_rider_idx on rider_trips(rider_id, completed_at desc);
+create index if not exists orders_business_created_idx on orders(business_id, created_at desc);
+create index if not exists orders_customer_idx on orders(customer_id, created_at desc);
+create index if not exists customers_phone_idx on customers(business_id, phone);
+create index if not exists customers_email_idx on customers(business_id, email);
+create index if not exists riders_business_idx on riders(business_id, active);
+create index if not exists trips_rider_idx on rider_trips(rider_id, completed_at desc);
 
 -- Archive query pattern: newest delivered orders for a business.
 -- Search should normalize phone/email before querying in application code.

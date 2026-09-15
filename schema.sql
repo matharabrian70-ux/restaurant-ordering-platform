@@ -106,5 +106,10 @@ create index if not exists customers_email_idx on customers(business_id, email);
 create index if not exists riders_business_idx on riders(business_id, active);
 create index if not exists trips_rider_idx on rider_trips(rider_id, completed_at desc);
 
+-- Demo business used by the current Savanna Bites prototype.
+insert into businesses (id, name, slug)
+values ('11111111-1111-4111-8111-111111111111', 'Savanna Bites', 'savanna-bites')
+on conflict (slug) do nothing;
+
 -- Archive query pattern: newest delivered orders for a business.
 -- Search should normalize phone/email before querying in application code.

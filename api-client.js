@@ -35,6 +35,20 @@ async function createRemoteOrder({ customer, phone, email, note, payment, items,
   });
 }
 
+async function initializePaystackPayment(orderId) {
+  return apiRequest('/api/payments/paystack/initialize', {
+    method: 'POST',
+    body: JSON.stringify({ orderId })
+  });
+}
+
+async function verifyPaystackPayment(reference) {
+  return apiRequest('/api/payments/paystack/verify', {
+    method: 'POST',
+    body: JSON.stringify({ reference })
+  });
+}
+
 async function getRemoteOrder(orderId) {
   return apiRequest('/api/orders/' + encodeURIComponent(orderId));
 }

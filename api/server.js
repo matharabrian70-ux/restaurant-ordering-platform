@@ -32,9 +32,7 @@ async function paystackRequest(path, options = {}) {
     }
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok || !data.status) {
-    throw new Error(data.message || `Paystack request failed (${response.status})`);
-  }
+  if (!response.ok || !data.status) throw new Error(data.message || `Paystack request failed (${response.status})`);
   return data;
 }
 
@@ -55,14 +53,12 @@ async function markPaymentSuccessful(reference, paystackData = null) {
       await client.query('rollback');
       return null;
     }
-
     const payment = paymentResult.rows[0];
     const expectedSubunit = Math.round(Number(payment.total) * 100);
     if (paystackData && Number(paystackData.amount) !== expectedSubunit) {
       await client.query('rollback');
       throw new Error('Paystack amount does not match the order total');
     }
-
     await client.query(`update payments set status='PAID', confirmed_at=coalesce(confirmed_at,now()) where id=$1`, [payment.id]);
     await client.query(`update orders set payment_status='PAID' where id=$1`, [payment.order_id]);
     await client.query('commit');
@@ -70,9 +66,7 @@ async function markPaymentSuccessful(reference, paystackData = null) {
   } catch (error) {
     try { await client.query('rollback'); } catch {}
     throw error;
-  } finally {
-    client.release();
-  }
+  } finally { client.release(); }
 }
 
 app.get('/health', async (_req, res) => {
@@ -104,12 +98,8 @@ app.post('/api/orders', async (req, res) => {
     const normalizedPaymentMethod = paymentMethod === 'M-Pesa' ? 'M-Pesa' : paymentMethod === 'Card' ? 'Card' : null;
     const numericTotal = Number(total);
     const numericSubtotal = Number(subtotal);
-    if (!businessId || !customer?.name || !customer?.phone || !customer?.email || !Array.isArray(items) || !items.length || !normalizedPaymentMethod) {
-      return res.status(400).json({ error: 'Missing order fields' });
-    }
-    if (!Number.isFinite(numericTotal) || numericTotal <= 0 || !Number.isFinite(numericSubtotal) || numericSubtotal <= 0) {
-      return res.status(400).json({ error: 'Invalid order amount' });
-    }
+    if (!businessId || !customer?.name || !customer?.phone || !customer?.email || !Array.isArray(items) || !items.length || !normalizedPaymentMethod) return res.status(400).json({ error: 'Missing order fields' });
+    if (!Number.isFinite(numericTotal) || numericTotal <= 0 || !Number.isFinite(numericSubtotal) || numericSubtotal <= 0) return res.status(400).json({ error: 'Invalid order amount' });
     await client.query('begin');
     const customerResult = await client.query(`insert into customers (id,business_id,name,phone,email) values (gen_random_uuid(),$1,$2,$3,$4) on conflict (business_id,phone) do update set name=excluded.name,email=coalesce(excluded.email,customers.email) returning id`, [businessId, customer.name.trim(), customer.phone.trim(), customer.email.trim()]);
     const orderNumber = 'SB-' + Date.now().toString().slice(-8);
@@ -133,8 +123,7 @@ app.post('/api/payments/paystack/initialize', async (req, res) => {
   try {
     const { orderId } = req.body;
     if (!orderId) return res.status(400).json({ error: 'orderId is required' });
-
-    const result = await pool.query(`select o.id,o.total,o.payment_status,o.payment_method,c.email,c.phone from orders o join customers c on c.id=o.customer_id where o.id=$1`, [orderId]);
+    const result = await pool.query(`select o.id,o.order_number,o.total,o.payment_status,o.payment_method,c.email,c.phone from orders o join customers c on c.id=o.customer_id where o.id=$1`, [orderId]);
     if (!result.rowCount) return res.status(404).json({ error: 'Order not found' });
     const order = result.rows[0];
     if (order.payment_status === 'PAID') return res.json({ paid: true, orderId });
@@ -153,7 +142,10 @@ app.post('/api/payments/paystack/initialize', async (req, res) => {
           mobile_money: { phone: normalizeKenyanPhone(order.phone), provider: 'mpesa' }
         })
       });
-      return res.json({ mode: 'mobile_money', orderId, reference: charge.data.reference, status: charge.data.status, displayText: charge.data.display_text || 'Check your phone and approve the M-Pesa payment.' });
+      if (charge.data?.reference && charge.data.reference !== reference) {
+        await pool.query(`update payments set provider_reference=$1 where order_id=$2 and provider='PAYSTACK'`, [charge.data.reference, orderId]);
+      }
+      return res.json({ mode: 'mobile_money', orderId, reference: charge.data.reference || reference, status: charge.data.status, displayText: charge.data.display_text || 'Check your phone and approve the M-Pesa payment.' });
     }
 
     const transaction = await paystackRequest('/transaction/initialize', {
@@ -165,7 +157,7 @@ app.post('/api/payments/paystack/initialize', async (req, res) => {
         reference,
         channels: ['card'],
         callback_url: `${process.env.API_PUBLIC_URL || 'https://restaurant-ordering-api-ow3p.onrender.com'}/api/payments/paystack/callback`,
-        metadata: { order_id: order.id, order_number: order.order_number || null }
+        metadata: { order_id: order.id, order_number: order.order_number }
       })
     });
     return res.json({ mode: 'redirect', orderId, reference: transaction.data.reference, authorizationUrl: transaction.data.authorization_url });
@@ -180,10 +172,11 @@ app.get('/api/payments/paystack/callback', async (req, res) => {
   try {
     const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' });
     const data = verified.data;
+    if (data?.status !== 'success') throw new Error('Payment was not successful');
     const orderId = await markPaymentSuccessful(reference, data);
     if (!orderId) return res.redirect(`${FRONTEND_URL}/order.html?payment=not-found`);
     return res.redirect(`${FRONTEND_URL}/order.html?id=${encodeURIComponent(orderId)}&payment=success`);
-  } catch (error) {
+  } catch {
     const payment = await pool.query(`select order_id from payments where provider='PAYSTACK' and provider_reference=$1`, [reference]);
     const orderId = payment.rows[0]?.order_id;
     const target = orderId ? `${FRONTEND_URL}/order.html?id=${encodeURIComponent(orderId)}&payment=failed` : `${FRONTEND_URL}/order.html?payment=failed`;
@@ -210,17 +203,13 @@ app.post('/api/payments/paystack/webhook', async (req, res) => {
   const signature = req.headers['x-paystack-signature'];
   const secret = process.env.PAYSTACK_SECRET_KEY;
   if (!signature || !secret || !req.rawBody) return res.sendStatus(401);
-
   const expected = crypto.createHmac('sha512', secret).update(req.rawBody).digest('hex');
   const providedBuffer = Buffer.from(String(signature), 'utf8');
   const expectedBuffer = Buffer.from(expected, 'utf8');
   if (providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) return res.sendStatus(401);
-
   try {
     const event = req.body;
-    if (event.event === 'charge.success' && event.data?.reference && event.data?.status === 'success') {
-      await markPaymentSuccessful(event.data.reference, event.data);
-    }
+    if (event.event === 'charge.success' && event.data?.reference && event.data?.status === 'success') await markPaymentSuccessful(event.data.reference, event.data);
     return res.sendStatus(200);
   } catch (error) {
     console.error('Paystack webhook processing failed:', error.message);

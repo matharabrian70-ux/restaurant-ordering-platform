@@ -91,6 +91,22 @@ create table if not exists payments (
   created_at timestamptz not null default now()
 );
 
+create table if not exists refunds (
+  id uuid primary key,
+  order_id uuid not null references orders(id) on delete cascade,
+  payment_id uuid not null references payments(id) on delete cascade,
+  provider text not null,
+  provider_refund_id text,
+  transaction_reference text not null,
+  amount numeric(12,2) not null check (amount > 0),
+  currency text not null default 'KES',
+  status text not null default 'PENDING',
+  customer_note text,
+  merchant_note text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists receipts (
   id uuid primary key,
   order_id uuid not null unique references orders(id),
@@ -106,6 +122,8 @@ create index if not exists customers_email_idx on customers(business_id, email);
 create index if not exists riders_business_idx on riders(business_id, active);
 create index if not exists trips_rider_idx on rider_trips(rider_id, completed_at desc);
 create unique index if not exists payments_provider_reference_idx on payments(provider_reference) where provider_reference is not null;
+create unique index if not exists refunds_provider_refund_id_idx on refunds(provider_refund_id) where provider_refund_id is not null;
+create index if not exists refunds_order_idx on refunds(order_id, created_at desc);
 
 -- Demo business used by the current Savanna Bites prototype.
 insert into businesses (id, name, slug)

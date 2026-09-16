@@ -88,7 +88,7 @@ async function updateRefundFromWebhook(data) {
   const client = await pool.connect();
   try {
     await client.query('begin');
-    const refundResult = await client.query(`select r.*, p.id as payment_id, p.amount as payment_amount from refunds r join payments p on p.id=r.payment_id where r.transaction_reference=$1 order by r.created_at desc limit 1 for update`, [transactionReference]);
+    const refundResult = await client.query(`select r.*, p.id as payment_id, p.amount as payment_amount from refunds r join payments p on p.id=r.payment_id where r.transaction_reference=$1 and (r.provider_refund_id=$2 or r.provider_refund_id is null) order by r.created_at desc limit 1 for update`, [transactionReference, refundProviderId]);
     if (!refundResult.rowCount) {
       await client.query('rollback');
       return;
@@ -118,7 +118,7 @@ app.get('/health', async (_req, res) => {
 
 app.get('/api/orders/:id', async (req, res) => {
   try {
-    const result = await pool.query(`select o.*, c.name as customer_name, c.phone, c.email, r.name as rider_name, r.vehicle_type, r.number_plate from orders o join customers c on c.id=o.customer_id left join riders r on r.id=(select rider_id from rider_trips t where t.order_id=o.id order by assigned_at desc limit 1) where o.id=$1`, [req.params.id]);
+    const result = await pool.query(`select o.*, c.name as customer_name, c.phone, c.email, r.name as rider_name, r.vehicle_type, r.number_plate, r.phone as rider_phone from orders o join customers c on c.id=o.customer_id left join riders r on r.id=(select rider_id from rider_trips t where t.order_id=o.id order by assigned_at desc limit 1) where o.id=$1`, [req.params.id]);
     if (!result.rowCount) return res.status(404).json({ error: 'Order not found' });
     res.json(result.rows[0]);
   } catch { res.status(500).json({ error: 'Unable to load order' }); }
@@ -126,7 +126,7 @@ app.get('/api/orders/:id', async (req, res) => {
 
 app.get('/api/orders/:id/refunds', async (req, res) => {
   try {
-    const result = await pool.query(`select id,amount,currency,status,created_at,updated_at from refunds where order_id=$1 order by created_at desc`, [req.params.id]);
+    const result = await pool.query(`select id,amount,currency,status,created_at,updated_at,customer_note,merchant_note from refunds where order_id=$1 order by created_at desc`, [req.params.id]);
     res.json(result.rows);
   } catch { res.status(500).json({ error: 'Unable to load refunds' }); }
 });
@@ -135,9 +135,57 @@ app.get('/api/orders', async (req, res) => {
   try {
     const { businessId, q = '' } = req.query;
     if (!businessId) return res.status(400).json({ error: 'businessId is required' });
-    const result = await pool.query(`select o.id,o.order_number,o.status,o.payment_status,o.total,o.created_at,c.name,c.phone,c.email from orders o join customers c on c.id=o.customer_id where o.business_id=$1 and ($2='' or c.name ilike '%'||$2||'%' or c.phone ilike '%'||$2||'%' or coalesce(c.email,'') ilike '%'||$2||'%') order by o.created_at desc limit 200`, [businessId, String(q)]);
+    const result = await pool.query(`select o.id,o.order_number,o.status,o.payment_status,o.payment_method,o.total,o.created_at,o.delivery_note,c.name,c.phone,c.email,coalesce((select r.name from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_name,coalesce((select r.vehicle_type from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_vehicle,coalesce((select r.number_plate from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_plate from orders o join customers c on c.id=o.customer_id where o.business_id=$1 and ($2='' or c.name ilike '%'||$2||'%' or c.phone ilike '%'||$2||'%' or coalesce(c.email,'') ilike '%'||$2||'%' or o.order_number ilike '%'||$2||'%') order by o.created_at desc limit 200`, [businessId, String(q).trim()]);
     res.json(result.rows);
   } catch { res.status(500).json({ error: 'Unable to load orders' }); }
+});
+
+app.get('/api/riders', async (req, res) => {
+  try {
+    const { businessId } = req.query;
+    if (!businessId) return res.status(400).json({ error: 'businessId is required' });
+    const result = await pool.query(`select r.id,r.name,r.phone,r.vehicle_type,r.number_plate,r.active,exists(select 1 from rider_trips t join orders o on o.id=t.order_id where t.rider_id=r.id and o.status='OUT_FOR_DELIVERY' and t.completed_at is null) as busy,(select count(*) from rider_trips t where t.rider_id=r.id and t.completed_at is not null) as trip_count from riders r where r.business_id=$1 order by r.name`, [businessId]);
+    res.json(result.rows.map(r => ({ ...r, available: r.active && !r.busy })));
+  } catch { res.status(500).json({ error: 'Unable to load riders' }); }
+});
+
+app.post('/api/orders/:id/status', async (req, res) => {
+  try {
+    const nextStatus = String(req.body.status || '').toUpperCase();
+    if (!['ACCEPTED','DELIVERED'].includes(nextStatus)) return res.status(400).json({ error: 'Invalid status transition' });
+    const orderResult = await pool.query(`select id,status,payment_status from orders where id=$1 for update`, [req.params.id]);
+    if (!orderResult.rowCount) return res.status(404).json({ error: 'Order not found' });
+    const order = orderResult.rows[0];
+    if (nextStatus === 'ACCEPTED' && !(order.status === 'NEW' && order.payment_status === 'PAID')) return res.status(409).json({ error: 'Only paid NEW orders can be accepted' });
+    if (nextStatus === 'DELIVERED' && order.status !== 'OUT_FOR_DELIVERY') return res.status(409).json({ error: 'Only orders out for delivery can be delivered' });
+    const result = nextStatus === 'ACCEPTED'
+      ? await pool.query(`update orders set status='ACCEPTED',accepted_at=coalesce(accepted_at,now()) where id=$1 returning *`, [req.params.id])
+      : await pool.query(`update orders set status='DELIVERED',delivered_at=coalesce(delivered_at,now()) where id=$1 returning *`, [req.params.id]);
+    res.json(result.rows[0]);
+  } catch { res.status(500).json({ error: 'Unable to update order status' }); }
+});
+
+app.post('/api/orders/:id/assign-rider', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { riderId } = req.body;
+    if (!riderId) return res.status(400).json({ error: 'riderId is required' });
+    await client.query('begin');
+    const orderResult = await client.query(`select id,business_id,status from orders where id=$1 for update`, [req.params.id]);
+    if (!orderResult.rowCount) { await client.query('rollback'); return res.status(404).json({ error: 'Order not found' }); }
+    const order = orderResult.rows[0];
+    if (order.status !== 'ACCEPTED') { await client.query('rollback'); return res.status(409).json({ error: 'Only accepted orders can be sent for delivery' }); }
+    const riderResult = await client.query(`select r.*,exists(select 1 from rider_trips t join orders o on o.id=t.order_id where t.rider_id=r.id and o.status='OUT_FOR_DELIVERY' and t.completed_at is null) as busy from riders r where r.id=$1 and r.business_id=$2 and r.active=true for update`, [riderId, order.business_id]);
+    if (!riderResult.rowCount) { await client.query('rollback'); return res.status(404).json({ error: 'Rider not found' }); }
+    if (riderResult.rows[0].busy) { await client.query('rollback'); return res.status(409).json({ error: 'Rider is already delivering' }); }
+    await client.query(`insert into rider_trips (id,rider_id,order_id) values (gen_random_uuid(),$1,$2)`, [riderId, order.id]);
+    const updated = await client.query(`update orders set status='OUT_FOR_DELIVERY',out_for_delivery_at=coalesce(out_for_delivery_at,now()) where id=$1 returning *`, [order.id]);
+    await client.query('commit');
+    res.json(updated.rows[0]);
+  } catch (error) {
+    try { await client.query('rollback'); } catch {}
+    res.status(500).json({ error: error.message || 'Unable to assign rider' });
+  } finally { client.release(); }
 });
 
 app.post('/api/orders', async (req, res) => {
@@ -163,7 +211,7 @@ app.post('/api/orders', async (req, res) => {
     await client.query('commit');
     res.status(201).json(orderResult.rows[0]);
   } catch (error) {
-    await client.query('rollback');
+    try { await client.query('rollback'); } catch {}
     res.status(500).json({ error: error.message === 'Invalid order item' ? error.message : 'Unable to create order' });
   } finally { client.release(); }
 });
@@ -183,13 +231,7 @@ app.post('/api/payments/paystack/initialize', async (req, res) => {
     if (order.payment_method === 'M-Pesa') {
       const charge = await paystackRequest('/charge', {
         method: 'POST',
-        body: JSON.stringify({
-          email: order.email,
-          amount: String(Math.round(Number(order.total) * 100)),
-          currency: 'KES',
-          reference,
-          mobile_money: { phone: normalizeKenyanPhone(order.phone), provider: 'mpesa' }
-        })
+        body: JSON.stringify({ email: order.email, amount: String(Math.round(Number(order.total) * 100)), currency: 'KES', reference, mobile_money: { phone: normalizeKenyanPhone(order.phone), provider: 'mpesa' } })
       });
       if (charge.data?.reference && charge.data.reference !== reference) await pool.query(`update payments set provider_reference=$1 where order_id=$2 and provider='PAYSTACK'`, [charge.data.reference, orderId]);
       return res.json({ mode: 'mobile_money', orderId, reference: charge.data.reference || reference, status: charge.data.status, displayText: charge.data.display_text || 'Check your phone and approve the M-Pesa payment.' });
@@ -197,15 +239,7 @@ app.post('/api/payments/paystack/initialize', async (req, res) => {
 
     const transaction = await paystackRequest('/transaction/initialize', {
       method: 'POST',
-      body: JSON.stringify({
-        email: order.email,
-        amount: String(Math.round(Number(order.total) * 100)),
-        currency: 'KES',
-        reference,
-        channels: ['card'],
-        callback_url: `${process.env.API_PUBLIC_URL || 'https://restaurant-ordering-api-ow3p.onrender.com'}/api/payments/paystack/callback`,
-        metadata: { order_id: order.id, order_number: order.order_number }
-      })
+      body: JSON.stringify({ email: order.email, amount: String(Math.round(Number(order.total) * 100)), currency: 'KES', reference, channels: ['card'], callback_url: `${process.env.API_PUBLIC_URL || 'https://restaurant-ordering-api-ow3p.onrender.com'}/api/payments/paystack/callback`, metadata: { order_id: order.id, order_number: order.order_number } })
     });
     return res.json({ mode: 'redirect', orderId, reference: transaction.data.reference, authorizationUrl: transaction.data.authorization_url });
   } catch (error) {
@@ -289,13 +323,7 @@ app.post('/api/admin/refunds', async (req, res) => {
 
     const refund = await paystackRequest('/refund', {
       method: 'POST',
-      body: JSON.stringify({
-        transaction: order.provider_reference,
-        amount: String(Math.round(requestedAmount * 100)),
-        currency: 'KES',
-        customer_note: customerNote || undefined,
-        merchant_note: merchantNote || undefined
-      })
+      body: JSON.stringify({ transaction: order.provider_reference, amount: String(Math.round(requestedAmount * 100)), currency: 'KES', customer_note: customerNote || undefined, merchant_note: merchantNote || undefined })
     });
 
     const data = refund.data || {};

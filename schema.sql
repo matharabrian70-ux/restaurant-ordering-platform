@@ -121,6 +121,7 @@ create index if not exists customers_phone_idx on customers(business_id, phone);
 create index if not exists customers_email_idx on customers(business_id, email);
 create index if not exists riders_business_idx on riders(business_id, active);
 create index if not exists trips_rider_idx on rider_trips(rider_id, completed_at desc);
+create unique index if not exists rider_active_trip_idx on rider_trips(rider_id) where completed_at is null;
 create unique index if not exists payments_provider_reference_idx on payments(provider_reference) where provider_reference is not null;
 create unique index if not exists refunds_provider_refund_id_idx on refunds(provider_refund_id) where provider_refund_id is not null;
 create index if not exists refunds_order_idx on refunds(order_id, created_at desc);
@@ -129,6 +130,13 @@ create index if not exists refunds_order_idx on refunds(order_id, created_at des
 insert into businesses (id, name, slug)
 values ('11111111-1111-4111-8111-111111111111', 'Savanna Bites', 'savanna-bites')
 on conflict (slug) do nothing;
+
+-- Demo riders used by the current prototype. These are clearly marked as demo records.
+insert into riders (id, business_id, name, phone, vehicle_type, number_plate, active)
+values
+  ('22222222-2222-4222-8222-222222222222', '11111111-1111-4111-8111-111111111111', 'Demo Rider A', '+254700000001', 'Motorbike', 'DEMO-001', true),
+  ('33333333-3333-4333-8333-333333333333', '11111111-1111-4111-8111-111111111111', 'Demo Rider B', '+254700000002', 'Motorbike', 'DEMO-002', true)
+on conflict (id) do nothing;
 
 -- Archive query pattern: newest delivered orders for a business.
 -- Search should normalize phone/email before querying in application code.

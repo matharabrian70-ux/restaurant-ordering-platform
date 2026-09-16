@@ -105,6 +105,7 @@ create index if not exists customers_phone_idx on customers(business_id, phone);
 create index if not exists customers_email_idx on customers(business_id, email);
 create index if not exists riders_business_idx on riders(business_id, active);
 create index if not exists trips_rider_idx on rider_trips(rider_id, completed_at desc);
+create unique index if not exists payments_provider_reference_idx on payments(provider_reference) where provider_reference is not null;
 
 -- Demo business used by the current Savanna Bites prototype.
 insert into businesses (id, name, slug)

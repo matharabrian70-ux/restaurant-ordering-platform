@@ -17,16 +17,7 @@ async function createRemoteOrder({ customer, phone, email, note, payment, items,
     body: JSON.stringify({
       businessId: BUSINESS_ID,
       customer: { name: customer, phone, email },
-      items: items.map(item => ({
-        // The frontend currently uses catalog slugs (e.g. "burger"),
-        // while order_items.product_id is a UUID. Keep this null until
-        // the database product catalog is seeded and mapped to the slugs.
-        productId: null,
-        name: item.name,
-        quantity: item.qty,
-        unitPrice: item.unit,
-        options: item.options || {}
-      })),
+      items: items.map(item => ({ productId: null, name: item.name, quantity: item.qty, unitPrice: item.unit, options: item.options || {} })),
       paymentMethod: payment,
       subtotal: total,
       total,
@@ -36,19 +27,26 @@ async function createRemoteOrder({ customer, phone, email, note, payment, items,
 }
 
 async function initializePaystackPayment(orderId) {
-  return apiRequest('/api/payments/paystack/initialize', {
-    method: 'POST',
-    body: JSON.stringify({ orderId })
-  });
+  return apiRequest('/api/payments/paystack/initialize', { method: 'POST', body: JSON.stringify({ orderId }) });
 }
-
 async function verifyPaystackPayment(reference) {
-  return apiRequest('/api/payments/paystack/verify', {
-    method: 'POST',
-    body: JSON.stringify({ reference })
-  });
+  return apiRequest('/api/payments/paystack/verify', { method: 'POST', body: JSON.stringify({ reference }) });
 }
-
 async function getRemoteOrder(orderId) {
   return apiRequest('/api/orders/' + encodeURIComponent(orderId));
+}
+async function cancelRemoteOrder(orderId) {
+  return apiRequest('/api/orders/' + encodeURIComponent(orderId) + '/cancel', { method: 'POST', body: JSON.stringify({}) });
+}
+async function getRemoteRiders() {
+  return apiRequest('/api/riders?businessId=' + encodeURIComponent(BUSINESS_ID));
+}
+async function createRemoteRider({ name, phone, vehicleType, numberPlate }) {
+  return apiRequest('/api/riders', { method: 'POST', body: JSON.stringify({ businessId: BUSINESS_ID, name, phone, vehicleType, numberPlate }) });
+}
+async function getRiderActiveDelivery(riderId) {
+  return apiRequest('/api/riders/' + encodeURIComponent(riderId) + '/active-delivery');
+}
+async function completeRiderDelivery(riderId) {
+  return apiRequest('/api/riders/' + encodeURIComponent(riderId) + '/complete-delivery', { method: 'POST', body: JSON.stringify({}) });
 }

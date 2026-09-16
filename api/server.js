@@ -22,6 +22,16 @@ function requirePaystackKey() {
   return process.env.PAYSTACK_SECRET_KEY;
 }
 
+function requireRefundAdmin(req, res) {
+  const configured = process.env.REFUND_ADMIN_KEY;
+  const supplied = req.headers['x-refund-admin-key'];
+  if (!configured || !supplied || supplied !== configured) {
+    res.status(401).json({ error: 'Refund authorization required' });
+    return false;
+  }
+  return true;
+}
+
 async function paystackRequest(path, options = {}) {
   const response = await fetch(PAYSTACK_API + path, {
     ...options,
@@ -69,6 +79,38 @@ async function markPaymentSuccessful(reference, paystackData = null) {
   } finally { client.release(); }
 }
 
+async function updateRefundFromWebhook(data) {
+  const transactionReference = String(data?.transaction_reference || data?.transaction?.reference || '');
+  const refundProviderId = data?.refund_reference || data?.id || null;
+  const status = String(data?.status || '').toUpperCase();
+  if (!transactionReference || !status) return;
+
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    const refundResult = await client.query(`select r.*, p.id as payment_id, p.amount as payment_amount from refunds r join payments p on p.id=r.payment_id where r.transaction_reference=$1 order by r.created_at desc limit 1 for update`, [transactionReference]);
+    if (!refundResult.rowCount) {
+      await client.query('rollback');
+      return;
+    }
+    const refund = refundResult.rows[0];
+    const mappedStatus = ['PENDING','PROCESSING','PROCESSED','FAILED','NEEDS-ATTENTION'].includes(status) ? status : refund.status;
+    await client.query(`update refunds set status=$1, provider_refund_id=coalesce(provider_refund_id,$2), updated_at=now() where id=$3`, [mappedStatus, refundProviderId, refund.id]);
+
+    if (mappedStatus === 'PROCESSED') {
+      const totalRefunded = await client.query(`select coalesce(sum(amount),0) as total from refunds where payment_id=$1 and status='PROCESSED'`, [refund.payment_id]);
+      if (Number(totalRefunded.rows[0].total) >= Number(refund.payment_amount)) {
+        await client.query(`update payments set status='REFUNDED' where id=$1`, [refund.payment_id]);
+        await client.query(`update orders set payment_status='REFUNDED' where id=$1`, [refund.order_id]);
+      }
+    }
+    await client.query('commit');
+  } catch (error) {
+    try { await client.query('rollback'); } catch {}
+    throw error;
+  } finally { client.release(); }
+}
+
 app.get('/health', async (_req, res) => {
   try { await pool.query('select 1'); res.json({ ok: true, database: true }); }
   catch { res.status(503).json({ ok: false, database: false }); }
@@ -80,6 +122,13 @@ app.get('/api/orders/:id', async (req, res) => {
     if (!result.rowCount) return res.status(404).json({ error: 'Order not found' });
     res.json(result.rows[0]);
   } catch { res.status(500).json({ error: 'Unable to load order' }); }
+});
+
+app.get('/api/orders/:id/refunds', async (req, res) => {
+  try {
+    const result = await pool.query(`select id,amount,currency,status,created_at,updated_at from refunds where order_id=$1 order by created_at desc`, [req.params.id]);
+    res.json(result.rows);
+  } catch { res.status(500).json({ error: 'Unable to load refunds' }); }
 });
 
 app.get('/api/orders', async (req, res) => {
@@ -142,9 +191,7 @@ app.post('/api/payments/paystack/initialize', async (req, res) => {
           mobile_money: { phone: normalizeKenyanPhone(order.phone), provider: 'mpesa' }
         })
       });
-      if (charge.data?.reference && charge.data.reference !== reference) {
-        await pool.query(`update payments set provider_reference=$1 where order_id=$2 and provider='PAYSTACK'`, [charge.data.reference, orderId]);
-      }
+      if (charge.data?.reference && charge.data.reference !== reference) await pool.query(`update payments set provider_reference=$1 where order_id=$2 and provider='PAYSTACK'`, [charge.data.reference, orderId]);
       return res.json({ mode: 'mobile_money', orderId, reference: charge.data.reference || reference, status: charge.data.status, displayText: charge.data.display_text || 'Check your phone and approve the M-Pesa payment.' });
     }
 
@@ -199,6 +246,10 @@ app.post('/api/payments/paystack/verify', async (req, res) => {
   }
 });
 
+app.get('/api/payments/paystack/webhook', (_req, res) => {
+  res.status(405).json({ error: 'Webhook endpoint accepts POST requests from Paystack.' });
+});
+
 app.post('/api/payments/paystack/webhook', async (req, res) => {
   const signature = req.headers['x-paystack-signature'];
   const secret = process.env.PAYSTACK_SECRET_KEY;
@@ -210,10 +261,48 @@ app.post('/api/payments/paystack/webhook', async (req, res) => {
   try {
     const event = req.body;
     if (event.event === 'charge.success' && event.data?.reference && event.data?.status === 'success') await markPaymentSuccessful(event.data.reference, event.data);
+    if (event.event?.startsWith('refund.') && event.data) await updateRefundFromWebhook(event.data);
     return res.sendStatus(200);
   } catch (error) {
     console.error('Paystack webhook processing failed:', error.message);
     return res.sendStatus(500);
+  }
+});
+
+app.post('/api/admin/refunds', async (req, res) => {
+  if (!requireRefundAdmin(req, res)) return;
+  try {
+    const { orderId, amount, customerNote, merchantNote } = req.body;
+    const requestedAmount = Number(amount);
+    if (!orderId || !Number.isFinite(requestedAmount) || requestedAmount <= 0) return res.status(400).json({ error: 'orderId and a positive refund amount are required' });
+
+    const orderResult = await pool.query(`select o.id,o.total,o.payment_status,p.id as payment_id,p.provider_reference,p.amount as paid_amount from orders o join payments p on p.order_id=o.id and p.provider='PAYSTACK' where o.id=$1`, [orderId]);
+    if (!orderResult.rowCount) return res.status(404).json({ error: 'Paid Paystack order not found' });
+    const order = orderResult.rows[0];
+    if (order.payment_status !== 'PAID') return res.status(409).json({ error: 'Only paid orders can be refunded' });
+    if (!order.provider_reference) return res.status(409).json({ error: 'Paystack transaction reference is missing' });
+
+    const refundedResult = await pool.query(`select coalesce(sum(amount),0) as total from refunds where payment_id=$1 and status in ('PENDING','PROCESSING','PROCESSED')`, [order.payment_id]);
+    const alreadyRefunded = Number(refundedResult.rows[0].total);
+    const remaining = Number(order.paid_amount) - alreadyRefunded;
+    if (requestedAmount > remaining + 0.0001) return res.status(400).json({ error: `Refund exceeds the remaining refundable amount (${remaining.toFixed(2)} KES)` });
+
+    const refund = await paystackRequest('/refund', {
+      method: 'POST',
+      body: JSON.stringify({
+        transaction: order.provider_reference,
+        amount: String(Math.round(requestedAmount * 100)),
+        currency: 'KES',
+        customer_note: customerNote || undefined,
+        merchant_note: merchantNote || undefined
+      })
+    });
+
+    const data = refund.data || {};
+    const insert = await pool.query(`insert into refunds (id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,customer_note,merchant_note) values (gen_random_uuid(),$1,$2,'PAYSTACK',$3,$4,$5,'KES',$6,$7,$8) returning *`, [order.id, order.payment_id, data.id ? String(data.id) : null, order.provider_reference, requestedAmount, String(data.status || 'pending').toUpperCase(), customerNote || null, merchantNote || null]);
+    res.status(201).json(insert.rows[0]);
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Unable to initiate refund' });
   }
 });
 

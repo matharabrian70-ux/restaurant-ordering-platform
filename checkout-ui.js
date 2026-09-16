@@ -34,6 +34,7 @@ function renderCheckoutUpgrade(){
       }
 
       if(payment.mode==='mobile_money'){
+        localStorage.setItem('doe_last_payment_reference',payment.reference);
         localStorage.removeItem('doe_cart');
         location.href='order.html?id='+encodeURIComponent(order.id)+'&payment=pending';
         return;

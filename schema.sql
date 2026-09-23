@@ -331,3 +331,12 @@ and not exists(select 1 from business_branches bb where bb.business_id=b.id);
 
 update orders o set branch_id=q.branch_id,customer_lat=q.customer_lat,customer_lng=q.customer_lng
 from delivery_quotes q where o.id=q.order_id and (o.branch_id is null or o.customer_lat is null);
+
+create table if not exists geocoding_cache (
+  id uuid primary key,
+  address_key text unique not null,
+  latitude numeric(10,7) not null,
+  longitude numeric(10,7) not null,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);

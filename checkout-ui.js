@@ -43,7 +43,7 @@ async function renderCheckoutUpgrade(){
       quote=await getDeliveryQuote({pickupAddress:business.pickup_address||'Savanna Bites, Nairobi, Kenya',deliveryAddress:address});
       document.getElementById('delivery-fee').textContent=money(quote.deliveryFee);
       document.getElementById('checkout-total').textContent=money(subtotal+Number(quote.deliveryFee));
-      document.getElementById('route-summary').textContent=`${Number(quote.km).toFixed(1)} km · about ${Math.max(1,Math.round(Number(quote.minutes)))} min · traffic-aware route`;
+      document.getElementById('route-summary').textContent=`${Number(quote.km).toFixed(1)} km · about ${Math.max(1,Math.round(Number(quote.minutes)))} min · ${quote.branchName||'Best available branch'} · ${quote.pricingMode==='AUTO'?'automatic platform pricing':'restaurant pricing rules'}`;
       payButton.disabled=false;
       error.textContent='Delivery fee locked into this order quote.';
     }catch(err){quote=null;payButton.disabled=true;error.textContent=err.message||'Could not calculate delivery fee.';}
@@ -61,7 +61,7 @@ async function renderCheckoutUpgrade(){
         note:document.getElementById('note').value.trim(),
         deliveryAddress:document.getElementById('delivery-address').value.trim(),
         payment:document.querySelector('input[name=payment]:checked').value,
-        items:c,total:subtotal+Number(quote.deliveryFee),quoteId:quote.quoteId
+        items:c,subtotal,total:subtotal+Number(quote.deliveryFee),quoteId:quote.quoteId
       });
       write('doe_last_order',order.id);
       error.textContent='Starting secure payment…';

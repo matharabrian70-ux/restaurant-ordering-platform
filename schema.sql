@@ -126,6 +126,9 @@ create unique index if not exists payments_provider_reference_idx on payments(pr
 create unique index if not exists refunds_provider_refund_id_idx on refunds(provider_refund_id) where provider_refund_id is not null;
 create index if not exists refunds_order_idx on refunds(order_id, created_at desc);
 
+alter table businesses add column if not exists pickup_address text;
+alter table businesses add column if not exists paystack_subaccount_code text;
+
 -- Demo business used by the current Savanna Bites prototype.
 insert into businesses (id, name, slug)
 values ('11111111-1111-4111-8111-111111111111', 'Savanna Bites', 'savanna-bites')
@@ -225,9 +228,6 @@ create table if not exists fuel_price_snapshots (
   effective_from date,
   fetched_at timestamptz not null default now()
 );
-
-alter table businesses add column if not exists pickup_address text;
-alter table businesses add column if not exists paystack_subaccount_code text;
 
 alter table orders add column if not exists delivery_fee numeric(12,2) not null default 0;
 alter table orders add column if not exists food_subtotal numeric(12,2);

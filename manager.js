@@ -11,7 +11,7 @@ function managerDate(value) {
 async function loadManager() {
   managerRoot.innerHTML = '<div class="panel"><p>Loading manager overview…</p></div>';
   try {
-    const [orders, features] = await Promise.all([apiRequest('/api/orders?businessId=' + encodeURIComponent(BUSINESS_ID)), apiRequest('/api/features')]);
+    const [orders, features] = await Promise.all([apiRequest('/api/orders?businessId=' + encodeURIComponent(BUSINESS_ID)), apiRequest('/api/features?businessId=' + encodeURIComponent(BUSINESS_ID))]);
     const stats = orders.reduce((s, o) => {
       s.orders += 1;
       s.revenue += Number(o.total || 0);
@@ -23,7 +23,14 @@ async function loadManager() {
       return s;
     }, { orders: 0, revenue: 0, paid: 0, pending: 0, refunded: 0, delivery: 0, delivered: 0 });
 
-    managerRoot.innerHTML = `
+    let riderAnalyticsHtml = '';
+    if (features.riderModule) {
+      try {
+        const riders = await getAdminRiders();
+        riderAnalyticsHtml = '<section class="panel manager-section"><div class="section-head"><div><p class="eyebrow">DELIVERY OPERATIONS</p><h2>Rider performance</h2></div><p>Trips, distance, online status and rider earnings.</p></div><div class="orders">' + (riders.length ? riders.map(r => '<article class="order-card"><div><h3>'+r.name+'</h3><p>'+r.vehicle_type+' · '+r.number_plate+' · '+(r.phone||'')+'</p><p><strong>'+r.trip_count+'</strong> trips · <strong>'+Number(r.distance_km||0).toFixed(1)+' km</strong> · <strong>'+managerMoney(r.earnings||0)+'</strong></p></div><div><div class="order-status">'+(r.online?'ONLINE':'OFFLINE')+' · '+(r.busy?'BUSY':'AVAILABLE')+'</div><p class="muted">Payout: '+(r.payout_phone||r.phone||'Not set')+'</p></div></article>').join('') : '<p class="muted">No riders yet.</p>') + '</div></section>';
+      } catch {}
+    }
+    managerRoot.innerHTML = riderAnalyticsHtml + `
       <div class="dashboard-head">
         <div>
           <p class="eyebrow">SAVANNA BITES • MANAGEMENT</p>

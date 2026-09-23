@@ -71,7 +71,7 @@ async function matrixRoutes(branches,lat,lng){
 function chooseCandidates(branches,lat,lng){
   return branches.map((b,i)=>({...b,_i:i,_straightKm:haversineKm(lat,lng,num(b.latitude),num(b.longitude))}))
     .filter(b=>b._straightKm<=Math.max(2,num(b.service_radius_km,18)))
-    .sort((a,b)=>a._straightKm-b._straightKm).slice(0,Math.min(8,branches.length));
+    .sort((a,b)=>a._straightKm-b._straightKm).slice(0,Math.min(3,branches.length));
 }
 function normalizeRules(row){ if(!row) return DEFAULT_RULES; return {...DEFAULT_RULES,base_fee_kes:num(row.base_fee_kes,70),per_km_kes:num(row.per_km_kes,24),per_minute_kes:num(row.per_minute_kes,.9),minimum_fee_kes:num(row.minimum_fee_kes,100),maximum_fee_kes:num(row.maximum_fee_kes,450),rider_base_kes:num(row.rider_base_kes,55),rider_per_km_kes:num(row.rider_per_km_kes,17),rider_per_minute_kes:num(row.rider_per_minute_kes,.85),rider_minimum_kes:num(row.rider_minimum_kes,75),rider_maximum_kes:num(row.rider_maximum_kes,500),fuel_reference_kes:num(row.fuel_reference_kes,200),fuel_sensitivity:num(row.fuel_sensitivity,.35),customer_margin:num(row.customer_margin,1.08),peak_multiplier:num(row.peak_multiplier,1),service_radius_km:num(row.service_radius_km,18),auto_round_kes:num(row.auto_round_kes,10)}; }
 function calculatePrices({advanced,rules,fuel,km,minutes}){

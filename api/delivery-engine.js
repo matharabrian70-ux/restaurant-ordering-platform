@@ -124,12 +124,13 @@ async function quote(pool,{businessId,customerLat,customerLng,deliveryAddress,br
   return {quoteId:saved.rows[0].id,branchId:selected.id,branchName:selected.name,pickupAddress:selected.address,deliveryAddress,distanceMeters:selected.distanceMeters,durationSeconds:selected.durationSeconds,km,minutes,fuelPriceKes:fuel,deliveryFee:prices.deliveryFeeKes,riderEarning:prices.riderEarningKes,pricingMode:advanced?'AUTO':'MASTER',currency:'KES'};
 }
 
-export function registerDeliveryEngine(app,pool){
-  app.get('/api/businesses/:id/branches',async(req,res)=>{
+export function registerDeliveryEngine(app,pool,requireManager=(_req,_res,next)=>next()){
+
+  app.get('/api/businesses/:id/branches',requireManager,async(req,res)=>{
     try{ const rows=await pool.query('select id,name,address,latitude,longitude,google_place_id,building,floor,unit,street,estate,landmark,pickup_instructions,active,accepting_orders from business_branches where business_id=$1 order by name',[req.params.id]); res.json(rows.rows); }
     catch(e){res.status(500).json({error:'Unable to load branches'});}
   });
-  app.post('/api/businesses/:id/branches',async(req,res)=>{
+  app.post('/api/businesses/:id/branches',requireManager,async(req,res)=>{
     try{
       const {name,address,latitude,longitude,googlePlaceId,building,floor,unit,street,estate,landmark,pickupInstructions,active=true,acceptingOrders=true,serviceRadiusKm=18}=req.body;
       if(!name||!address||!Number.isFinite(Number(latitude))||!Number.isFinite(Number(longitude))) return res.status(400).json({error:'Branch name, address and map coordinates are required'});
@@ -137,7 +138,7 @@ export function registerDeliveryEngine(app,pool){
       res.status(201).json(r.rows[0]);
     }catch(e){res.status(500).json({error:e.message||'Unable to create branch'});}
   });
-  app.patch('/api/businesses/:id/branches/:branchId',async(req,res)=>{
+  app.patch('/api/businesses/:id/branches/:branchId',requireManager,async(req,res)=>{
     try{
       const fields={name:'name',address:'address',latitude:'latitude',longitude:'longitude',googlePlaceId:'google_place_id',building:'building',floor:'floor',unit:'unit',street:'street',estate:'estate',landmark:'landmark',pickupInstructions:'pickup_instructions',active:'active',acceptingOrders:'accepting_orders',serviceRadiusKm:'service_radius_km'};
       const sets=[],vals=[]; for(const [k,col] of Object.entries(fields)){if(req.body[k]!==undefined){sets.push(`${col}=$${vals.length+2}`);vals.push(req.body[k]);}}
@@ -147,15 +148,15 @@ export function registerDeliveryEngine(app,pool){
       if(!r.rowCount)return res.status(404).json({error:'Branch not found'}); res.json(r.rows[0]);
     }catch(e){res.status(500).json({error:e.message||'Unable to update branch'});}
   });
-  app.delete('/api/businesses/:id/branches/:branchId',async(req,res)=>{
+  app.delete('/api/businesses/:id/branches/:branchId',requireManager,async(req,res)=>{
     try{const r=await pool.query('update business_branches set active=false,accepting_orders=false,updated_at=now() where id=$1 and business_id=$2 returning id',[req.params.branchId,req.params.id]); if(!r.rowCount)return res.status(404).json({error:'Branch not found'});res.json({ok:true});}
     catch(e){res.status(500).json({error:'Unable to deactivate branch'});}
   });
-  app.get('/api/businesses/:id/delivery-pricing',async(req,res)=>{
+  app.get('/api/businesses/:id/delivery-pricing',requireManager,async(req,res)=>{
     try{const advanced=await getFeature(pool,req.params.id);const rules=await getRules(pool,req.params.id);res.json({mode:advanced?'AUTO':'MASTER',editable:!advanced,rules:rules||DEFAULT_RULES});}
     catch(e){res.status(500).json({error:'Unable to load delivery pricing'});}
   });
-  app.patch('/api/businesses/:id/delivery-pricing',async(req,res)=>{
+  app.patch('/api/businesses/:id/delivery-pricing',requireManager,async(req,res)=>{
     try{
       if(await getFeature(pool,req.params.id)) return res.status(403).json({error:'Advanced package uses automatic platform pricing'});
       const numeric={};

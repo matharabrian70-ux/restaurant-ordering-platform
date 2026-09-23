@@ -53,6 +53,7 @@ app.use('/api/riders', requireRiderModule);
 
 // Server-Sent Events: one persistent connection replaces the dashboard's 5-second polling.
 const realtimeClients = new Set();
+const stationRealtimeClients = new Set();
 function sendRealtime(client, event, data) {
   try {
     client.res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -63,6 +64,10 @@ function broadcastRealtime({ businessId, orderId = null, event = 'order.updated'
     if (client.businessId !== String(businessId)) continue;
     if (client.orderId && orderId && client.orderId !== String(orderId)) continue;
     if (client.orderId && !orderId) continue;
+    sendRealtime(client, event, data);
+  }
+  for (const client of stationRealtimeClients) {
+    if (client.businessId !== String(businessId)) continue;
     sendRealtime(client, event, data);
   }
 }
@@ -113,6 +118,79 @@ function verifyPassword(password, stored) {
 function hashSessionToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
+
+function hashManagerPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const derived = crypto.scryptSync(String(password), salt, 64, { N: 131072, r: 8, p: 1, maxmem: 256 * 1024 * 1024 });
+  return `scrypt$131072$8$1${salt}:${derived.toString('hex')}`;
+}
+function verifyManagerPassword(password, stored) {
+  const match = String(stored || '').match(/^scrypt\$(\d+)\$(\d+)\$(\d+)\$([^:]+):([0-9a-f]+)$/i);
+  if (!match) return false;
+  const [, n, r, p, salt, expected] = match;
+  try {
+    const actual = crypto.scryptSync(String(password), salt, expected.length / 2, { N: Number(n), r: Number(r), p: Number(p), maxmem: 256 * 1024 * 1024 }).toString('hex');
+    return actual.length === expected.length && crypto.timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'));
+  } catch { return false; }
+}
+async function getManagerFromSession(req) {
+  const raw = String(req.headers.authorization || '');
+  const token = raw.startsWith('Bearer ') ? raw.slice(7).trim() : '';
+  if (!token) return null;
+  const result = await pool.query(`select m.*,s.id as session_id,s.expires_at
+    from manager_sessions s join manager_users m on m.id=s.manager_id
+    where s.token_hash=$1 and s.expires_at>now() and m.active=true`, [hashSessionToken(token)]);
+  return result.rows[0] || null;
+}
+async function requireManager(req, res, next) {
+  try {
+    const manager = await getManagerFromSession(req);
+    if (!manager) return res.status(401).json({ error: 'Manager login required' });
+    const requestedBusinessId = String(req.body?.businessId || req.query?.businessId || req.params?.businessId || '');
+    if (requestedBusinessId && requestedBusinessId !== String(manager.business_id)) {
+      return res.status(403).json({ error: 'You can only access your own restaurant' });
+    }
+    req.manager = manager;
+    next();
+  } catch { res.status(500).json({ error: 'Unable to verify manager session' }); }
+}
+async function requireManagerOrder(req, res, next) {
+  return requireManager(req, res, async () => {
+    try {
+      const result = await pool.query('select business_id from orders where id=$1', [req.params.id]);
+      if (!result.rowCount) return res.status(404).json({ error: 'Order not found' });
+      if (String(result.rows[0].business_id) !== String(req.manager.business_id)) return res.status(403).json({ error: 'You can only access your own restaurant' });
+      next();
+    } catch { res.status(500).json({ error: 'Unable to verify order access' }); }
+  });
+}
+async function requireManagerStation(req, res, next) {
+  return requireManager(req, res, async () => {
+    try {
+      const result = await pool.query('select business_id from restaurant_order_stations where id=$1', [req.params.id]);
+      if (!result.rowCount) return res.status(404).json({ error: 'Station not found' });
+      if (String(result.rows[0].business_id) !== String(req.manager.business_id)) return res.status(403).json({ error: 'You can only access your own restaurant' });
+      next();
+    } catch { res.status(500).json({ error: 'Unable to verify station access' }); }
+  });
+}
+async function getStationFromSession(req) {
+  const raw = String(req.headers.authorization || '');
+  const token = raw.startsWith('Bearer ') ? raw.slice(7).trim() : String(req.query.stationToken || '').trim();
+  if (!token) return null;
+  const result = await pool.query(`select s.*,st.name,st.device_type,st.mode,st.business_id,st.active
+    from station_sessions s join restaurant_order_stations st on st.id=s.station_id
+    where s.token_hash=$1 and s.expires_at>now() and st.active=true`, [hashSessionToken(token)]);
+  return result.rows[0] || null;
+}
+async function requireStation(req, res, next) {
+  try {
+    const station = await getStationFromSession(req);
+    if (!station) return res.status(401).json({ error: 'Station pairing required' });
+    req.station = station;
+    next();
+  } catch { res.status(500).json({ error: 'Unable to verify station session' }); }
+}
+
 async function getRiderFromSession(req) {
   const raw = String(req.headers.authorization || '');
   const token = raw.startsWith('Bearer ') ? raw.slice(7).trim() : '';
@@ -196,6 +274,38 @@ async function calculateDeliveryQuote({businessId,pickupAddress,deliveryAddress}
   const fee=Math.max(100,Math.ceil(raw/10)*10);
   return {...route,km,minutes,fuelPriceKes:fuel,baseFeeKes:baseFee,distanceFeeKes:distanceFee,timeFeeKes:timeFee,demandMultiplier,deliveryFeeKes:fee};
 }
+
+
+app.post('/api/manager/login', async (req,res)=>{
+  try{
+    const businessId=String(req.body.businessId||process.env.MANAGER_BUSINESS_ID||'11111111-1111-4111-8111-111111111111');
+    const email=String(req.body.email||'').trim().toLowerCase();
+    const password=String(req.body.password||'');
+    if(!email||!password) return res.status(400).json({error:'Email and password are required'});
+    if(password.length>256) return res.status(400).json({error:'Password is too long'});
+    let result=await pool.query('select * from manager_users where business_id=$1 and lower(email)=lower($2) and active=true',[businessId,email]);
+    if(!result.rowCount){
+      const configuredEmail=String(process.env.MANAGER_EMAIL||'').trim().toLowerCase();
+      const configuredPassword=String(process.env.MANAGER_PASSWORD||'');
+      if(!configuredEmail||!configuredPassword||email!==configuredEmail||password!==configuredPassword) return res.status(401).json({error:'Invalid manager login'});
+      const name=String(process.env.MANAGER_NAME||'Restaurant Manager').trim()||'Restaurant Manager';
+      const hash=hashManagerPassword(password);
+      await pool.query('insert into manager_users(id,business_id,name,email,password_hash,role,active) values(gen_random_uuid(),$1,$2,$3,$4,$5,true) on conflict(business_id,email) do nothing',[businessId,name,email,hash,String(process.env.MANAGER_ROLE||'OWNER').toUpperCase()==='OWNER'?'OWNER':'MANAGER']);
+      result=await pool.query('select * from manager_users where business_id=$1 and lower(email)=lower($2) and active=true',[businessId,email]);
+    }
+    const manager=result.rows[0];
+    if(!verifyManagerPassword(password,manager.password_hash)) return res.status(401).json({error:'Invalid manager login'});
+    const token=crypto.randomBytes(32).toString('hex');
+    await pool.query('insert into manager_sessions(id,manager_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval \'30 days\')',[manager.id,hashSessionToken(token)]);
+    await pool.query('update manager_users set last_login_at=now() where id=$1',[manager.id]);
+    res.json({token,manager:{id:manager.id,businessId:manager.business_id,name:manager.name,email:manager.email,role:manager.role}});
+  }catch(error){res.status(500).json({error:error.message||'Unable to sign in manager'});}
+});
+app.get('/api/manager/me',requireManager,(req,res)=>res.json({id:req.manager.id,businessId:req.manager.business_id,name:req.manager.name,email:req.manager.email,role:req.manager.role}));
+app.post('/api/manager/logout',requireManager,async(req,res)=>{
+  try{const raw=String(req.headers.authorization||'');const token=raw.startsWith('Bearer ')?raw.slice(7).trim():'';if(token) await pool.query('delete from manager_sessions where token_hash=$1',[hashSessionToken(token)]);res.json({ok:true});}
+  catch(error){res.status(500).json({error:error.message||'Unable to log out'});}
+});
 
 app.get('/api/businesses/:id', async (req,res)=>{
   try{
@@ -287,9 +397,9 @@ async function updateRefundFromWebhook(data) {
 app.get('/health', async (_req, res) => { try { await pool.query('select 1'); res.json({ ok: true, database: true }); } catch { res.status(503).json({ ok: false, database: false }); } });
 app.get('/api/orders/:id', async (req, res) => { try { const result = await pool.query(`select o.*, c.name as customer_name, c.phone, c.email, r.name as rider_name, r.vehicle_type, r.number_plate, r.phone as rider_phone from orders o join customers c on c.id=o.customer_id left join riders r on r.id=(select rider_id from rider_trips t where t.order_id=o.id order by assigned_at desc limit 1) where o.id=$1`, [req.params.id]); if (!result.rowCount) return res.status(404).json({ error: 'Order not found' }); res.json(result.rows[0]); } catch { res.status(500).json({ error: 'Unable to load order' }); } });
 app.get('/api/orders/:id/refunds', async (req, res) => { try { const result = await pool.query(`select id,amount,currency,status,created_at,updated_at,customer_note,merchant_note from refunds where order_id=$1 order by created_at desc`, [req.params.id]); res.json(result.rows); } catch { res.status(500).json({ error: 'Unable to load refunds' }); } });
-app.get('/api/orders', async (req, res) => { try { const { businessId, q = '' } = req.query; if (!businessId) return res.status(400).json({ error: 'businessId is required' }); const result = await pool.query(`select o.id,o.business_id,o.order_number,o.status,o.payment_status,o.payment_method,o.total,o.created_at,o.delivery_note,c.name,c.phone,c.email,coalesce((select r.name from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_name,coalesce((select r.vehicle_type from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_vehicle,coalesce((select r.number_plate from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_plate from orders o join customers c on c.id=o.customer_id where o.business_id=$1 and ($2='' or c.name ilike '%'||$2||'%' or c.phone ilike '%'||$2||'%' or coalesce(c.email,'') ilike '%'||$2||'%' or o.order_number ilike '%'||$2||'%') order by o.created_at desc limit 200`, [businessId, String(q).trim()]); res.json(result.rows); } catch { res.status(500).json({ error: 'Unable to load orders' }); } });
-app.get('/api/riders', async (req, res) => { try { const { businessId } = req.query; if (!businessId) return res.status(400).json({ error: 'businessId is required' }); const result = await pool.query(`select r.id,r.name,r.phone,r.email,r.vehicle_type,r.number_plate,r.profile_image_url,r.active,coalesce(p.online,false) as online,exists(select 1 from rider_trips t join orders o on o.id=t.order_id where t.rider_id=r.id and t.completed_at is null) as busy,(select count(*) from rider_trips t where t.rider_id=r.id and t.completed_at is not null) as trip_count,(select max(t.completed_at) from rider_trips t where t.rider_id=r.id and t.completed_at is not null) as last_completed_at from riders r left join rider_presence p on p.rider_id=r.id where r.business_id=$1 order by r.name`, [businessId]); res.json(result.rows.map(r => ({ ...r, available: r.active && r.online && !r.busy }))); } catch { res.status(500).json({ error: 'Unable to load riders' }); } });
-app.post('/api/orders/:id/status', async (req, res) => { try { const nextStatus = String(req.body.status || '').toUpperCase(); if (!['ACCEPTED','DELIVERED'].includes(nextStatus)) return res.status(400).json({ error: 'Invalid status transition' }); const orderResult = await pool.query(`select * from orders where id=$1 for update`, [req.params.id]); if (!orderResult.rowCount) return res.status(404).json({ error: 'Order not found' }); const order = orderResult.rows[0]; if (nextStatus === 'ACCEPTED' && !(order.status === 'NEW' && order.payment_status === 'PAID')) return res.status(409).json({ error: 'Only paid NEW orders can be accepted' }); if (nextStatus === 'DELIVERED' && order.status !== 'OUT_FOR_DELIVERY') return res.status(409).json({ error: 'Only orders out for delivery can be delivered' }); const result = nextStatus === 'ACCEPTED' ? await pool.query(`update orders set status='ACCEPTED',accepted_at=coalesce(accepted_at,now()) where id=$1 returning *`, [req.params.id]) : await pool.query(`update orders set status='DELIVERED',delivered_at=coalesce(delivered_at,now()) where id=$1 returning *`, [req.params.id]); broadcastOrder(result.rows[0], { reason: nextStatus === 'ACCEPTED' ? 'restaurant.accepted' : 'restaurant.delivered' }); res.json(result.rows[0]); } catch { res.status(500).json({ error: 'Unable to update order status' }); } });
+app.get('/api/orders', requireManager, async (req, res) => { try { const { businessId, q = '' } = req.query; if (!businessId) return res.status(400).json({ error: 'businessId is required' }); const result = await pool.query(`select o.id,o.business_id,o.order_number,o.status,o.payment_status,o.payment_method,o.total,o.created_at,o.delivery_note,c.name,c.phone,c.email,coalesce((select r.name from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_name,coalesce((select r.vehicle_type from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_vehicle,coalesce((select r.number_plate from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_plate from orders o join customers c on c.id=o.customer_id where o.business_id=$1 and ($2='' or c.name ilike '%'||$2||'%' or c.phone ilike '%'||$2||'%' or coalesce(c.email,'') ilike '%'||$2||'%' or o.order_number ilike '%'||$2||'%') order by o.created_at desc limit 200`, [businessId, String(q).trim()]); res.json(result.rows); } catch { res.status(500).json({ error: 'Unable to load orders' }); } });
+app.get('/api/riders', requireManager, async (req, res) => { try { const { businessId } = req.query; if (!businessId) return res.status(400).json({ error: 'businessId is required' }); const result = await pool.query(`select r.id,r.name,r.phone,r.email,r.vehicle_type,r.number_plate,r.profile_image_url,r.active,coalesce(p.online,false) as online,exists(select 1 from rider_trips t join orders o on o.id=t.order_id where t.rider_id=r.id and t.completed_at is null) as busy,(select count(*) from rider_trips t where t.rider_id=r.id and t.completed_at is not null) as trip_count,(select max(t.completed_at) from rider_trips t where t.rider_id=r.id and t.completed_at is not null) as last_completed_at from riders r left join rider_presence p on p.rider_id=r.id where r.business_id=$1 order by r.name`, [businessId]); res.json(result.rows.map(r => ({ ...r, available: r.active && r.online && !r.busy }))); } catch { res.status(500).json({ error: 'Unable to load riders' }); } });
+app.post('/api/orders/:id/status', requireManagerOrder, async (req, res) => { try { const nextStatus = String(req.body.status || '').toUpperCase(); if (!['ACCEPTED','DELIVERED'].includes(nextStatus)) return res.status(400).json({ error: 'Invalid status transition' }); const orderResult = await pool.query(`select * from orders where id=$1 for update`, [req.params.id]); if (!orderResult.rowCount) return res.status(404).json({ error: 'Order not found' }); const order = orderResult.rows[0]; if (nextStatus === 'ACCEPTED' && !(order.status === 'NEW' && order.payment_status === 'PAID')) return res.status(409).json({ error: 'Only paid NEW orders can be accepted' }); if (nextStatus === 'DELIVERED' && order.status !== 'OUT_FOR_DELIVERY') return res.status(409).json({ error: 'Only orders out for delivery can be delivered' }); const result = nextStatus === 'ACCEPTED' ? await pool.query(`update orders set status='ACCEPTED',accepted_at=coalesce(accepted_at,now()) where id=$1 returning *`, [req.params.id]) : await pool.query(`update orders set status='DELIVERED',delivered_at=coalesce(delivered_at,now()) where id=$1 returning *`, [req.params.id]); broadcastOrder(result.rows[0], { reason: nextStatus === 'ACCEPTED' ? 'restaurant.accepted' : 'restaurant.delivered' }); res.json(result.rows[0]); } catch { res.status(500).json({ error: 'Unable to update order status' }); } });
 app.post('/api/orders/:id/cancel', async (req, res) => { const client = await pool.connect(); try { let order; try { await client.query('begin'); const result = await client.query(`select * from orders where id=$1 for update`, [req.params.id]); if (!result.rowCount) { await client.query('rollback'); return res.status(404).json({ error: 'Order not found' }); } order = result.rows[0]; if (order.status !== 'NEW') { await client.query('rollback'); return res.status(409).json({ error: 'This order can no longer be cancelled because the restaurant has accepted it.' }); } await client.query(`update orders set status='CANCELLED' where id=$1`, [order.id]); const updated = await client.query(`select * from orders where id=$1`, [order.id]); await client.query('commit'); order = updated.rows[0]; broadcastOrder(order, { reason: 'customer.cancelled' }); } catch (error) { try { await client.query('rollback'); } catch {} throw error; } let refund = null; if (order.payment_status === 'PAID') refund = await initiateRefundForOrder(order.id, 'Customer cancelled before restaurant acceptance', 'Automatic cancellation refund'); const latest = await pool.query(`select * from orders where id=$1`, [order.id]); res.json({ order: latest.rows[0], refund }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to cancel order' }); } finally { client.release(); } });
 app.post('/api/delivery/quote', async (req,res)=>{
   try{
@@ -382,7 +492,7 @@ app.post('/api/riders/login', requireRiderModule, async (req,res)=>{
     res.json({token,rider:{id:r.id,name:r.name,phone:r.phone,email:r.email,vehicle_type:r.vehicle_type,number_plate:r.number_plate,payout_phone:r.payout_phone}});
   }catch(error){res.status(500).json({error:error.message||'Unable to sign in'});}
 });
-app.post('/api/riders', requireRiderModule, async(req,res)=>{
+app.post('/api/riders', requireRiderModule, requireManager, async(req,res)=>{
   try{
     const {businessId,name,phone,email,vehicleType,numberPlate,password,payoutPhone,profileImageUrl}=req.body;
     if(!businessId||!name||!phone||!vehicleType||!numberPlate||!password) return res.status(400).json({error:'Business, name, phone, vehicle type, number plate and password are required'});
@@ -483,16 +593,16 @@ app.get('/api/riders/:id/earnings',requireRiderModule,requireRiderAuth,async(req
   const result=await pool.query(`select e.*,o.order_number,o.delivery_address,o.delivered_at,o.route_distance_meters from rider_earnings e join rider_trips t on t.id=e.trip_id join orders o on o.id=t.order_id where e.rider_id=$1 order by e.created_at desc limit 200`,[req.rider.id]);
   res.json(result.rows);
 });
-app.get('/api/admin/riders',requireRiderModule,async(req,res)=>{
+app.get('/api/admin/riders',requireRiderModule,requireManager,async(req,res)=>{
   const businessId=String(req.query.businessId||''); if(!businessId) return res.status(400).json({error:'businessId is required'});
   const result=await pool.query(`select r.id,r.name,r.phone,r.email,r.vehicle_type,r.number_plate,r.profile_image_url,r.active,coalesce(p.online,false) as online,exists(select 1 from rider_trips t join orders o on o.id=t.order_id where t.rider_id=r.id and t.completed_at is null) as busy,count(t.id) filter(where t.completed_at is not null) as trip_count,(select max(t2.completed_at) from rider_trips t2 where t2.rider_id=r.id and t2.completed_at is not null) as last_completed_at,coalesce(sum(o.route_distance_meters),0) as distance_meters,coalesce(sum(e.amount),0) as earnings from riders r left join rider_presence p on p.rider_id=r.id left join rider_trips t on t.rider_id=r.id left join orders o on o.id=t.order_id left join rider_earnings e on e.trip_id=t.id where r.business_id=$1 group by r.id,p.online order by r.name`,[businessId]);
   res.json(result.rows.map(r=>({...r,available:r.active&&r.online&&!r.busy,distance_km:Number(r.distance_meters)/1000})));
 });
-app.get('/api/admin/riders/:id/trips',requireRiderModule,async(req,res)=>{
+app.get('/api/admin/riders/:id/trips',requireRiderModule,requireManager,async(req,res)=>{
   const result=await pool.query(`select t.id,t.assigned_at,t.completed_at,o.order_number,o.status,o.delivery_address,o.route_distance_meters,o.route_duration_seconds,o.delivery_fee,e.amount as rider_earning,e.status as earning_status from rider_trips t join orders o on o.id=t.order_id left join rider_earnings e on e.trip_id=t.id where t.rider_id=$1 order by t.assigned_at desc limit 200`,[req.params.id]);
   res.json(result.rows);
 });
-app.post('/api/orders/:id/assign-rider',requireRiderModule,async(req,res)=>{
+app.post('/api/orders/:id/assign-rider',requireRiderModule,requireManagerOrder,async(req,res)=>{
   const client=await pool.connect();
   try{
     const {riderId}=req.body; if(!riderId) return res.status(400).json({error:'riderId is required'});
@@ -513,9 +623,136 @@ app.post('/api/orders/:id/assign-rider',requireRiderModule,async(req,res)=>{
   }catch(error){try{await client.query('rollback')}catch{}res.status(500).json({error:error.message||'Unable to assign rider'});}finally{client.release();}
 });
 
-app.get('/api/stations', async (req,res)=>{try{const businessId=String(req.query.businessId||'');if(!businessId)return res.status(400).json({error:'businessId is required'});const r=await pool.query('select * from restaurant_order_stations where business_id=$1 and active=true order by last_seen_at desc',[businessId]);res.json(r.rows);}catch(e){res.status(500).json({error:e.message||'Unable to load stations'});}});
-app.post('/api/stations', async (req,res)=>{try{const {businessId,name,deviceType,mode}=req.body;if(!businessId||!name||!['PHONE','TABLET','PC','LAPTOP','TV','BOARD'].includes(deviceType)||!['OPERATIONS','KITCHEN','COUNTER','DISPLAY'].includes(mode))return res.status(400).json({error:'Invalid station configuration'});const r=await pool.query('insert into restaurant_order_stations(id,business_id,name,device_type,mode,active,last_seen_at) values(gen_random_uuid(),$1,$2,$3,$4,true,now()) returning *',[businessId,String(name).trim(),deviceType,mode]);res.status(201).json(r.rows[0]);}catch(e){res.status(400).json({error:e.message||'Unable to save station'});}});
-registerDeliveryEngine(app,pool);
-registerMenuEngine(app,pool);
+
+app.get('/api/stations',requireManager,async(req,res)=>{
+  try{
+    const r=await pool.query('select id,business_id,name,device_type,mode,active,last_seen_at,created_at,updated_at from restaurant_order_stations where business_id=$1 order by active desc,last_seen_at desc',[req.manager.business_id]);
+    res.json(r.rows);
+  }catch(e){res.status(500).json({error:e.message||'Unable to load stations'});}
+});
+app.post('/api/stations',requireManager,async(req,res)=>{
+  try{
+    const {name,deviceType,mode}=req.body;
+    if(!name||!['PHONE','TABLET','PC','LAPTOP','TV','BOARD'].includes(deviceType)||!['OPERATIONS','KITCHEN','COUNTER','DISPLAY'].includes(mode)) return res.status(400).json({error:'Invalid station configuration'});
+    const r=await pool.query('insert into restaurant_order_stations(id,business_id,name,device_type,mode,active,last_seen_at,updated_at) values(gen_random_uuid(),$1,$2,$3,$4,true,now(),now()) returning *',[req.manager.business_id,String(name).trim(),deviceType,mode]);
+    res.status(201).json(r.rows[0]);
+  }catch(e){res.status(400).json({error:e.message||'Unable to create station'});}
+});
+app.post('/api/stations/:id/pairing-token',requireManagerStation,async(req,res)=>{
+  try{
+    const raw=crypto.randomBytes(32).toString('hex');
+    await pool.query('update station_pairing_tokens set used_at=coalesce(used_at,now()) where station_id=$1 and used_at is null',[req.params.id]);
+    await pool.query('insert into station_pairing_tokens(id,station_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval \'5 minutes\')',[req.params.id,hashSessionToken(raw)]);
+    const connectUrl=`${FRONTEND_URL.replace(/\/$/,'')}/connect-device.html?token=${encodeURIComponent(raw)}`;
+    res.json({token:raw,connectUrl,expiresInSeconds:300});
+  }catch(e){res.status(500).json({error:e.message||'Unable to create pairing code'});}
+});
+app.post('/api/stations/:id/revoke',requireManagerStation,async(req,res)=>{
+  try{
+    await pool.query('update restaurant_order_stations set active=false,updated_at=now() where id=$1',[req.params.id]);
+    await pool.query('delete from station_sessions where station_id=$1',[req.params.id]);
+    await pool.query('update station_pairing_tokens set used_at=coalesce(used_at,now()) where station_id=$1 and used_at is null',[req.params.id]);
+    res.json({ok:true});
+  }catch(e){res.status(500).json({error:e.message||'Unable to revoke station'});}
+});
+app.post('/api/stations/:id/reactivate',requireManagerStation,async(req,res)=>{
+  try{await pool.query('update restaurant_order_stations set active=true,updated_at=now() where id=$1',[req.params.id]);res.json({ok:true});}
+  catch(e){res.status(500).json({error:e.message||'Unable to reactivate station'});}
+});
+app.post('/api/station/pair',async(req,res)=>{
+  const client=await pool.connect();
+  try{
+    const token=String(req.body.token||'').trim();
+    if(!token) return res.status(400).json({error:'Pairing token is required'});
+    await client.query('begin');
+    const r=await client.query(`select p.id,p.station_id,s.business_id,s.name,s.device_type,s.mode
+      from station_pairing_tokens p join restaurant_order_stations s on s.id=p.station_id
+      where p.token_hash=$1 and p.expires_at>now() and p.used_at is null and s.active=true for update`,[hashSessionToken(token)]);
+    if(!r.rowCount){await client.query('rollback');return res.status(410).json({error:'This pairing code is expired, already used, or revoked'});}
+    const row=r.rows[0];
+    await client.query('update station_pairing_tokens set used_at=now() where id=$1',[row.id]);
+    const sessionToken=crypto.randomBytes(32).toString('hex');
+    await client.query('insert into station_sessions(id,station_id,token_hash,expires_at,last_seen_at) values(gen_random_uuid(),$1,$2,now()+interval \'30 days\',now())',[row.station_id,hashSessionToken(sessionToken)]);
+    await client.query('update restaurant_order_stations set last_seen_at=now(),updated_at=now() where id=$1',[row.station_id]);
+    await client.query('commit');
+    res.json({token:sessionToken,expiresInSeconds:30*24*60*60,station:{id:row.station_id,businessId:row.business_id,name:row.name,deviceType:row.device_type,mode:row.mode}});
+  }catch(e){try{await client.query('rollback')}catch{}res.status(500).json({error:e.message||'Unable to pair station'});}
+  finally{client.release();}
+});
+app.get('/api/station/me',requireStation,(req,res)=>res.json({id:req.station.station_id,businessId:req.station.business_id,name:req.station.name,deviceType:req.station.device_type,mode:req.station.mode,active:req.station.active}));
+app.post('/api/station/heartbeat',requireStation,async(req,res)=>{
+  try{await pool.query('update station_sessions set last_seen_at=now() where id=$1',[req.station.id]);await pool.query('update restaurant_order_stations set last_seen_at=now() where id=$1',[req.station.station_id]);res.json({ok:true});}
+  catch(e){res.status(500).json({error:e.message||'Unable to update station heartbeat'});}
+});
+app.post('/api/station/logout',requireStation,async(req,res)=>{
+  try{await pool.query('delete from station_sessions where id=$1',[req.station.id]);res.json({ok:true});}
+  catch(e){res.status(500).json({error:e.message||'Unable to disconnect station'});}
+});
+app.get('/api/station/orders',requireStation,async(req,res)=>{
+  try{
+    const result=await pool.query(`select o.id,o.business_id,o.order_number,o.status,o.payment_status,o.payment_method,o.total,o.created_at,o.delivery_note,c.name,c.phone,c.email,
+      coalesce((select r.name from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_name,
+      coalesce((select r.vehicle_type from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_vehicle,
+      coalesce((select r.number_plate from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_plate
+      from orders o join customers c on c.id=o.customer_id where o.business_id=$1 order by o.created_at desc limit 200`,[req.station.business_id]);
+    res.json(result.rows);
+  }catch(e){res.status(500).json({error:e.message||'Unable to load station orders'});}
+});
+app.get('/api/station/riders',requireStation,async(req,res)=>{
+  try{
+    const result=await pool.query(`select r.id,r.name,r.phone,r.vehicle_type,r.number_plate,r.profile_image_url,r.active,
+      coalesce(p.online,false) as online,
+      exists(select 1 from rider_trips t where t.rider_id=r.id and t.completed_at is null) as busy,
+      (select max(t.completed_at) from rider_trips t where t.rider_id=r.id and t.completed_at is not null) as last_completed_at,
+      (select count(*) from rider_trips t where t.rider_id=r.id and t.completed_at is not null) as trip_count
+      from riders r left join rider_presence p on p.rider_id=r.id where r.business_id=$1 order by r.name`,[req.station.business_id]);
+    res.json(result.rows.map(r=>({...r,available:r.active&&r.online&&!r.busy})));
+  }catch(e){res.status(500).json({error:e.message||'Unable to load station riders'});}
+});
+app.post('/api/station/orders/:id/status',requireStation,async(req,res)=>{
+  try{
+    if(!['OPERATIONS','COUNTER'].includes(req.station.mode)) return res.status(403).json({error:'This station mode cannot change order status'});
+    const nextStatus=String(req.body.status||'').toUpperCase();
+    if(nextStatus!=='ACCEPTED') return res.status(400).json({error:'Station can only accept a paid NEW order'});
+    const orderResult=await pool.query('select * from orders where id=$1 and business_id=$2 for update',[req.params.id,req.station.business_id]);
+    if(!orderResult.rowCount)return res.status(404).json({error:'Order not found'});
+    const order=orderResult.rows[0];
+    if(order.status!=='NEW'||order.payment_status!=='PAID')return res.status(409).json({error:'Only paid NEW orders can be accepted'});
+    const updated=await pool.query(`update orders set status='ACCEPTED',accepted_at=coalesce(accepted_at,now()) where id=$1 returning *`,[order.id]);
+    broadcastOrder(updated.rows[0],{reason:'station.accepted'});
+    res.json(updated.rows[0]);
+  }catch(e){res.status(500).json({error:e.message||'Unable to accept order'});}
+});
+app.post('/api/station/orders/:id/assign-rider',requireStation,async(req,res)=>{
+  const client=await pool.connect();
+  try{
+    if(!['OPERATIONS','COUNTER'].includes(req.station.mode)) return res.status(403).json({error:'This station mode cannot dispatch riders'});
+    const {riderId}=req.body;if(!riderId)return res.status(400).json({error:'riderId is required'});
+    await client.query('begin');
+    const orderResult=await client.query('select * from orders where id=$1 and business_id=$2 for update',[req.params.id,req.station.business_id]);
+    if(!orderResult.rowCount){await client.query('rollback');return res.status(404).json({error:'Order not found'});}
+    const order=orderResult.rows[0];if(order.status!=='ACCEPTED'){await client.query('rollback');return res.status(409).json({error:'Only accepted orders can be dispatched'});}
+    const riderResult=await client.query(`select r.*,coalesce(p.online,false) as online,exists(select 1 from rider_trips t where t.rider_id=r.id and t.completed_at is null) as busy from riders r left join rider_presence p on p.rider_id=r.id where r.id=$1 and r.business_id=$2 and r.active=true for update`,[riderId,req.station.business_id]);
+    if(!riderResult.rowCount){await client.query('rollback');return res.status(404).json({error:'Rider not found'});}
+    if(!riderResult.rows[0].online||riderResult.rows[0].busy){await client.query('rollback');return res.status(409).json({error:'Rider must be online and available'});}
+    const trip=await client.query('insert into rider_trips(id,rider_id,order_id) values(gen_random_uuid(),$1,$2) returning id',[riderId,order.id]);
+    await client.query('insert into delivery_events(id,trip_id,status) values(gen_random_uuid(),$1,\'ASSIGNED\')',[trip.rows[0].id]);
+    await client.query(`update orders set status='OUT_FOR_DELIVERY',out_for_delivery_at=coalesce(out_for_delivery_at,now()),delivery_status='ASSIGNED',delivery_fee_status='HELD',rider_earning=delivery_fee where id=$1`,[order.id]);
+    await client.query('commit');
+    broadcastOrder((await pool.query('select * from orders where id=$1',[order.id])).rows[0],{reason:'station.dispatched',notification:'New delivery assigned'});
+    res.json({ok:true,tripId:trip.rows[0].id});
+  }catch(e){try{await client.query('rollback')}catch{}res.status(500).json({error:e.message||'Unable to dispatch rider'});}
+  finally{client.release();}
+});
+app.get('/api/station/events',requireStation,(req,res)=>{
+  res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache, no-transform');res.setHeader('Connection','keep-alive');res.flushHeaders?.();
+  const client={res,businessId:String(req.station.business_id),stationId:String(req.station.station_id)};
+  stationRealtimeClients.add(client);sendRealtime(client,'connected',{ok:true});
+  const heartbeat=setInterval(()=>sendRealtime(client,'heartbeat',{at:new Date().toISOString()}),25000);
+  req.on('close',()=>{clearInterval(heartbeat);stationRealtimeClients.delete(client);});
+});
+
+registerDeliveryEngine(app,pool,requireManager);
+registerMenuEngine(app,pool,requireManager);
 
 app.listen(port, () => console.log(`Ordering API listening on ${port}`));

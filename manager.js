@@ -1,5 +1,16 @@
 const managerRoot = document.getElementById('manager-view');
 
+async function createRiderAccount(){
+  const get=id=>document.getElementById(id)?.value.trim();
+  const payload={businessId:BUSINESS_ID,name:get('new-rider-name'),phone:get('new-rider-phone'),email:get('new-rider-email'),vehicleType:get('new-rider-vehicle'),numberPlate:get('new-rider-plate'),payoutPhone:get('new-rider-payout'),password:document.getElementById('new-rider-password')?.value||''};
+  const status=document.getElementById('rider-create-status');
+  if(!payload.name||!payload.phone||!payload.vehicleType||!payload.numberPlate||!payload.password){status.textContent='Complete all required rider account fields.';return;}
+  status.textContent='Creating rider account…';
+  try{await createRemoteRider(payload);status.textContent='Rider account created. Give the rider their login phone and password.';loadManager();}
+  catch(err){status.textContent=err.message||'Could not create rider account.';}
+}
+
+
 function managerMoney(value) {
   return new Intl.NumberFormat('en-KE', { style: 'currency', currency: 'KES' }).format(Number(value || 0));
 }
@@ -23,6 +34,10 @@ async function loadManager() {
       return s;
     }, { orders: 0, revenue: 0, paid: 0, pending: 0, refunded: 0, delivery: 0, delivered: 0 });
 
+    let riderCreateHtml = '';
+    if (features.riderModule) {
+      riderCreateHtml = '<section class="panel manager-section"><div class="section-head"><div><p class="eyebrow">RIDER ACCOUNTS</p><h2>Create rider</h2></div><p>Create the login and collect the M-Pesa payout number.</p></div><div class="field"><label>Name</label><input id="new-rider-name" placeholder="Rider name"></div><div class="field"><label>Phone / login</label><input id="new-rider-phone" placeholder="07xx xxx xxx"></div><div class="field"><label>Email</label><input id="new-rider-email" type="email" placeholder="rider@example.com"></div><div class="field"><label>Vehicle type</label><input id="new-rider-vehicle" placeholder="Motorbike"></div><div class="field"><label>Number plate</label><input id="new-rider-plate" placeholder="KDA 123A"></div><div class="field"><label>M-Pesa payout number</label><input id="new-rider-payout" placeholder="07xx xxx xxx"></div><div class="field"><label>Initial password</label><input id="new-rider-password" type="password" placeholder="Set a temporary password"></div><button class="btn" onclick="createRiderAccount()">CREATE RIDER ACCOUNT</button><p id="rider-create-status" class="muted"></p></section>';
+    }
     let riderAnalyticsHtml = '';
     if (features.riderModule) {
       try {
@@ -50,6 +65,7 @@ async function loadManager() {
         <article class="panel"><p class="eyebrow">DELIVERY</p><h2>${stats.delivery}</h2><p class="muted">Currently out for delivery</p></article>
       </section>
 
+      ${features.riderModule ? riderCreateHtml : ""}
       <section class="panel manager-section">
         <div class="section-head"><div><p class="eyebrow">FINANCIAL CONTROL</p><h2>Payments & refunds</h2></div><p>Payment confirmation remains separate from the order workflow. Refunds are recorded independently.</p></div>
         <div class="summary-row"><span>Pending payments</span><strong>${stats.pending}</strong></div>

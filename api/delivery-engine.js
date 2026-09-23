@@ -73,8 +73,9 @@ function chooseCandidates(branches,lat,lng){
     .filter(b=>b._straightKm<=Math.max(2,num(b.service_radius_km,18)))
     .sort((a,b)=>a._straightKm-b._straightKm).slice(0,Math.min(8,branches.length));
 }
+function normalizeRules(row){ if(!row) return DEFAULT_RULES; return {...DEFAULT_RULES,base_fee_kes:num(row.base_fee_kes,70),per_km_kes:num(row.per_km_kes,24),per_minute_kes:num(row.per_minute_kes,.9),minimum_fee_kes:num(row.minimum_fee_kes,100),maximum_fee_kes:num(row.maximum_fee_kes,450),rider_base_kes:num(row.rider_base_kes,55),rider_per_km_kes:num(row.rider_per_km_kes,17),rider_per_minute_kes:num(row.rider_per_minute_kes,.85),rider_minimum_kes:num(row.rider_minimum_kes,75),rider_maximum_kes:num(row.rider_maximum_kes,500),fuel_reference_kes:num(row.fuel_reference_kes,200),fuel_sensitivity:num(row.fuel_sensitivity,.35),customer_margin:num(row.customer_margin,1.08),peak_multiplier:num(row.peak_multiplier,1),service_radius_km:num(row.service_radius_km,18),auto_round_kes:num(row.auto_round_kes,10)}; }
 function calculatePrices({advanced,rules,fuel,km,minutes}){
-  const r={...DEFAULT_RULES,...(rules||{})};
+  const r=normalizeRules(rules);
   const fuelMultiplier=Math.max(0.90,Math.min(1.15,1+((fuel-r.fuel_reference_kes)/Math.max(1,r.fuel_reference_kes))*r.fuel_sensitivity));
   if(advanced){
     const riderCost=(r.rider_base_kes)+(km*r.rider_per_km_kes)+(minutes*r.rider_per_minute_kes);
@@ -87,9 +88,22 @@ function calculatePrices({advanced,rules,fuel,km,minutes}){
   const customerFee=roundTo(Math.min(r.maximum_fee_kes,Math.max(r.minimum_fee_kes,raw*fuelMultiplier*r.peak_multiplier)),r.auto_round_kes);
   return {deliveryFeeKes:customerFee,riderEarningKes:0,fuelMultiplier};
 }
+async function geocodeAddress(pool,address){
+  const normalized=String(address||'').trim().toLowerCase().replace(/\\s+/g,' ');
+  if(!normalized) throw new Error('Customer delivery address is required');
+  const cached=await pool.query('select latitude,longitude from geocoding_cache where address_key=$1 and expires_at>now()',[normalized]);
+  if(cached.rowCount) return {lat:num(cached.rows[0].latitude),lng:num(cached.rows[0].longitude),cached:true};
+  if(!process.env.GOOGLE_MAPS_API_KEY) throw new Error('GOOGLE_MAPS_API_KEY is not configured');
+  const response=await fetch('https://maps.googleapis.com/maps/api/geocode/json?address='+encodeURIComponent(address)+'&key='+encodeURIComponent(process.env.GOOGLE_MAPS_API_KEY));
+  const data=await response.json().catch(()=>({}));
+  const loc=data.results?.[0]?.geometry?.location;
+  if(!response.ok||!loc) throw new Error('We could not locate that delivery address. Try a more specific address or landmark.');
+  await pool.query('insert into geocoding_cache(id,address_key,latitude,longitude,expires_at) values(gen_random_uuid(),$1,$2,$3,now()+interval \'30 days\') on conflict(address_key) do update set latitude=excluded.latitude,longitude=excluded.longitude,expires_at=excluded.expires_at',[normalized,loc.lat,loc.lng]);
+  return {lat:num(loc.lat),lng:num(loc.lng),cached:false};
+}
 async function quote(pool,{businessId,customerLat,customerLng,deliveryAddress,branchId=null}){
-  const lat=num(customerLat,NaN), lng=num(customerLng,NaN);
-  if(!Number.isFinite(lat)||!Number.isFinite(lng)) throw new Error('Customer map location is required');
+  let lat=num(customerLat,NaN), lng=num(customerLng,NaN);
+  if(!Number.isFinite(lat)||!Number.isFinite(lng)){ const g=await geocodeAddress(pool,deliveryAddress); lat=g.lat; lng=g.lng; }
   const advanced=await getFeature(pool,businessId);
   const rules=await getRules(pool,businessId);
   const fuel=await getFuel(pool);

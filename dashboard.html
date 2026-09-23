@@ -17,7 +17,7 @@
     </div>
     <nav>
       <a href="menu.html">Customer menu</a>
-      <a href="rider.html">Rider portal</a>
+      <a data-rider-module-link href="rider.html">Rider portal</a>
       <a href="archive.html">Records</a>
     </nav>
   </header>
@@ -30,3 +30,8 @@
   <script src="dashboard-remote.js"></script>
 </body>
 </html>
+<script>
+fetch('https://restaurant-ordering-api-ow3p.onrender.com/api/features').then(r=>r.ok?r.json():null).then(f=>{
+  if(!f?.riderModule) document.querySelectorAll('[data-rider-module-link]').forEach(el=>el.remove());
+}).catch(()=>{});
+</script>

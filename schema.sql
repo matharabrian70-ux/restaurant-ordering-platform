@@ -130,6 +130,7 @@ create index if not exists refunds_order_idx on refunds(order_id, created_at des
 insert into businesses (id, name, slug)
 values ('11111111-1111-4111-8111-111111111111', 'Savanna Bites', 'savanna-bites')
 on conflict (slug) do nothing;
+update businesses set pickup_address=coalesce(pickup_address,'Savanna Bites, Nairobi, Kenya') where slug='savanna-bites';
 
 -- Demo riders used by the current prototype. These are clearly marked as demo records.
 insert into riders (id, business_id, name, phone, vehicle_type, number_plate, active)
@@ -224,6 +225,9 @@ create table if not exists fuel_price_snapshots (
   effective_from date,
   fetched_at timestamptz not null default now()
 );
+
+alter table businesses add column if not exists pickup_address text;
+alter table businesses add column if not exists paystack_subaccount_code text;
 
 alter table orders add column if not exists delivery_fee numeric(12,2) not null default 0;
 alter table orders add column if not exists food_subtotal numeric(12,2);

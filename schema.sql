@@ -140,3 +140,118 @@ on conflict (id) do nothing;
 
 -- Archive query pattern: newest delivered orders for a business.
 -- Search should normalize phone/email before querying in application code.
+
+
+-- Advanced rider delivery module: tenant feature configuration and delivery ledger.
+create table if not exists business_features (
+  business_id uuid primary key references businesses(id) on delete cascade,
+  rider_module_enabled boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists rider_auth (
+  rider_id uuid primary key references riders(id) on delete cascade,
+  password_hash text not null,
+  payout_phone text,
+  payout_recipient_code text,
+  last_login_at timestamptz
+);
+
+create table if not exists rider_sessions (
+  id uuid primary key,
+  rider_id uuid not null references riders(id) on delete cascade,
+  token_hash text not null unique,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists rider_presence (
+  rider_id uuid primary key references riders(id) on delete cascade,
+  online boolean not null default false,
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists delivery_events (
+  id uuid primary key,
+  trip_id uuid not null references rider_trips(id) on delete cascade,
+  status text not null,
+  note text,
+  latitude numeric(10,7),
+  longitude numeric(10,7),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists rider_earnings (
+  id uuid primary key,
+  rider_id uuid not null references riders(id),
+  trip_id uuid not null unique references rider_trips(id),
+  amount numeric(12,2) not null check (amount >= 0),
+  status text not null default 'HELD',
+  released_at timestamptz,
+  payout_status text not null default 'PENDING',
+  payout_recipient_code text,
+  payout_reference text,
+  payout_transfer_code text,
+  paid_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists delivery_quotes (
+  id uuid primary key,
+  business_id uuid not null references businesses(id),
+  order_id uuid references orders(id) on delete set null,
+  pickup_address text not null,
+  delivery_address text not null,
+  distance_meters integer not null,
+  duration_seconds integer,
+  fuel_price_kes numeric(10,2),
+  base_fee_kes numeric(12,2) not null,
+  distance_fee_kes numeric(12,2) not null,
+  time_fee_kes numeric(12,2) not null,
+  demand_multiplier numeric(8,4) not null default 1,
+  delivery_fee_kes numeric(12,2) not null,
+  currency text not null default 'KES',
+  status text not null default 'QUOTED',
+  created_at timestamptz not null default now()
+);
+
+create table if not exists fuel_price_snapshots (
+  id uuid primary key,
+  city text not null,
+  petrol_price_kes numeric(10,2) not null,
+  source text not null,
+  effective_from date,
+  fetched_at timestamptz not null default now()
+);
+
+alter table orders add column if not exists delivery_fee numeric(12,2) not null default 0;
+alter table orders add column if not exists food_subtotal numeric(12,2);
+alter table orders add column if not exists delivery_status text;
+alter table orders add column if not exists pickup_address text;
+alter table orders add column if not exists delivery_address text;
+alter table orders add column if not exists delivery_lat numeric(10,7);
+alter table orders add column if not exists delivery_lng numeric(10,7);
+alter table orders add column if not exists route_distance_meters integer;
+alter table orders add column if not exists route_duration_seconds integer;
+alter table orders add column if not exists delivery_fee_status text not null default 'NONE';
+alter table orders add column if not exists rider_earning numeric(12,2) not null default 0;
+alter table orders add column if not exists delivery_fee_released_at timestamptz;
+alter table orders add column if not exists cancelled_at timestamptz;
+alter table orders add column if not exists cancellation_reason text;
+
+alter table riders add column if not exists email text;
+alter table riders add column if not exists payout_phone text;
+alter table riders add column if not exists active boolean not null default true;
+
+create index if not exists rider_sessions_rider_idx on rider_sessions(rider_id, expires_at desc);
+create index if not exists delivery_events_trip_idx on delivery_events(trip_id, created_at);
+create index if not exists rider_earnings_rider_idx on rider_earnings(rider_id, created_at desc);
+create index if not exists delivery_quotes_business_idx on delivery_quotes(business_id, created_at desc);
+create index if not exists fuel_price_city_idx on fuel_price_snapshots(city, fetched_at desc);
+
+insert into business_features (business_id, rider_module_enabled)
+values ('11111111-1111-4111-8111-111111111111', true)
+on conflict (business_id) do update set rider_module_enabled=excluded.rider_module_enabled, updated_at=now();
+
+update orders set food_subtotal=coalesce(food_subtotal,subtotal), delivery_status=coalesce(delivery_status, case when status='DELIVERED' then 'DELIVERED' when status='OUT_FOR_DELIVERY' then 'ASSIGNED' else 'NONE' end);

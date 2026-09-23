@@ -163,6 +163,18 @@ async function getNairobiFuelPrice() {
     await pool.query(`insert into fuel_price_snapshots(id,city,petrol_price_kes,source,effective_from) values(gen_random_uuid(),'Nairobi',$1,'environment',current_date)`,[configured]);
     return configured;
   }
+  try {
+    const response=await fetch(process.env.EPRA_FUEL_PRICE_URL||'https://www.epra.go.ke/EPRA%20Pump%20Prices',{headers:{'User-Agent':'RestaurantDeliveryPlatform/1.0'}});
+    const html=await response.text();
+    const match=html.match(/Nairobi\\s+PMS\\s+([0-9]+(?:\\.[0-9]+)?)/i);
+    if(match){
+      const price=Number(match[1]);
+      if(Number.isFinite(price)&&price>0){
+        await pool.query(`insert into fuel_price_snapshots(id,city,petrol_price_kes,source,effective_from) values(gen_random_uuid(),'Nairobi',$1,'EPRA',current_date)`,[price]);
+        return price;
+      }
+    }
+  } catch {}
   if(cached.rowCount) return Number(cached.rows[0].petrol_price_kes);
   return 214.03;
 }

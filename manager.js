@@ -11,7 +11,7 @@ function managerDate(value) {
 async function loadManager() {
   managerRoot.innerHTML = '<div class="panel"><p>Loading manager overview…</p></div>';
   try {
-    const orders = await apiRequest('/api/orders?businessId=' + encodeURIComponent(BUSINESS_ID));
+    const [orders, features] = await Promise.all([apiRequest('/api/orders?businessId=' + encodeURIComponent(BUSINESS_ID)), apiRequest('/api/features')]);
     const stats = orders.reduce((s, o) => {
       s.orders += 1;
       s.revenue += Number(o.total || 0);
@@ -32,7 +32,7 @@ async function loadManager() {
         </div>
         <div class="status-actions">
           <a class="btn" href="dashboard.html">Open restaurant</a>
-          <a class="btn" href="rider.html">Open riders</a>
+          ${features.riderModule ? '<a class="btn" href="rider.html">Open riders</a>' : ''}
         </div>
       </div>
 

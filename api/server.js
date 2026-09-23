@@ -410,6 +410,22 @@ app.post('/api/riders/:id/deliveries/:tripId/accept', requireRiderModule, requir
   await pool.query(`insert into delivery_events(id,trip_id,status) values(gen_random_uuid(),$1,'ACCEPTED')`,[req.params.tripId]);
   res.json({ok:true,status:'ACCEPTED'});
 });
+async function createRiderRecipientAndPayout(rider, amount, tripId) {
+  if (String(process.env.RIDER_AUTO_PAYOUT || 'false').toLowerCase() !== 'true') return {status:'HELD',reason:'RIDER_AUTO_PAYOUT is disabled'};
+  const phone=normalizeKenyanPhone(rider.payout_phone||rider.phone);
+  let recipientCode=rider.payout_recipient_code;
+  if(!recipientCode){
+    const recipient=await paystackRequest('/transferrecipient',{method:'POST',body:JSON.stringify({type:'mobile_money',name:rider.name,account_number:phone.replace('+254','0'),bank_code:'MPESA',currency:'KES'})});
+    recipientCode=recipient.data?.recipient_code;
+    if(!recipientCode) throw new Error('Paystack did not return an M-Pesa recipient code');
+    await pool.query('update rider_auth set payout_recipient_code=$1 where rider_id=$2',[recipientCode,rider.id]);
+  }
+  const reference=`rider_${String(tripId).replace(/-/g,'').slice(0,40)}`;
+  const transfer=await paystackRequest('/transfer',{method:'POST',body:JSON.stringify({source:'balance',amount:String(Math.round(Number(amount)*100)),currency:'KES',recipient:recipientCode,reference,reason:`Delivery earnings for trip ${tripId}`})});
+  const data=transfer.data||{};
+  await pool.query('update rider_earnings set payout_status=$1,payout_recipient_code=$2,payout_reference=$3,payout_transfer_code=$4,paid_at=case when $1=\'PAID\' then now() else null end,status=case when $1=\'PAID\' then \'PAID\' else status end where trip_id=$5',[String(data.status||'PENDING').toUpperCase()==='SUCCESS'?'PAID':'PENDING',recipientCode,reference,data.transfer_code||null,tripId]);
+  return data;
+}
 async function updateDeliveryStatus(req,res,nextStatus){
   try{
     const result=await pool.query(`select t.*,o.status as order_status,o.id as order_id,o.business_id from rider_trips t join orders o on o.id=t.order_id where t.id=$1 and t.rider_id=$2 for update`,[req.params.tripId,req.rider.id]);
@@ -423,8 +439,13 @@ async function updateDeliveryStatus(req,res,nextStatus){
     if(nextStatus==='DELIVERED'){
       await pool.query(`update orders set status='DELIVERED',delivered_at=coalesce(delivered_at,now()),delivery_status='DELIVERED',delivery_fee_status='RELEASED',delivery_fee_released_at=now() where id=$1`,[trip.order_id]);
       await pool.query(`update rider_trips set completed_at=now(),confirmed_by='rider' where id=$1`,[trip.id]);
-      const earning=await pool.query(`insert into rider_earnings(id,rider_id,trip_id,amount,status) select gen_random_uuid(),rider_id,$1,delivery_fee,'RELEASED' from orders where id=$2 on conflict(trip_id) do update set status='RELEASED',released_at=now() returning *`,[trip.id,trip.order_id]);
-      await pool.query('update rider_earnings set released_at=now() where trip_id=$1',[trip.id]);
+      const earning=await pool.query(`insert into rider_earnings(id,rider_id,trip_id,amount,status,released_at) select gen_random_uuid(),rider_id,$1,delivery_fee,'RELEASED',now() from orders where id=$2 on conflict(trip_id) do update set status='RELEASED',released_at=now() returning *`,[trip.id,trip.order_id]);
+      try {
+        const rider=await pool.query('select r.*,a.payout_recipient_code from riders r left join rider_auth a on a.rider_id=r.id where r.id=$1',[req.rider.id]);
+        await createRiderRecipientAndPayout(rider.rows[0],earning.rows[0].amount,trip.id);
+      } catch (payoutError) {
+        console.error('Rider payout queued/failed:',payoutError.message);
+      }
       broadcastOrder((await pool.query('select * from orders where id=$1',[trip.order_id])).rows[0],{reason:'delivery.completed',notification:'Delivery completed'});
       return res.json({ok:true,status:nextStatus,earning:earning.rows[0]});
     }

@@ -450,3 +450,48 @@ create table if not exists station_sessions (
 );
 create index if not exists station_sessions_station_idx on station_sessions(station_id,expires_at desc);
 
+
+
+-- Long-term customer/order records and audit trail.
+create table if not exists order_audit_events (
+  id uuid primary key,
+  order_id uuid not null references orders(id) on delete cascade,
+  business_id uuid not null references businesses(id) on delete cascade,
+  event_type text not null,
+  status_from text,
+  status_to text,
+  payment_status_from text,
+  payment_status_to text,
+  actor_type text not null default 'SYSTEM',
+  actor_id uuid,
+  note text,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists order_audit_order_idx on order_audit_events(order_id,created_at desc);
+create index if not exists order_audit_business_idx on order_audit_events(business_id,created_at desc);
+
+create or replace function record_order_audit_event() returns trigger language plpgsql as $$
+begin
+  if (tg_op='INSERT') then
+    insert into order_audit_events(id,order_id,business_id,event_type,status_to,payment_status_to,actor_type,metadata)
+    values(gen_random_uuid(),new.id,new.business_id,'ORDER_CREATED',new.status,new.payment_status,'SYSTEM',jsonb_build_object('order_number',new.order_number,'total',new.total));
+  elsif (old.status is distinct from new.status or old.payment_status is distinct from new.payment_status) then
+    insert into order_audit_events(id,order_id,business_id,event_type,status_from,status_to,payment_status_from,payment_status_to,actor_type,metadata)
+    values(gen_random_uuid(),new.id,new.business_id,'ORDER_CHANGED',old.status,new.status,old.payment_status,new.payment_status,'SYSTEM',jsonb_build_object('order_number',new.order_number));
+  end if;
+  return new;
+end; $$;
+drop trigger if exists orders_audit_trigger on orders;
+create trigger orders_audit_trigger after insert or update of status,payment_status on orders for each row execute function record_order_audit_event();
+
+create or replace function record_refund_audit_event() returns trigger language plpgsql as $$
+declare b uuid;
+begin
+  select business_id into b from orders where id=new.order_id;
+  insert into order_audit_events(id,order_id,business_id,event_type,actor_type,note,metadata)
+  values(gen_random_uuid(),new.order_id,b,'REFUND_EVENT','SYSTEM',coalesce(new.merchant_note,new.customer_note),jsonb_build_object('refund_id',new.id,'amount',new.amount,'status',new.status,'provider_refund_id',new.provider_refund_id));
+  return new;
+end; $$;
+drop trigger if exists refunds_audit_trigger on refunds;
+create trigger refunds_audit_trigger after insert or update of status,amount,merchant_note,customer_note on refunds for each row execute function record_refund_audit_event();

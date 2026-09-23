@@ -82,3 +82,52 @@ Set these on the API service:
 `NAIROBI_FUEL_PRICE_KES=` — optional manual fallback/override.
 
 For each restaurant, set `business_features.rider_module_enabled=true` only when that client has purchased the advanced package.
+
+
+## Branch-aware delivery engine
+
+Delivery is a core capability and is not dependent on the rider dashboard.
+
+### Restaurant branches
+
+A business can have multiple active branches. Managers can create branches with:
+- name and human-readable address
+- latitude/longitude map pin
+- building, floor, unit/shop, street, estate and landmark
+- pickup instructions
+- active/accepting-orders status
+- delivery service radius
+
+Customers do not manually select a branch. The backend filters nearby active branches using straight-line distance first, then uses one Google Routes Compute Route Matrix request against up to three candidates. The branch with the shortest valid road route is selected.
+
+Google's route matrix supports multiple origins and destinations in one request, and its response field mask is deliberately limited to the fields the platform needs (distance, duration and status). This reduces unnecessary routing work and response size. See the official Google Routes documentation for the matrix behavior and field-mask guidance.
+
+### Package behavior
+
+**Basic package**
+- Delivery engine remains active.
+- Restaurant controls the master delivery pricing rules within platform safety bounds.
+- Customer sees the delivery fee before payment.
+- Restaurant can use its own/manual delivery person.
+- No rider dashboard or automatic rider payout is required.
+
+**Advanced package**
+- Rider dashboard and rider accounts are enabled.
+- Delivery pricing is platform-managed automatically.
+- Restaurant cannot manually alter the delivery formula.
+- Rider payment is calculated separately from the customer fee so the platform can protect a minimum rider earning floor.
+- The system may subsidize a delivery when the customer-safe fee is lower than the rider-safe payout instead of forcing an underpaid rider trip.
+- The system also caps customer delivery fees and applies a service-radius limit to avoid extreme prices.
+
+### Cost-control strategy
+
+1. Customer address geocoding is cached for 30 days.
+2. Branch candidates are filtered locally with Haversine distance before Google is called.
+3. Only the nearest three eligible branches are sent to the route matrix.
+4. Only required route fields are requested.
+5. Delivery quotes are created once and locked to the order.
+6. Existing SSE order updates avoid frequent dashboard polling.
+7. Fuel data is cached rather than fetched for every delivery.
+8. Advanced pricing does not use rider-online counts as a per-quote demand API dependency.
+
+The pricing model is deliberately transparent rather than copying any third-party delivery company's proprietary formula. It should be calibrated against real completed-delivery data before being treated as a final commercial rate card.

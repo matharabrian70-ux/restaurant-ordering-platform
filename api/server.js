@@ -15,7 +15,7 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'https://matharabrian70-ux.gith
 const RIDER_MODULE_ENABLED = String(process.env.RIDER_MODULE_ENABLED || 'false').toLowerCase() === 'true';
 
 app.use(cors());
-app.use(express.json({ limit: '100kb', verify: (req, _res, buf) => { req.rawBody = Buffer.from(buf); } }));
+app.use(express.json({ limit: '2mb', verify: (req, _res, buf) => { req.rawBody = Buffer.from(buf); } }));
 
 // Optional advanced module flag. The core ordering system remains usable when disabled.
 app.get('/api/features', async (req, res) => {

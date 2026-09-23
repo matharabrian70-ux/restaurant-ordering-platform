@@ -53,3 +53,6 @@ async function getRiderActiveDelivery(riderId) {
 async function completeRiderDelivery(riderId) {
   return apiRequest('/api/riders/' + encodeURIComponent(riderId) + '/complete-delivery', { method: 'POST', body: JSON.stringify({}) });
 }
+
+async function getAdminRiders() { return apiRequest('/api/admin/riders?businessId='+encodeURIComponent(BUSINESS_ID)); }
+async function getAdminRiderTrips(riderId) { return apiRequest('/api/admin/riders/'+encodeURIComponent(riderId)+'/trips'); }

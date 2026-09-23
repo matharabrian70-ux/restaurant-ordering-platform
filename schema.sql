@@ -495,3 +495,12 @@ begin
 end; $$;
 drop trigger if exists refunds_audit_trigger on refunds;
 create trigger refunds_audit_trigger after insert or update of status,amount,merchant_note,customer_note on refunds for each row execute function record_refund_audit_event();
+
+-- Backfill baseline history for orders/refunds that existed before the audit triggers.
+insert into order_audit_events(id,order_id,business_id,event_type,status_to,payment_status_to,actor_type,metadata,created_at)
+select gen_random_uuid(),o.id,o.business_id,'ORDER_CREATED',o.status,o.payment_status,'SYSTEM',jsonb_build_object('order_number',o.order_number,'total',o.total),o.created_at
+from orders o where not exists(select 1 from order_audit_events ae where ae.order_id=o.id and ae.event_type='ORDER_CREATED');
+insert into order_audit_events(id,order_id,business_id,event_type,actor_type,note,metadata,created_at)
+select gen_random_uuid(),r.order_id,o.business_id,'REFUND_EVENT','SYSTEM',coalesce(r.merchant_note,r.customer_note),jsonb_build_object('refund_id',r.id,'amount',r.amount,'status',r.status,'provider_refund_id',r.provider_refund_id),r.created_at
+from refunds r join orders o on o.id=r.order_id where not exists(select 1 from order_audit_events ae where ae.order_id=r.order_id and ae.event_type='REFUND_EVENT' and (ae.metadata->>'refund_id')=r.id::text);
+

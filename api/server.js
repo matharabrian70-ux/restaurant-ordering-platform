@@ -183,6 +183,13 @@ async function calculateDeliveryQuote({businessId,pickupAddress,deliveryAddress}
   return {...route,km,minutes,fuelPriceKes:fuel,baseFeeKes:baseFee,distanceFeeKes:distanceFee,timeFeeKes:timeFee,demandMultiplier,deliveryFeeKes:fee};
 }
 
+app.get('/api/businesses/:id', async (req,res)=>{
+  try{
+    const result=await pool.query('select id,name,slug,pickup_address from businesses where id=$1',[req.params.id]);
+    if(!result.rowCount)return res.status(404).json({error:'Business not found'});
+    res.json(result.rows[0]);
+  }catch{res.status(500).json({error:'Unable to load business'});}
+});
 app.get('/api/events', async (req, res) => {
   const businessId = String(req.query.businessId || '');
   const orderId = req.query.orderId ? String(req.query.orderId) : null;

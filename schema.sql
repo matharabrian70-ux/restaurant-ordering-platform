@@ -340,3 +340,65 @@ create table if not exists geocoding_cache (
   expires_at timestamptz not null,
   created_at timestamptz not null default now()
 );
+
+
+-- Menu management, promotions, rider profiles and restaurant order stations.
+create table if not exists menu_categories (
+  id uuid primary key,
+  business_id uuid not null references businesses(id) on delete cascade,
+  name text not null,
+  description text,
+  sort_order integer not null default 0,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (business_id,name)
+);
+alter table products add column if not exists category_id uuid references menu_categories(id) on delete set null;
+alter table products add column if not exists featured boolean not null default false;
+alter table products add column if not exists options jsonb not null default '[]'::jsonb;
+alter table products add column if not exists updated_at timestamptz not null default now();
+alter table riders add column if not exists profile_image_url text;
+create index if not exists products_business_category_idx on products(business_id,category_id,active);
+create index if not exists products_business_featured_idx on products(business_id,featured) where featured=true;
+
+create table if not exists promotions (
+  id uuid primary key,
+  business_id uuid not null references businesses(id) on delete cascade,
+  name text not null,
+  type text not null check (type in ('PERCENT','FIXED','SPECIAL_PRICE','BUY_X_GET_Y','FREE_ITEM')),
+  value numeric(12,2) not null default 0,
+  min_order_kes numeric(12,2) not null default 0,
+  starts_at timestamptz,
+  ends_at timestamptz,
+  days_of_week integer[] not null default '{}',
+  start_time time,
+  end_time time,
+  active boolean not null default true,
+  banner_text text,
+  product_ids jsonb not null default '[]'::jsonb,
+  category text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists promotions_business_active_idx on promotions(business_id,active,starts_at,ends_at);
+
+create table if not exists restaurant_order_stations (
+  id uuid primary key,
+  business_id uuid not null references businesses(id) on delete cascade,
+  name text not null,
+  device_type text not null check (device_type in ('PHONE','TABLET','PC','LAPTOP','TV','BOARD')),
+  mode text not null default 'OPERATIONS' check (mode in ('OPERATIONS','KITCHEN','COUNTER','DISPLAY')),
+  active boolean not null default true,
+  last_seen_at timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+create index if not exists restaurant_order_stations_business_idx on restaurant_order_stations(business_id,active,last_seen_at desc);
+
+insert into menu_categories(id,business_id,name,sort_order) values
+(gen_random_uuid(),'11111111-1111-4111-8111-111111111111','Mains',10),
+(gen_random_uuid(),'11111111-1111-4111-8111-111111111111','Sides',20),
+(gen_random_uuid(),'11111111-1111-4111-8111-111111111111','Drinks',30),
+(gen_random_uuid(),'11111111-1111-4111-8111-111111111111','Desserts',40)
+on conflict (business_id,name) do nothing;
+update products p set category_id=c.id,updated_at=now() from menu_categories c where p.business_id=c.business_id and lower(coalesce(p.category,''))=lower(c.name) and p.category_id is null;

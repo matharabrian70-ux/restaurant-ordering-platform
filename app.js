@@ -26,3 +26,4 @@ function renderDashboard(){const el=document.getElementById('dashboard-view');if
 function setStatus(id,status){const orders=read('doe_orders',[]);const o=orders.find(x=>x.id===id);if(o)o.status=status;write('doe_orders',orders);renderDashboard()}
 document.addEventListener('click',e=>{const b=e.target.closest('[data-order-product]');if(b){e.preventDefault();location.href='product.html?id='+encodeURIComponent(b.dataset.orderProduct)}});
 updateCount();renderMenu();renderProduct();renderCart();renderCheckout();renderOrder();renderDashboard();
+loadLiveRestaurantMenu();

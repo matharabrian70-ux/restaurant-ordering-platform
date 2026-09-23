@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
 import pg from 'pg';
+import { registerDeliveryEngine } from './delivery-engine.js';
 
 const { Pool } = pg;
 const app = express();
@@ -510,4 +511,6 @@ app.post('/api/orders/:id/assign-rider',requireRiderModule,async(req,res)=>{
     res.json({ok:true,tripId:trip.rows[0].id});
   }catch(error){try{await client.query('rollback')}catch{}res.status(500).json({error:error.message||'Unable to assign rider'});}finally{client.release();}
 });
+registerDeliveryEngine(app,pool);
+
 app.listen(port, () => console.log(`Ordering API listening on ${port}`));

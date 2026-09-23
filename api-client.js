@@ -11,8 +11,8 @@ async function apiRequest(path, options = {}) {
   return data;
 }
 
-async function getDeliveryQuote({ pickupAddress, deliveryAddress }) { return apiRequest('/api/delivery/quote', { method:'POST', body: JSON.stringify({ businessId: BUSINESS_ID, pickupAddress, deliveryAddress }) }); }
-async function createRemoteOrder({ customer, phone, email, note, payment, items, total, quoteId, deliveryAddress }) {
+async function getDeliveryQuote({ pickupAddress, deliveryAddress, latitude, longitude }) { return apiRequest('/api/delivery/quote-v2', { method:'POST', body: JSON.stringify({ businessId: BUSINESS_ID, pickupAddress, deliveryAddress, customerLat: latitude, customerLng: longitude }) }); }
+async function createRemoteOrder({ customer, phone, email, note, payment, items, subtotal, total, quoteId, deliveryAddress }) {
   return apiRequest('/api/orders', {
     method: 'POST',
     body: JSON.stringify({
@@ -20,7 +20,7 @@ async function createRemoteOrder({ customer, phone, email, note, payment, items,
       customer: { name: customer, phone, email },
       items: items.map(item => ({ productId: null, name: item.name, quantity: item.qty, unitPrice: item.unit, options: item.options || {} })),
       paymentMethod: payment,
-      subtotal: total,
+      subtotal,
       total,
       quoteId,
       deliveryNote: note,

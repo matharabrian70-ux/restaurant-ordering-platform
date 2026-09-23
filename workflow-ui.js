@@ -2,7 +2,7 @@ const REMOTE_ORDER_STATUSES=['NEW','ACCEPTED','OUT_FOR_DELIVERY','DELIVERED','CA
 const REMOTE_ORDER_LABELS={NEW:'Payment confirmed — waiting for restaurant',ACCEPTED:'Your order is being prepared',OUT_FOR_DELIVERY:'Out for delivery',DELIVERED:'Delivered',CANCELLED:'Cancelled'};
 
 async function getPlatformFeatures(){
-  return apiRequest('/api/features');
+  return apiRequest('/api/features?businessId='+encodeURIComponent(BUSINESS_ID));
 }
 
 async function dashboardOrders(){

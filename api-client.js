@@ -11,7 +11,8 @@ async function apiRequest(path, options = {}) {
   return data;
 }
 
-async function createRemoteOrder({ customer, phone, email, note, payment, items, total }) {
+async function getDeliveryQuote({ pickupAddress, deliveryAddress }) { return apiRequest('/api/delivery/quote', { method:'POST', body: JSON.stringify({ businessId: BUSINESS_ID, pickupAddress, deliveryAddress }) }); }
+async function createRemoteOrder({ customer, phone, email, note, payment, items, total, quoteId, deliveryAddress }) {
   return apiRequest('/api/orders', {
     method: 'POST',
     body: JSON.stringify({
@@ -21,7 +22,9 @@ async function createRemoteOrder({ customer, phone, email, note, payment, items,
       paymentMethod: payment,
       subtotal: total,
       total,
-      deliveryNote: note
+      quoteId,
+      deliveryNote: note,
+      deliveryAddress
     })
   });
 }
@@ -41,8 +44,8 @@ async function cancelRemoteOrder(orderId) {
 async function getRemoteRiders() {
   return apiRequest('/api/riders?businessId=' + encodeURIComponent(BUSINESS_ID));
 }
-async function createRemoteRider({ name, phone, vehicleType, numberPlate }) {
-  return apiRequest('/api/riders', { method: 'POST', body: JSON.stringify({ businessId: BUSINESS_ID, name, phone, vehicleType, numberPlate }) });
+async function createRemoteRider({ name, phone, email, vehicleType, numberPlate, password, payoutPhone }) {
+  return apiRequest('/api/riders', { method: 'POST', body: JSON.stringify({ businessId: BUSINESS_ID, name, phone, email, vehicleType, numberPlate, password, payoutPhone }) });
 }
 async function getRiderActiveDelivery(riderId) {
   return apiRequest('/api/riders/' + encodeURIComponent(riderId) + '/active-delivery');

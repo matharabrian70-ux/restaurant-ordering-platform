@@ -402,3 +402,51 @@ insert into menu_categories(id,business_id,name,sort_order) values
 (gen_random_uuid(),'11111111-1111-4111-8111-111111111111','Desserts',40)
 on conflict (business_id,name) do nothing;
 update products p set category_id=c.id,updated_at=now() from menu_categories c where p.business_id=c.business_id and lower(coalesce(p.category,''))=lower(c.name) and p.category_id is null;
+
+
+-- Manager authentication and QR-paired order stations.
+create table if not exists manager_users (
+  id uuid primary key,
+  business_id uuid not null references businesses(id) on delete cascade,
+  name text not null,
+  email text not null,
+  password_hash text not null,
+  role text not null default 'MANAGER' check (role in ('OWNER','MANAGER')),
+  active boolean not null default true,
+  last_login_at timestamptz,
+  created_at timestamptz not null default now(),
+  unique (business_id,email)
+);
+create index if not exists manager_users_business_idx on manager_users(business_id,active);
+
+create table if not exists manager_sessions (
+  id uuid primary key,
+  manager_id uuid not null references manager_users(id) on delete cascade,
+  token_hash text not null unique,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists manager_sessions_manager_idx on manager_sessions(manager_id,expires_at desc);
+
+alter table restaurant_order_stations add column if not exists updated_at timestamptz not null default now();
+
+create table if not exists station_pairing_tokens (
+  id uuid primary key,
+  station_id uuid not null references restaurant_order_stations(id) on delete cascade,
+  token_hash text not null unique,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists station_pairing_tokens_station_idx on station_pairing_tokens(station_id,expires_at desc);
+
+create table if not exists station_sessions (
+  id uuid primary key,
+  station_id uuid not null references restaurant_order_stations(id) on delete cascade,
+  token_hash text not null unique,
+  expires_at timestamptz not null,
+  last_seen_at timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+create index if not exists station_sessions_station_idx on station_sessions(station_id,expires_at desc);
+

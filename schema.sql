@@ -259,3 +259,75 @@ values ('11111111-1111-4111-8111-111111111111', true)
 on conflict (business_id) do update set rider_module_enabled=excluded.rider_module_enabled, updated_at=now();
 
 update orders set food_subtotal=coalesce(food_subtotal,subtotal), delivery_status=coalesce(delivery_status, case when status='DELIVERED' then 'DELIVERED' when status='OUT_FOR_DELIVERY' then 'ASSIGNED' else 'NONE' end);
+
+
+-- Branch-aware delivery engine and package pricing
+create table if not exists business_branches (
+  id uuid primary key,
+  business_id uuid not null references businesses(id) on delete cascade,
+  name text not null,
+  address text not null,
+  latitude numeric(10,7) not null,
+  longitude numeric(10,7) not null,
+  google_place_id text,
+  building text,
+  floor text,
+  unit text,
+  street text,
+  estate text,
+  landmark text,
+  pickup_instructions text,
+  active boolean not null default true,
+  accepting_orders boolean not null default true,
+  service_radius_km numeric(8,2) not null default 18,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists business_branches_business_active_idx on business_branches(business_id,active,accepting_orders);
+
+create table if not exists delivery_pricing_rules (
+  business_id uuid primary key references businesses(id) on delete cascade,
+  base_fee_kes numeric(12,2) not null default 70,
+  per_km_kes numeric(12,2) not null default 24,
+  per_minute_kes numeric(12,2) not null default 0.90,
+  minimum_fee_kes numeric(12,2) not null default 100,
+  maximum_fee_kes numeric(12,2) not null default 450,
+  rider_base_kes numeric(12,2) not null default 55,
+  rider_per_km_kes numeric(12,2) not null default 17,
+  rider_per_minute_kes numeric(12,2) not null default 0.85,
+  rider_minimum_kes numeric(12,2) not null default 75,
+  rider_maximum_kes numeric(12,2) not null default 500,
+  fuel_reference_kes numeric(12,2) not null default 200,
+  fuel_sensitivity numeric(8,4) not null default 0.35,
+  customer_margin numeric(8,4) not null default 1.08,
+  peak_multiplier numeric(8,4) not null default 1,
+  service_radius_km numeric(8,2) not null default 18,
+  auto_round_kes numeric(8,2) not null default 10,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table orders add column if not exists branch_id uuid references business_branches(id) on delete set null;
+alter table orders add column if not exists customer_lat numeric(10,7);
+alter table orders add column if not exists customer_lng numeric(10,7);
+alter table orders add column if not exists selected_branch_distance_meters integer;
+alter table orders add column if not exists selected_branch_duration_seconds integer;
+
+alter table delivery_quotes add column if not exists branch_id uuid references business_branches(id) on delete set null;
+alter table delivery_quotes add column if not exists customer_lat numeric(10,7);
+alter table delivery_quotes add column if not exists customer_lng numeric(10,7);
+alter table delivery_quotes add column if not exists rider_earning_kes numeric(12,2) not null default 0;
+alter table delivery_quotes add column if not exists pricing_mode text not null default 'MASTER';
+
+insert into delivery_pricing_rules(business_id)
+select id from businesses
+on conflict(business_id) do nothing;
+
+insert into business_branches(id,business_id,name,address,latitude,longitude,active,accepting_orders)
+select gen_random_uuid(),id,'Main Branch',coalesce(pickup_address,name),-1.286389,36.817223,true,true
+from businesses b
+where b.slug='savanna-bites'
+and not exists(select 1 from business_branches bb where bb.business_id=b.id);
+
+update orders o set branch_id=q.branch_id,customer_lat=q.customer_lat,customer_lng=q.customer_lng
+from delivery_quotes q where o.id=q.order_id and (o.branch_id is null or o.customer_lat is null);

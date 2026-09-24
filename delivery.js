@@ -1,39 +1,82 @@
-const RIDER_SESSION_KEY='doe_remote_rider_id';
-const RIDER_BUSINESS_ID='11111111-1111-4111-8111-111111111111';
+const RIDER_TOKEN_KEY='rider_session_token';
+const RIDER_BUSINESS_ID=BUSINESS_ID;
+let rider=null,lastTripId=null,pollTimer=null;
 
-async function riderApi(path, options={}){
-  const response=await fetch('https://restaurant-ordering-api-ow3p.onrender.com'+path,{...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});
-  const data=await response.json().catch(()=>({}));
-  if(!response.ok) throw new Error(data.error||`Request failed (${response.status})`);
-  return data;
-}
-async function loadRiders(){return riderApi('/api/riders?businessId='+encodeURIComponent(RIDER_BUSINESS_ID));}
-function currentRiderId(){return localStorage.getItem(RIDER_SESSION_KEY)||'';}
-function setCurrentRider(id){localStorage.setItem(RIDER_SESSION_KEY,id);}
-async function createRider(){
-  const name=document.getElementById('new-rider-name').value.trim(),phone=document.getElementById('new-rider-phone').value.trim(),vehicleType=document.getElementById('new-rider-vehicle').value.trim(),numberPlate=document.getElementById('new-rider-plate').value.trim(),error=document.getElementById('rider-create-error');
-  if(!name||!phone||!vehicleType||!numberPlate){error.textContent='Complete all rider fields.';return;}
-  try{const rider=await riderApi('/api/riders',{method:'POST',body:JSON.stringify({businessId:RIDER_BUSINESS_ID,name,phone,vehicleType,numberPlate})});setCurrentRider(rider.id);await renderRider();}catch(err){error.textContent=err.message||'Could not create rider.';}
-}
-async function signInRider(){
-  const id=document.getElementById('rider-id').value.trim(),error=document.getElementById('rider-signin-error');
-  try{const rs=await loadRiders(),rider=rs.find(r=>r.id===id);if(!rider)throw new Error('Rider ID not found. Create the rider first on this shared system.');setCurrentRider(rider.id);await renderRider();}catch(err){error.textContent=err.message||'Could not sign in.';}
-}
-async function completeDelivery(){const id=currentRiderId();if(!id)return;try{await riderApi('/api/riders/'+encodeURIComponent(id)+'/complete-delivery',{method:'POST',body:JSON.stringify({})});await renderRider();}catch(err){alert(err.message||'Could not complete delivery.');}}
-async function renderRider(){
-  const el=document.getElementById('rider-view');if(!el)return;
+function riderHeaders(){const token=localStorage.getItem(RIDER_TOKEN_KEY);return token?{'Authorization':'Bearer '+token}:{};}
+async function riderApi(path,options={}){return apiRequest(path,{...options,headers:{...riderHeaders(),...(options.headers||{})}});}
+function clearRiderSession(){localStorage.removeItem(RIDER_TOKEN_KEY);rider=null;}
+function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+function riderMoney(v){return 'KSh '+Number(v||0).toLocaleString();}
+function mapsUrl(origin,destination){return 'https://www.google.com/maps/dir/?api=1&origin='+encodeURIComponent(origin||'')+'&destination='+encodeURIComponent(destination||'')+'&travelmode=driving';}
+
+async function loginRider(){
+  const phone=document.getElementById('rider-phone').value.trim(),password=document.getElementById('rider-password').value;
+  const error=document.getElementById('rider-login-error');error.textContent='Signing in…';
   try{
-    const rs=await loadRiders(),currentId=currentRiderId(),current=rs.find(r=>r.id===currentId);
-    el.innerHTML=`<div class="dashboard-head"><div><p class="eyebrow">DELIVERY PORTAL</p><h1>Rider dashboard.</h1><p class="muted">Riders are stored on the shared ordering backend, so the same rider is visible across devices.</p></div><a class="btn" href="dashboard.html">Restaurant</a></div>
-      <section class="panel"><h2>Available riders</h2><div class="rider-strip">${rs.length?rs.map(r=>`<div class="rider-chip"><strong>${r.name}</strong><span>${r.available?'AVAILABLE':'DELIVERING'}</span><small>${r.vehicle_type} · ${r.number_plate}</small><small>${r.id} · ${r.trip_count||0} trips</small></div>`).join(''):'<p class="muted">No riders created yet.</p>'}</div></section>
-      <section class="panel" style="margin-top:1rem"><h2>Create rider</h2><p class="muted">This creates the rider in PostgreSQL so the restaurant dashboard can see the same rider from another device.</p><div class="field"><label>Name</label><input id="new-rider-name" placeholder="Rider name"></div><div class="field"><label>Phone</label><input id="new-rider-phone" placeholder="07xx xxx xxx"></div><div class="field"><label>Vehicle type</label><input id="new-rider-vehicle" placeholder="Motorbike"></div><div class="field"><label>Number plate</label><input id="new-rider-plate" placeholder="KDA 123A"></div><button class="btn" onclick="createRider()">CREATE RIDER</button><p id="rider-create-error" class="muted"></p></section>
-      <section class="panel" style="margin-top:1rem"><h2>Rider sign in</h2><div class="field"><label>Rider ID</label><input id="rider-id" value="${current?.id||''}" placeholder="Use the rider ID shown above"></div><button class="btn" onclick="signInRider()">SIGN IN</button><p id="rider-signin-error" class="muted"></p></section>
-      <div id="rider-job" class="panel" style="margin-top:1rem"></div>`;
-    if(current) await showRiderJob(current); else document.getElementById('rider-job').innerHTML='<p class="eyebrow">NOT SIGNED IN</p><h2>Select a rider ID above.</h2>';
-  }catch(err){el.innerHTML=`<div class="empty"><h2>Rider service unavailable.</h2><p>${err.message||'Please try again.'}</p></div>`;}
+    const data=await riderApi('/api/riders/login',{method:'POST',body:JSON.stringify({businessId:RIDER_BUSINESS_ID,phone,password})});
+    localStorage.setItem(RIDER_TOKEN_KEY,data.token);rider=data.rider;await bootRider();
+  }catch(err){error.textContent=err.message||'Could not sign in.';}
 }
-async function showRiderJob(rider){
-  const el=document.getElementById('rider-job');
-  try{const active=await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/active-delivery');el.innerHTML=active?`<p class="eyebrow">ACTIVE DELIVERY</p><h2>${active.order_number} · ${active.customer_name}</h2><p>${active.delivery_note||'No delivery note'}</p><p><strong>${rider.name}</strong> · ${rider.vehicle_type} · ${rider.number_plate}</p><p>${active.phone}</p><button class="btn" onclick="completeDelivery()">MARK DELIVERED</button>`:`<p class="eyebrow">NO ACTIVE DELIVERY</p><h2>You are available.</h2><p class="muted">Trips completed: ${rider.trip_count||0}</p>`;}catch(err){el.innerHTML=`<p class="muted">${err.message||'Could not load delivery.'}</p>`;}
+async function logoutRider(){try{await riderApi('/api/riders/logout',{method:'POST'});}catch{}clearRiderSession();location.reload();}
+async function setOnline(online){
+  try{const data=await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/presence',{method:'POST',body:JSON.stringify({online})});document.getElementById('online-state').textContent=data.online?'ONLINE':'OFFLINE';await loadRiderDashboard();}
+  catch(err){alert(err.message||'Could not update availability.');}
 }
-renderRider();
+async function dashboardData(){return riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/dashboard');}
+async function acceptTrip(tripId){try{await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/deliveries/'+encodeURIComponent(tripId)+'/accept',{method:'POST',body:JSON.stringify({})});await loadRiderDashboard();}catch(err){alert(err.message||'Could not accept delivery.');}}
+async function setTripStatus(tripId,status){
+  const route={ARRIVED_AT_RESTAURANT:'arrived',PICKED_UP:'picked-up',ON_THE_WAY:'on-the-way'}[status];
+  if(!route)return;
+  try{await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/deliveries/'+encodeURIComponent(tripId)+'/'+route,{method:'POST',body:JSON.stringify({})});await loadRiderDashboard();}catch(err){alert(err.message||'Could not update delivery.');}
+}
+function maybeNotify(job){
+  if(!job||job.id===lastTripId)return;
+  lastTripId=job.id;
+  if('Notification' in window&&Notification.permission==='granted') new Notification('New delivery assignment',{body:job.order_number+' · '+job.customer_name});
+}
+async function requestNotifications(){if('Notification' in window&&Notification.permission==='default')try{await Notification.requestPermission();}catch{}}
+function statusSteps(current){
+  const steps=['ASSIGNED','ACCEPTED','ARRIVED_AT_RESTAURANT','PICKED_UP','ON_THE_WAY','DELIVERED'];
+  const index=steps.indexOf(current);
+  return '<div class="timeline-mini">'+steps.map((s,i)=>'<span class="'+(i<=index?'active':'')+'">'+s.replaceAll('_',' ')+'</span>').join('')+'</div>';
+}
+function activeCard(a){
+  if(!a)return '<div class="empty" style="padding:30px 10px"><h3>No active delivery.</h3><p>When the restaurant assigns a job to you, it will appear here.</p></div>';
+  const current=(a.delivery_status||'ASSIGNED');
+  let action='';
+  if(current==='ASSIGNED') action='<button onclick="acceptTrip(\''+a.trip_id+'\')">ACCEPT DELIVERY</button>';
+  else if(current==='ACCEPTED') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'ARRIVED_AT_RESTAURANT\')">ARRIVED AT RESTAURANT</button>';
+  else if(current==='ARRIVED_AT_RESTAURANT') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'PICKED_UP\')">PICKED UP</button>';
+  else if(current==='PICKED_UP') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'ON_THE_WAY\')">ON THE WAY</button>';
+  else if(current==='ON_THE_WAY') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'DELIVERED\')">MARK DELIVERED</button>';
+  return '<article class="rider-card"><h3>'+esc(a.order_number)+' · '+esc(a.customer_name)+'</h3><div class="rider-meta"><span>'+esc(a.pickup_address||'Restaurant')+'</span><span>→</span><span>'+esc(a.delivery_address||a.delivery_note||'Customer location')+'</span></div>'+statusSteps(current)+'<p><strong>Customer:</strong> '+esc(a.customer_name)+' · '+esc(a.phone||'')+'</p><p><strong>Order:</strong> '+esc(a.order_number)+' · <strong>Delivery fee:</strong> '+riderMoney(a.delivery_fee)+'</p><p><strong>Distance:</strong> '+(Number(a.route_distance_meters||0)/1000).toFixed(1)+' km</p><div class="rider-actions">'+action+' <a href="'+mapsUrl(a.pickup_address,a.delivery_address)+'" target="_blank" rel="noopener">OPEN GOOGLE MAPS</a></div></article>';
+}
+function renderAvailable(list){
+  if(!list.length)return '<p class="muted">No new assignments.</p>';
+  return list.map(a=>'<article class="rider-card"><h3>'+esc(a.order_number)+' · '+esc(a.restaurant_name)+'</h3><div class="rider-meta"><span>Customer: '+esc(a.customer_name)+'</span><span>'+esc(a.delivery_address||'Location pending')+'</span></div><p>'+Number(a.route_distance_meters||0)/1000+' km · '+riderMoney(a.delivery_fee)+' delivery fee</p></article>').join('');
+}
+function renderHistory(list){
+  if(!list.length)return '<p class="muted">No completed deliveries yet.</p>';
+  return list.slice(0,20).map(a=>'<div class="summary-row"><span><strong>'+esc(a.order_number)+'</strong><small style="display:block">'+esc(a.delivery_address||'')+' · '+(Number(a.distance_meters||0)/1000).toFixed(1)+' km</small></span><strong>'+riderMoney(a.earning)+'</strong></div>').join('');
+}
+async function loadRiderDashboard(){
+  const data=await dashboardData();maybeNotify(data.active);
+  document.getElementById('rider-stats').innerHTML='<div class="rider-stat"><span class="muted">Today</span><strong>'+riderMoney(data.todayEarnings)+'</strong><small>Earnings</small></div><div class="rider-stat"><span class="muted">This week</span><strong>'+riderMoney(data.weekEarnings)+'</strong><small>Earnings</small></div><div class="rider-stat"><span class="muted">Completed</span><strong>'+data.completed.length+'</strong><small>Recent trips</small></div><div class="rider-stat"><span class="muted">Online status</span><strong id="online-state">CHECKING</strong><small>Availability</small></div>';
+  document.getElementById('available-deliveries').innerHTML=renderAvailable(data.available);
+  document.getElementById('active-delivery').innerHTML=activeCard(data.active);
+  document.getElementById('earnings-summary').innerHTML='<div class="summary-row"><span>Today</span><strong>'+riderMoney(data.todayEarnings)+'</strong></div><div class="summary-row"><span>7 days</span><strong>'+riderMoney(data.weekEarnings)+'</strong></div><p class="muted">Delivery fee is recorded as rider earnings and released on successful delivery.</p>';
+  document.getElementById('delivery-history').innerHTML=renderHistory(data.completed);
+  document.getElementById('online-state').textContent='SET ABOVE';
+}
+async function bootRider(){
+  try{
+    rider=await riderApi('/api/riders/me');
+    document.getElementById('rider-login').classList.add('hidden');document.getElementById('rider-app').classList.remove('hidden');
+    document.getElementById('rider-header').innerHTML='<div class="rider-top"><div><p class="eyebrow">RIDER OPERATIONS</p><h1>'+esc(rider.name)+'</h1><p class="muted">'+esc(rider.vehicle_type)+' · '+esc(rider.number_plate)+' · '+esc(rider.payout_phone||rider.phone)+'</p></div><div><div class="online-toggle"><input id="online-check" type="checkbox"><label for="online-check"><strong id="online-state">OFFLINE</strong></label></div><div class="rider-actions"><button class="secondary" onclick="requestNotifications()">ENABLE NOTIFICATIONS</button><button class="secondary" onclick="logoutRider()">LOG OUT</button></div></div></div>';
+    document.getElementById('online-check').onchange=e=>setOnline(e.target.checked);
+    await requestNotifications();await loadRiderDashboard();
+    clearInterval(pollTimer);pollTimer=setInterval(()=>loadRiderDashboard().catch(()=>{}),8000);
+  }catch(err){clearRiderSession();document.getElementById('rider-login-error').textContent=err.message||'Rider session expired.';}
+}
+document.getElementById('rider-login-btn').onclick=loginRider;
+bootRider();

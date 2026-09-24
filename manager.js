@@ -1,67 +1,166 @@
-const managerRoot = document.getElementById('manager-view');
-
-function managerMoney(value) {
-  return new Intl.NumberFormat('en-KE', { style: 'currency', currency: 'KES' }).format(Number(value || 0));
+const root=document.getElementById('manager-view'),B=BUSINESS_ID;let D={},T='overview',photoData='',selectedRiders={},currentManager=null,orderFilter='NEW',orderSearch='',managerEvents=null,alertedOrders=new Map();
+const ALERT_KEY='savanna_manager_alerts';
+const ALERT_SOUNDS={classic:'Classic Ding',double:'Double Bell',chime:'Professional Chime',priority:'Priority Ping',service:'Service Bell'};
+function alertPrefs(){try{const p=JSON.parse(localStorage.getItem(ALERT_KEY)||'{}');return {enabled:p.enabled!==false,sound:ALERT_SOUNDS[p.sound]?p.sound:'classic',volume:Number.isFinite(Number(p.volume))?Math.max(0,Math.min(1,Number(p.volume))):.85}}catch{return {enabled:true,sound:'classic',volume:.85}}}
+function saveAlertPrefs(p){localStorage.setItem(ALERT_KEY,JSON.stringify(p));}
+let alertAudioContext=null;
+function primeAlertAudio(){try{alertAudioContext=alertAudioContext||new (window.AudioContext||window.webkitAudioContext)();if(alertAudioContext.state==='suspended')alertAudioContext.resume();}catch{}}
+function tone(ctx,gain,oscType,freq,start,duration,slide=0){const o=ctx.createOscillator(),g=ctx.createGain();o.type=oscType;o.frequency.setValueAtTime(freq,start);if(slide)o.frequency.exponentialRampToValueAtTime(Math.max(40,freq+slide),start+duration);g.gain.setValueAtTime(.0001,start);g.gain.exponentialRampToValueAtTime(gain,start+.012);g.gain.exponentialRampToValueAtTime(.0001,start+duration);o.connect(g).connect(ctx.destination);o.start(start);o.stop(start+duration+.02)}
+function playOrderAlert(force=false){const p=alertPrefs();if(!force&&!p.enabled)return;try{primeAlertAudio();const ctx=alertAudioContext;if(!ctx)return;const now=ctx.currentTime+.01,v=.22*p.volume;const s=p.sound;if(s==='classic'){tone(ctx,v,'sine',880,now,.16,90);tone(ctx,v*.75,'sine',1175,now+.12,.22,70)}else if(s==='double'){tone(ctx,v,'sine',740,now,.14,50);tone(ctx,v,'sine',740,now+.18,.14,50);tone(ctx,v*.8,'sine',1047,now+.36,.22,80)}else if(s==='chime'){tone(ctx,v*.8,'sine',659,now,.18,40);tone(ctx,v,'sine',784,now+.12,.24,40);tone(ctx,v*.8,'sine',988,now+.28,.34,60)}else if(s==='priority'){tone(ctx,v,'triangle',988,now,.12,120);tone(ctx,v,'triangle',1319,now+.11,.16,100);tone(ctx,v*.8,'sine',1568,now+.24,.25,80)}else{tone(ctx,v,'sine',587,now,.16,30);tone(ctx,v,'sine',784,now+.12,.2,50);tone(ctx,v*.75,'sine',988,now+.27,.32,40)}}catch{}}
+function startManagerRealtime(){if(managerEvents||!currentManager)return;managerEvents=new EventSource(API_BASE_URL+'/api/events?businessId='+encodeURIComponent(B));managerEvents.addEventListener('order.updated',e=>{try{const d=JSON.parse(e.data||'{}');if(d.status==='NEW'&&d.paymentStatus==='PAID'){const key=String(d.orderId||'');if(!alertedOrders.has(key)){alertedOrders.set(key,Date.now());playOrderAlert();setTimeout(()=>alertedOrders.delete(key),15000)}}load();}catch{}});managerEvents.onerror=()=>{};}
+function updateAlertSetting(key,value){const p=alertPrefs();p[key]=value;saveAlertPrefs(p);render();primeAlertAudio();}
+function alertsPanel(){const p=alertPrefs();return '<section class="manager-panel alert-settings-panel"><div class="panel-title"><div><span class="eyebrow">ORDER ALERTS</span><h2>Notification sound</h2><p>New paid orders can announce themselves automatically while this manager page is open.</p></div><span class="alert-status '+(p.enabled?'on':'off')+'"><i></i>'+(p.enabled?'ALERTS ON':'ALERTS OFF')+'</span></div><div class="alert-settings-grid"><label class="alert-toggle"><span><b>Automatic alerts</b><small>Play a sound when a new paid order arrives.</small></span><input type="checkbox" '+(p.enabled?'checked':'')+' onchange="updateAlertSetting(\'enabled\',this.checked)"></label><label><span>Notification sound</span><select onchange="updateAlertSetting(\'sound\',this.value)">'+Object.entries(ALERT_SOUNDS).map(([k,v])=>'<option value="'+k+'" '+(p.sound===k?'selected':'')+'>'+v+'</option>').join('')+'</select></label><label><span>Alert volume</span><input type="range" min="0" max="100" value="'+Math.round(p.volume*100)+'" oninput="document.getElementById(\'alert-volume-value\').textContent=this.value+\'%\'" onchange="updateAlertSetting(\'volume\',Number(this.value)/100)"><b id="alert-volume-value">'+Math.round(p.volume*100)+'%</b></label><button type="button" class="btn secondary" onclick="primeAlertAudio();playOrderAlert(true)">TEST SOUND</button></div><p class="alert-browser-note">The alert preference is on by default. Your browser may require one tap/click on the page before it permits audible Web Audio.</p></section>';
 }
-
-function managerDate(value) {
-  return new Date(value).toLocaleString('en-KE', { dateStyle: 'medium', timeStyle: 'short' });
-}
-
-async function loadManager() {
-  managerRoot.innerHTML = '<div class="panel"><p>Loading manager overview…</p></div>';
-  try {
-    const orders = await apiRequest('/api/orders?businessId=' + encodeURIComponent(BUSINESS_ID));
-    const stats = orders.reduce((s, o) => {
-      s.orders += 1;
-      s.revenue += Number(o.total || 0);
-      if (o.payment_status === 'PAID') s.paid += 1;
-      if (o.payment_status === 'PENDING') s.pending += 1;
-      if (o.payment_status === 'REFUNDED') s.refunded += Number(o.total || 0);
-      if (o.status === 'OUT_FOR_DELIVERY') s.delivery += 1;
-      if (o.status === 'DELIVERED') s.delivered += 1;
-      return s;
-    }, { orders: 0, revenue: 0, paid: 0, pending: 0, refunded: 0, delivery: 0, delivered: 0 });
-
-    managerRoot.innerHTML = `
-      <div class="dashboard-head">
-        <div>
-          <p class="eyebrow">SAVANNA BITES • MANAGEMENT</p>
-          <h1>Business overview.</h1>
-          <p class="muted">A management view for orders, payments, delivery and financial activity.</p>
-        </div>
-        <div class="status-actions">
-          <a class="btn" href="dashboard.html">Open restaurant</a>
-          <a class="btn" href="rider.html">Open riders</a>
-        </div>
-      </div>
-
-      <section class="manager-stats">
-        <article class="panel"><p class="eyebrow">ORDERS</p><h2>${stats.orders}</h2><p class="muted">Orders recorded</p></article>
-        <article class="panel"><p class="eyebrow">PAID</p><h2>${stats.paid}</h2><p class="muted">Payments confirmed</p></article>
-        <article class="panel"><p class="eyebrow">REVENUE</p><h2>${managerMoney(stats.revenue)}</h2><p class="muted">Order value recorded</p></article>
-        <article class="panel"><p class="eyebrow">DELIVERY</p><h2>${stats.delivery}</h2><p class="muted">Currently out for delivery</p></article>
-      </section>
-
-      <section class="panel manager-section">
-        <div class="section-head"><div><p class="eyebrow">FINANCIAL CONTROL</p><h2>Payments & refunds</h2></div><p>Payment confirmation remains separate from the order workflow. Refunds are recorded independently.</p></div>
-        <div class="summary-row"><span>Pending payments</span><strong>${stats.pending}</strong></div>
-        <div class="summary-row"><span>Refunded order value</span><strong>${managerMoney(stats.refunded)}</strong></div>
-        <div class="summary-row"><span>Delivered orders</span><strong>${stats.delivered}</strong></div>
-      </section>
-
-      <section class="panel manager-section">
-        <div class="section-head"><div><p class="eyebrow">RECENT ACTIVITY</p><h2>Latest orders</h2></div><a class="text-link" href="archive.html">Open records →</a></div>
-        <div class="orders">${orders.slice(0, 10).map(o => `
-          <article class="order-card">
-            <div><h3>${o.order_number || o.id}</h3><p>${o.name || ''} · ${o.phone || ''}</p><p>${managerDate(o.created_at)}</p></div>
-            <div><div class="order-status">${o.payment_status}</div><strong>${managerMoney(o.total)}</strong><p>${o.status}</p><a class="text-link" href="order.html?id=${encodeURIComponent(o.id)}">View order →</a></div>
-          </article>`).join('') || '<div class="empty"><h2>No orders yet.</h2></div>'}</div>
-      </section>
-    `;
-  } catch (error) {
-    managerRoot.innerHTML = `<div class="panel"><h2>Manager data unavailable</h2><p class="muted">${error.message}</p><button class="btn" onclick="loadManager()">Try again</button></div>`;
+const money=v=>new Intl.NumberFormat('en-KE',{style:'currency',currency:'KES'}).format(Number(v||0));
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const api=(p,o={})=>apiRequest(p,o);
+const nav=(k,l)=>'<button class="manager-tab '+(T===k?'active':'')+'" onclick="T=\''+k+'\';render()">'+l+'</button>';
+async function load(){
+  try{ currentManager=await api('/api/manager/me'); }catch(e){ return showLogin(); }
+  root.innerHTML='<div class="manager-loading"><div class="manager-spinner"></div><h2>Loading control centre…</h2></div>';
+  try{
+    const x=await Promise.all([api('/api/orders?businessId='+B),api('/api/riders?businessId='+B),api('/api/menu?businessId='+B),api('/api/businesses/'+B+'/branches'),api('/api/businesses/'+B+'/delivery-pricing'),api('/api/stations?businessId='+B)]);
+    D={orders:x[0],riders:x[1],menu:x[2],branches:x[3],pricing:x[4],stations:x[5]||[]};
+    render();
+    startManagerRealtime();
+  }catch(e){
+    root.innerHTML='<section class="manager-error"><h2>Manager system unavailable</h2><p>'+esc(e.message)+'</p><button class="btn" onclick="load()">TRY AGAIN</button></section>';
   }
 }
+function showLogin(message=''){
+  root.innerHTML='<section class="manager-login"><div class="manager-login-card"><span class="manager-kicker"><i></i> SAVANNA BITES</span><h1>Manager sign in</h1><p>Use your restaurant manager account. Order-control devices use QR pairing and do not sign in here.</p>'+(message?'<div class="login-error">'+esc(message)+'</div>':'')+'<form onsubmit="loginManager(event)"><label>Email<input id="manager-email" type="email" autocomplete="username" required></label><label>Password<div class="password-field"><input id="manager-password" type="password" autocomplete="current-password" required><button type="button" class="password-toggle" onclick="toggleManagerPassword()" aria-label="Show password">SHOW</button></div></label><button class="btn wide">SIGN IN</button></form><div class="login-divider"><span>OR</span></div><button type="button" class="google-login" onclick="googleManagerLogin()"><span class="google-mark">G</span><span>CONTINUE WITH GOOGLE</span></button><p class="google-note">Google will ask which account you want to use before continuing.</p></div></section>';
+}
+async function toggleManagerPassword(){
+  const input=document.getElementById('manager-password');
+  const button=document.querySelector('.password-toggle');
+  if(!input||!button)return;
+  input.type=input.type==='password'?'text':'password';
+  button.textContent=input.type==='password'?'SHOW':'HIDE';
+  button.setAttribute('aria-label',input.type==='password'?'Show password':'Hide password');
+}
+async function googleManagerLogin(){
+  try{
+    const cfg=await api('/api/manager/google/config');
+    if(!cfg.clientId) throw new Error('Google sign-in is not configured on the server yet.');
+    if(!window.google?.accounts?.id){
+      await new Promise((resolve,reject)=>{
+        const script=document.createElement('script');script.src='https://accounts.google.com/gsi/client';script.async=true;script.onload=resolve;script.onerror=()=>reject(new Error('Google sign-in could not load.'));
+        document.head.appendChild(script);
+      });
+    }
+    google.accounts.id.initialize({client_id:cfg.clientId,callback:async response=>{
+      try{
+        const data=await api('/api/manager/google',{method:'POST',body:JSON.stringify({businessId:B,credential:response.credential})});
+        setManagerToken(data.token);await load();
+      }catch(e){showLogin(e.message);}
+    }});
+    google.accounts.id.prompt();
+  }catch(e){showLogin(e.message);}
+}
+async function loginManager(e){
+  e.preventDefault();const b=e.submitter;b.disabled=true;b.textContent='SIGNING IN…';
+  try{await managerLogin(document.getElementById('manager-email').value.trim(),document.getElementById('manager-password').value);await load();}
+  catch(x){b.disabled=false;b.textContent='SIGN IN';showLogin(x.message);}
+}
+async function logoutManager(){
+  try{await api('/api/manager/logout',{method:'POST'});}catch{}
+  managerLogoutLocal();currentManager=null;showLogin('You have been signed out.');
+}
 
-loadManager();
+function render(){const o=D.orders||[],m=D.menu||{products:[]},paid=o.filter(x=>x.payment_status==='PAID'&&x.status!=='CANCELLED'),rev=paid.reduce((s,x)=>s+Number(x.total||0),0),today=o.filter(x=>new Date(x.created_at).toDateString()===new Date().toDateString());let body=T==='overview'?overview():T==='orders'?orders():T==='menu'?menu():T==='promotions'?promos():T==='branches'?branches():T==='delivery'?delivery():T==='riders'?riders():station();root.innerHTML='<section class="manager-shell"><header class="manager-header"><div><span class="manager-kicker"><i></i> RESTAURANT CONTROL CENTRE</span><h1>Savanna Bites.</h1><p>Professional restaurant controls from phone, tablet, laptop or desktop.</p></div><div class="manager-header-actions"><span class="live-badge"><i></i> LIVE</span><span class="station-mini">'+esc(currentManager?.name||'MANAGER')+'</span><button class="btn btn-small" onclick="load()">REFRESH</button><button class="btn btn-small secondary" onclick="logoutManager()">SIGN OUT</button></div></header><nav class="manager-tabs">'+nav('overview','Overview')+nav('orders','Orders')+nav('menu','Menu')+nav('promotions','Promotions')+nav('branches','Branches')+nav('delivery','Delivery')+nav('riders','Riders')+nav('station','Order station')+'</nav><section class="manager-summary"><article><span>Today\'s orders</span><strong>'+today.length+'</strong></article><article><span>Revenue</span><strong>'+money(rev)+'</strong></article><article><span>Menu items</span><strong>'+m.products.length+'</strong></article><article><span>Riders available</span><strong>'+D.riders.filter(x=>x.available).length+'</strong></article></section><div class="manager-content">'+body+'</div></section>'}
+function overview(){const o=D.orders||[],n=o.filter(x=>x.status==='NEW'&&x.payment_status==='PAID').length,p=o.filter(x=>x.status==='ACCEPTED').length,d=o.filter(x=>x.status==='OUT_FOR_DELIVERY').length,c=o.filter(x=>x.status==='DELIVERED').length;return '<div class="manager-grid two"><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">ORDER FLOW</span><h2>Today\'s operation</h2></div><button class="btn btn-small" onclick="T=\'orders\';render()">OPEN ORDERS</button></div><div class="flow-grid"><button onclick="orderFilter=\'NEW\';T=\'orders\';render()"><b>'+n+'</b><span>New paid</span></button><button onclick="orderFilter=\'ACCEPTED\';T=\'orders\';render()"><b>'+p+'</b><span>Preparing</span></button><button onclick="orderFilter=\'OUT_FOR_DELIVERY\';T=\'orders\';render()"><b>'+d+'</b><span>Out for delivery</span></button></div></section><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">QUICK ACTIONS</span><h2>Restaurant controls</h2></div></div><div class="quick-grid"><button class="quick-action" onclick="T=\'menu\';render()">＋ Add menu item</button><button class="quick-action" onclick="T=\'promotions\';render()">＋ Create offer</button><button class="quick-action" onclick="T=\'riders\';render()">＋ Add rider</button><button class="quick-action" onclick="T=\'station\';render()">▣ Configure order station</button></div></section></div>'+alertsPanel()+'<section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">LATEST ACTIVITY</span><h2>Recent orders</h2></div></div>'+rows(o.slice(0,8))+'</section>'}
+function rows(a){return a.length?'<div class="order-table">'+a.map(o=>'<div class="order-row"><div><b>'+esc(o.order_number)+'</b><span>'+esc(o.name)+' · '+esc(o.phone)+'</span></div><div><span class="status-chip '+o.status.toLowerCase()+'">'+esc(o.status)+'</span><strong>'+money(o.total)+'</strong></div></div>').join('')+'</div>':'<div class="empty-state">No orders yet.</div>'}
+function orders(){const o=D.orders||[],counts={NEW:o.filter(x=>x.status==='NEW'&&x.payment_status==='PAID').length,ACCEPTED:o.filter(x=>x.status==='ACCEPTED').length,OUT_FOR_DELIVERY:o.filter(x=>x.status==='OUT_FOR_DELIVERY').length,DELIVERED:o.filter(x=>x.status==='DELIVERED').length,CANCELLED:o.filter(x=>x.status==='CANCELLED').length};let list=o.filter(x=>{const match=orderFilter==='NEW'?(x.status==='NEW'&&x.payment_status==='PAID'):orderFilter==='ALL'?true:x.status===orderFilter;const q=orderSearch.trim().toLowerCase();return match&&(!q||[x.order_number,x.name,x.phone,x.email].some(v=>String(v||'').toLowerCase().includes(q)));}).sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));const label=orderFilter==='NEW'?'New':orderFilter==='ACCEPTED'?'Preparing':orderFilter==='OUT_FOR_DELIVERY'?'Delivery':orderFilter==='DELIVERED'?'Completed':orderFilter==='CANCELLED'?'Cancelled':'All';return '<section class="orders-page"><div class="orders-hero"><div><span class="manager-kicker"><i></i> LIVE ORDER STATION</span><h2>Orders.</h2><p>Receive, confirm and move every restaurant order forward.</p></div><div class="orders-actions"><span class="alert-status '+(alertPrefs().enabled?'on':'off')+'"><i></i> '+(alertPrefs().enabled?'Alerts on':'Alerts off')+'</span><button class="btn secondary" onclick="primeAlertAudio();load()">↻ REFRESH</button></div></div><div class="orders-summary"><article class="accent"><span>NEW PAID ORDERS</span><strong>'+counts.NEW+'</strong><small>Need restaurant action</small></article><article><span>PREPARING</span><strong>'+counts.ACCEPTED+'</strong><small>Accepted orders</small></article><article><span>OUT FOR DELIVERY</span><strong>'+counts.OUT_FOR_DELIVERY+'</strong><small>Currently with riders</small></article><article><span>COMPLETED</span><strong>'+counts.DELIVERED+'</strong><small>Delivered orders</small></article></div><div class="orders-toolbar"><div class="order-filters">'+[['NEW','New'],['ACCEPTED','Preparing'],['OUT_FOR_DELIVERY','Delivery'],['DELIVERED','Completed'],['CANCELLED','Cancelled'],['ALL','All']].map(x=>'<button class="order-filter '+(orderFilter===x[0]?'active':'')+'" onclick="orderFilter=\''+x[0]+'\';render()">'+x[1]+' <b>'+ (x[0]==='ALL'?o.length:counts[x[0]]) +'</b></button>').join('')+'</div><div class="order-search"><input id="order-search-input" value="'+esc(orderSearch)+'" placeholder="Search order, customer or phone" onkeydown="if(event.key===\'Enter\'){orderSearch=this.value;render()}"><button class="btn" onclick="orderSearch=document.getElementById(\'order-search-input\').value;render()">SEARCH</button></div></div><div class="orders-status-strip"><span><i></i><b>System online</b> Real-time connection active</span><span><b>'+o.filter(x=>x.payment_status==='PAID').length+'</b> paid orders</span><span><b>'+o.filter(x=>x.payment_status!=='PAID').length+'</b> awaiting payment</span><span><b>'+D.riders.filter(x=>x.available).length+'</b> riders available</span><button onclick="T=\'riders\';render()">Manage rider operations →</button></div><div class="orders-list-heading"><div><span class="eyebrow">'+label.toUpperCase()+'</span><h3>'+list.length+' orders</h3></div><small>Live · synced automatically</small></div><div class="orders-list">'+(list.map(orderCard).join('')||'<div class="empty-state">No orders match this view.</div>')+'</div></section>'}
+function sortRiders(a){return [...a].sort((x,y)=>{if(Boolean(x.available)!==Boolean(y.available))return x.available?-1:1;const X=x.last_completed_at?new Date(x.last_completed_at).getTime():0,Y=y.last_completed_at?new Date(y.last_completed_at).getTime():0;if(!X&&!Y)return Number(x.trip_count||0)-Number(y.trip_count||0);if(!X)return -1;if(!Y)return 1;return X-Y})}
+
+function picker(id){
+  const selected=selectedRiders[id]||'';
+  return '<div class="rider-picker compact">'+sortRiders(D.riders).map((r,i)=>'<button type="button" class="rider-square compact '+(r.available?'is-available':'is-unavailable')+(selected===r.id?' selected':'')+'" '+(r.available?'onclick="selectRider(&quot;'+id+'&quot;,&quot;'+r.id+'&quot;)"':'disabled')+'><div class="rider-avatar">'+(r.profile_image_url?'<img src="'+esc(r.profile_image_url)+'" alt="">':esc((r.name||'?')[0]))+'</div><div class="rider-square-main"><b>'+esc(r.name)+'</b><span>'+esc(r.vehicle_type||'Vehicle')+'</span><small>'+esc(r.number_plate||'')+'</small></div><div class="availability"><i></i>'+(r.available?'AVAILABLE':'UNAVAILABLE')+'</div>'+(r.available&&i===0?'<em>PRIORITY</em>':'')+'</button>').join('')+'</div><div class="assign-bar"><span>'+(selected?'Selected: '+esc(D.riders.find(r=>r.id===selected)?.name||'Rider'):'Tap a rider square to select')+'</span><button type="button" class="btn btn-small '+(selected?'':'disabled')+'" '+(selected?'onclick="assignSelected(&quot;'+id+'&quot;,this)"':'disabled')+'>ASSIGN RIDER</button></div>';
+}
+function selectRider(orderId,riderId){selectedRiders[orderId]=riderId;render();}
+function orderCard(o){
+  let a=o.status==='NEW'&&o.payment_status==='PAID'?'<button class="btn" onclick="accept(\''+o.id+'\',this)">✓ ACCEPT ORDER</button>':o.status==='ACCEPTED'?'<div class="dispatch-panel"><div class="dispatch-label">Available riders — longest wait since last delivery gets priority</div>'+picker(o.id)+'</div>':o.status==='OUT_FOR_DELIVERY'?'<div class="completed-action"><i></i> DELIVERY IN PROGRESS</div>':o.status==='DELIVERED'?'<div class="completed-action done">✓ COMPLETED</div>':o.status==='CANCELLED'?'<div class="completed-action done">CANCELLED</div>':'<div class="waiting-action">Awaiting payment</div>';
+  return '<article class="manager-order '+(o.status==='NEW'&&o.payment_status==='PAID'?'new':'')+'"><div class="manager-order-main"><div class="order-top"><div><b>'+esc(o.order_number)+'</b><span>'+new Date(o.created_at).toLocaleString('en-KE',{dateStyle:'medium',timeStyle:'short'})+'</span></div><span class="status-chip '+o.status.toLowerCase()+'">'+esc(o.status)+'</span></div>'+(o.payment_status==='PAID'?'<div class="payment-confirmed"><span>✓ PAYMENT CONFIRMED</span><span>'+esc(o.payment_method||'Paystack')+'</span></div>':'')+'<div class="customer-line"><div class="customer-avatar">'+esc((o.name||'?')[0])+'</div><div><b>'+esc(o.name)+'</b><span>'+esc(o.phone)+'</span></div></div>'+(o.delivery_note?'<div class="order-note"><b>Customer note</b><span>'+esc(o.delivery_note)+'</span></div>':'')+'</div><div class="manager-order-side"><span>ORDER TOTAL</span><strong>'+money(o.total)+'</strong><small>'+esc(o.payment_status)+' · '+esc(o.payment_method||'Paystack')+'</small>'+a+'</div></article>';
+}
+async function accept(id,b){b.disabled=true;b.classList.add('done');b.textContent='ACCEPTED';try{await api('/api/orders/'+id+'/status',{method:'POST',body:JSON.stringify({status:'ACCEPTED'})});await load()}catch(e){b.disabled=false;b.classList.remove('done');b.textContent='✓ ACCEPT ORDER';alert(e.message)}}
+async function assignSelected(id,b){
+  const riderId=selectedRiders[id];if(!riderId)return;
+  b.disabled=true;b.classList.add('done');b.textContent='ASSIGNING…';
+  try{await api('/api/orders/'+id+'/assign-rider',{method:'POST',body:JSON.stringify({riderId})});b.textContent='✓ ASSIGNED';delete selectedRiders[id];await load();}
+  catch(e){b.disabled=false;b.classList.remove('done');b.textContent='ASSIGN RIDER';alert(e.message);}
+}
+function menu(){const m=D.menu;return '<div class="manager-grid two"><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">MENU STRUCTURE</span><h2>Categories</h2></div></div><form class="inline-form" onsubmit="category(event)"><input id="cat" required placeholder="Breakfast"><button class="btn">ADD CATEGORY</button></form><div class="category-list">'+m.categories.map(c=>'<div><b>'+esc(c.name)+'</b><span>'+esc(c.active?'ACTIVE':'HIDDEN')+'</span></div>').join('')+'</div></section><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">ADD ITEM</span><h2>New menu item</h2><p>Upload a photo or paste an image URL.</p></div></div><form onsubmit="addItem(event)"><div class="form-grid"><label>Name<input id="mn" required></label><label>Price (KES)<input id="mp" type="number" min="0" required></label></div><label>Description<textarea id="md"></textarea></label><div class="form-grid"><label>Category<select id="mc">'+m.categories.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('')+'</select></label><label>Photo<input id="mf" type="file" accept="image/*" onchange="pickPhoto(event)"></label></div><input id="mu" placeholder="Or paste an image URL"><div id="preview" class="photo-preview"></div><label class="check"><input id="mfeat" type="checkbox"> Featured item</label><button class="btn wide">PUBLISH MENU ITEM</button></form></section></div><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">LIVE MENU</span><h2>'+m.products.length+' items</h2></div></div><div class="menu-admin-grid">'+(m.products.map(itemCard).join('')||'<div class="empty-state">No menu items yet.</div>')+'</div></section>'}
+function itemCard(p){return '<article class="menu-admin-card"><div class="menu-admin-image">'+(p.image_url?'<img src="'+esc(p.image_url)+'" alt="">':'<span>NO PHOTO</span>')+'</div><div class="menu-admin-body"><span class="eyebrow">'+esc(p.category_name||p.category||'UNCATEGORIZED')+'</span><h3>'+esc(p.name)+'</h3><p>'+esc(p.description||'No description')+'</p><div class="menu-admin-bottom"><strong>'+money(p.price)+'</strong><span class="status-chip '+(p.active?'active':'inactive')+'">'+(p.active?'AVAILABLE':'HIDDEN')+'</span>'+(p.featured?'<span class="feature-chip">FEATURED</span>':'')+'</div><div class="button-row"><button class="btn btn-small" onclick="toggleItem(\''+p.id+'\','+(!p.active)+')">'+(p.active?'HIDE':'PUBLISH')+'</button><button class="btn btn-small secondary" onclick="feature(\''+p.id+'\','+(!p.featured)+')">'+(p.featured?'REMOVE FEATURED':'MAKE FEATURED')+'</button></div></div></article>'}
+async function category(e){e.preventDefault();try{await api('/api/menu/categories',{method:'POST',body:JSON.stringify({businessId:B,name:document.getElementById('cat').value.trim()})});T='menu';await load()}catch(x){alert(x.message)}}
+function pickPhoto(e){const f=e.target.files?.[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{const im=new Image();im.onload=()=>{const s=Math.min(1,1000/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*s;c.height=im.height*s;c.getContext('2d').drawImage(im,0,0,c.width,c.height);photoData=c.toDataURL('image/jpeg',.78);document.getElementById('preview').innerHTML='<img src="'+photoData+'" alt="">'};im.src=rd.result};rd.readAsDataURL(f)}
+async function addItem(e){e.preventDefault();try{await api('/api/menu/products',{method:'POST',body:JSON.stringify({businessId:B,name:document.getElementById('mn').value.trim(),price:Number(document.getElementById('mp').value),description:document.getElementById('md').value.trim(),categoryId:document.getElementById('mc').value,imageUrl:photoData||document.getElementById('mu').value.trim(),featured:document.getElementById('mfeat').checked,active:true})});photoData='';T='menu';await load()}catch(x){alert(x.message)}}
+async function toggleItem(id,a){try{await api('/api/menu/products/'+id,{method:'PATCH',body:JSON.stringify({businessId:B,active:a})});T='menu';await load()}catch(e){alert(e.message)}}
+async function feature(id,a){try{await api('/api/menu/products/'+id,{method:'PATCH',body:JSON.stringify({businessId:B,featured:a})});T='menu';await load()}catch(e){alert(e.message)}}
+function promos(){const p=D.menu.promotions;return '<div class="manager-grid two"><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">PROMOTION BUILDER</span><h2>Create offer</h2><p>Percentage, fixed amount, special price, Buy X Get Y or free item.</p></div></div><form onsubmit="promo(event)"><label>Offer name<input id="pn" required placeholder="Tuesday Chicken Deal"></label><div class="form-grid"><label>Type<select id="pt"><option value="PERCENT">Percentage discount</option><option value="FIXED">Fixed amount discount</option><option value="SPECIAL_PRICE">Special price</option><option value="BUY_X_GET_Y">Buy X Get Y</option><option value="FREE_ITEM">Free item</option></select></label><label>Value<input id="pv" type="number" min="0" step=".01"></label></div><div class="form-grid"><label>Starts<input id="ps" type="datetime-local"></label><label>Ends<input id="pe" type="datetime-local"></label></div><label>Banner text<input id="pb" placeholder="TODAY&#39;S OFFER • Save 15%"></label><label>Minimum order (KES)<input id="pmin" type="number" min="0" value="0"></label><button class="btn wide">ACTIVATE PROMOTION</button></form></section><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">PROMOTIONS</span><h2>'+p.filter(x=>x.active).length+' active</h2></div></div>'+(p.map(promoCard).join('')||'<div class="empty-state">No promotions yet.</div>')+'</section></div>'}
+function promoCard(p){return '<article class="promotion-card '+(p.active?'':'off')+'"><div><span class="eyebrow">'+esc(p.type.replaceAll('_',' '))+'</span><h3>'+esc(p.name)+'</h3><p>'+(p.type==='PERCENT'?esc(p.value)+'% off':p.type==='FIXED'?money(p.value)+' off':p.type==='SPECIAL_PRICE'?'Special price '+money(p.value):'Value '+esc(p.value))+'</p></div><button class="btn btn-small '+(p.active?'':'done')+'" onclick="togglePromo(\''+p.id+'\','+(!p.active)+')">'+(p.active?'PAUSE':'ACTIVATE')+'</button></article>'}
+async function promo(e){e.preventDefault();const g=id=>document.getElementById(id).value;try{await api('/api/menu/promotions',{method:'POST',body:JSON.stringify({businessId:B,name:g('pn'),type:g('pt'),value:Number(g('pv')),minOrder:Number(g('pmin')),startsAt:g('ps')?new Date(g('ps')).toISOString():null,endsAt:g('pe')?new Date(g('pe')).toISOString():null,bannerText:g('pb'),active:true})});T='promotions';await load()}catch(x){alert(x.message)}}
+async function togglePromo(id,a){const p=D.menu.promotions.find(x=>x.id===id);if(!p)return;try{await api('/api/menu/promotions/'+id,{method:'PATCH',body:JSON.stringify({businessId:B,name:p.name,type:p.type,value:p.value,minOrder:p.min_order_kes,startsAt:p.starts_at,endsAt:p.ends_at,daysOfWeek:p.days_of_week,startTime:p.start_time,endTime:p.end_time,active:a,bannerText:p.banner_text,productIds:p.product_ids,category:p.category})});T='promotions';await load()}catch(e){alert(e.message)}}
+function branches(){return '<div class="manager-grid two"><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">FULFILLMENT</span><h2>Branches</h2><p>Customers do not choose a branch; the delivery engine selects the best active branch.</p></div></div>'+(D.branches.map(b=>'<div class="branch-card"><div><b>'+esc(b.name)+'</b><span>'+esc(b.address)+'</span><small>'+Number(b.service_radius_km||18)+' km radius</small></div><span class="status-chip '+(b.active?'active':'inactive')+'">'+(b.active?'ACTIVE':'OFF')+'</span></div>').join('')||'<div class="empty-state">No branches configured.</div>')+'</section><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">ADD LOCATION</span><h2>New branch</h2></div></div><form onsubmit="branch(event)"><label>Name<input id="bn" required></label><label>Address<input id="ba" required></label><div class="form-grid"><label>Latitude<input id="blat" type="number" step="any" required></label><label>Longitude<input id="blng" type="number" step="any" required></label></div><label>Service radius (km)<input id="br" type="number" min="1" max="30" value="18"></label><label>Pickup instructions<input id="bi"></label><button class="btn wide">ADD BRANCH</button></form></section></div>'}
+async function branch(e){e.preventDefault();const g=id=>document.getElementById(id).value;try{await api('/api/businesses/'+B+'/branches',{method:'POST',body:JSON.stringify({name:g('bn'),address:g('ba'),latitude:Number(g('blat')),longitude:Number(g('blng')),serviceRadiusKm:Number(g('br')),pickupInstructions:g('bi'),active:true,acceptingOrders:true})});T='branches';await load()}catch(x){alert(x.message)}}
+function delivery(){const p=D.pricing;return '<section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">DELIVERY PRICING</span><h2>'+(p.editable?'Restaurant master pricing':'Automatic platform pricing')+'</h2><p>'+(p.editable?'Bounded master rules.':'Advanced pricing is platform-managed and balances customer cost with rider earnings.')+'</p></div><span class="mode-badge">'+p.mode+'</span></div>'+(p.editable?'<form onsubmit="saveDelivery(event)" class="form-grid four">'+[['base_fee_kes','Base fee'],['per_km_kes','Per km'],['per_minute_kes','Per minute'],['minimum_fee_kes','Minimum'],['maximum_fee_kes','Maximum'],['peak_multiplier','Peak multiplier']].map(x=>'<label>'+x[1]+'<input id="dp-'+x[0]+'" type="number" step=".01" value="'+p.rules[x[0]]+'"></label>').join('')+'<button class="btn">SAVE PRICING</button></form>':'<div class="auto-pricing"><b>AUTOMATIC</b><span>'+money(p.rules.minimum_fee_kes)+' – '+money(p.rules.maximum_fee_kes)+' customer range</span><span>Route distance + traffic duration + fuel movement + rider payment floor</span></div>')+'</section>'}
+async function saveDelivery(e){e.preventDefault();const k=['base_fee_kes','per_km_kes','per_minute_kes','minimum_fee_kes','maximum_fee_kes','peak_multiplier'],b={};k.forEach(x=>b[x]=Number(document.getElementById('dp-'+x).value));try{await api('/api/businesses/'+B+'/delivery-pricing',{method:'PATCH',body:JSON.stringify(b)});T='delivery';await load()}catch(x){alert(x.message)}}
+function riders(){return '<div class="manager-grid two"><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">RIDER TEAM</span><h2>Availability & fair rotation</h2><p>Available riders are shown as compact cards. Riders who have waited longest since their last completed delivery get higher priority.</p></div></div><div class="rider-picker large">'+sortRiders(D.riders).map((r,i)=>'<article class="rider-square '+(r.available?'is-available':'is-unavailable')+'"><div class="rider-avatar">'+(r.profile_image_url?'<img src="'+esc(r.profile_image_url)+'" alt="">':esc((r.name||'?')[0]))+'</div><div class="rider-square-main"><b>'+esc(r.name)+'</b><span>'+esc(r.vehicle_type||'Vehicle')+' · '+esc(r.number_plate||'')+'</span><small>'+(r.last_completed_at?'Last delivery '+new Date(r.last_completed_at).toLocaleDateString('en-KE'):'No completed delivery')+' · '+Number(r.trip_count||0)+' completed</small></div><div class="availability"><i></i>'+(r.available?'AVAILABLE':'UNAVAILABLE')+'</div>'+(r.available&&i===0?'<em>HIGHEST PRIORITY</em>':'')+'</article>').join('')+'</div></section><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">TEAM SETUP</span><h2>Add rider</h2></div></div><form onsubmit="addRider(event)"><label>Name<input id="rn" required></label><label>Phone<input id="rp" required placeholder="07xx xxx xxx"></label><label>Email<input id="re" type="email"></label><div class="form-grid"><label>Vehicle<input id="rv" value="Motorbike"></label><label>Plate<input id="rplate" required></label></div><label>M-Pesa payout phone<input id="rpay"></label><label>Login password<input id="rpass" type="password" required></label><label>Profile photo URL<input id="rphoto"></label><button class="btn wide">CREATE RIDER</button></form></section></div>'}
+async function addRider(e){e.preventDefault();const g=id=>document.getElementById(id).value;try{await api('/api/riders',{method:'POST',body:JSON.stringify({businessId:B,name:g('rn'),phone:g('rp'),email:g('re'),vehicleType:g('rv'),numberPlate:g('rplate'),payoutPhone:g('rpay'),password:g('rpass'),profileImageUrl:g('rphoto')})});T='riders';await load()}catch(x){alert(x.message)}}
+
+function station(){
+  const stations=D.stations||[];
+  return '<div class="manager-grid two"><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">CONNECTED DEVICES</span><h2>Order-control stations</h2><p>Each device gets a restricted station session. It cannot open the manager dashboard.</p></div><button class="btn" onclick="connectDeviceForm()">＋ CONNECT DEVICE</button></div>'+
+    (stations.map(s=>'<article class="device-card '+(s.active?'':'device-off')+'"><div><div class="device-icon">▣</div><div><b>'+esc(s.name)+'</b><span>'+esc(s.device_type)+' · '+esc(s.mode)+'</span><small>'+(s.active?'Last seen '+new Date(s.last_seen_at).toLocaleString('en-KE'):'DISCONNECTED')+'</small></div></div><div class="button-row">'+(s.active?'<button class="btn btn-small" onclick="pairDevice(&quot;'+s.id+'&quot;)">PAIR / SHOW QR</button><button class="btn btn-small secondary" onclick="revokeDevice(&quot;'+s.id+'&quot;)">DISCONNECT</button>':'<button class="btn btn-small" onclick="reactivateDevice(&quot;'+s.id+'&quot;)">REACTIVATE</button>')+'</div></article>').join('')||'<div class="empty-state">No order-control devices connected yet.</div>')+
+  '</section><section class="manager-panel" id="station-create-panel"><div class="panel-title"><div><span class="eyebrow">DEVICE MODES</span><h2>Restricted access</h2><p>Choose a mode for each connected screen.</p></div></div><div class="station-help"><article><b>OPERATIONS</b><span>Accept paid orders and dispatch riders.</span></article><article><b>KITCHEN</b><span>Incoming/preparation display without manager controls.</span></article><article><b>COUNTER</b><span>Compact accept and dispatch workflow.</span></article><article><b>DISPLAY</b><span>Large read-only order board.</span></article></div></section></div>';
+}
+function connectDeviceForm(){
+  const panel=document.getElementById('station-create-panel');
+  if(!panel)return;
+  panel.innerHTML='<div class="panel-title"><div><span class="eyebrow">NEW DEVICE</span><h2>Connect an order-control screen</h2><p>Create the station here, then scan the QR on the target device.</p></div></div><form onsubmit="createAndPairDevice(event)" class="station-form"><label>Station name<input id="sn" required placeholder="Main Counter"></label><label>Device<select id="sd">'+['PHONE','TABLET','PC','LAPTOP','TV','BOARD'].map(x=>'<option>'+x+'</option>').join('')+'</select></label><label>Mode<select id="sm">'+['OPERATIONS','KITCHEN','COUNTER','DISPLAY'].map(x=>'<option>'+x+'</option>').join('')+'</select></label><button class="btn">CREATE & SHOW QR</button></form><button class="btn btn-small secondary" onclick="T=\'station\';render()">CANCEL</button>';
+  panel.scrollIntoView({behavior:'smooth'});
+}
+async function createAndPairDevice(e){
+  e.preventDefault();const g=id=>document.getElementById(id).value;
+  try{const s=await api('/api/stations',{method:'POST',body:JSON.stringify({businessId:B,name:g('sn').trim()||'Restaurant station',deviceType:g('sd'),mode:g('sm')})});await pairDevice(s.id);}
+  catch(x){alert(x.message);}
+}
+async function pairDevice(id){
+  try{const p=await api('/api/stations/'+id+'/pairing-token',{method:'POST',body:JSON.stringify({})});showPairingQR(p);}
+  catch(x){alert(x.message);}
+}
+async function copyConnectionLink(url,button){
+  if(!url)return;
+  const original=button?.textContent||'COPY CONNECTION LINK';
+  try{
+    if(navigator.clipboard&&window.isSecureContext){
+      await navigator.clipboard.writeText(url);
+    }else{
+      const ta=document.createElement('textarea');
+      ta.value=url;ta.setAttribute('readonly','');ta.style.position='fixed';ta.style.opacity='0';ta.style.pointerEvents='none';
+      document.body.appendChild(ta);ta.focus();ta.select();
+      const ok=document.execCommand('copy');
+      ta.remove();
+      if(!ok)throw new Error('Copy command was blocked');
+    }
+    if(button){button.textContent='COPIED ✓';button.classList.add('done');setTimeout(()=>{button.textContent=original;button.classList.remove('done')},1800);}
+  }catch(e){
+    if(button)button.textContent='COPY FAILED';
+    alert('The connection link could not be copied automatically. Please select and copy the link shown above.');
+    setTimeout(()=>{if(button){button.textContent=original;button.classList.remove('done')}},1800);
+  }
+}
+function showPairingQR(p){
+  const wrap=document.createElement('div');
+  wrap.className='qr-modal';
+  wrap.innerHTML='<div class="qr-card"><button class="qr-close" onclick="this.closest(&quot;.qr-modal&quot;).remove()">×</button><span class="eyebrow">CONNECT DEVICE</span><h2>Scan this QR code</h2><p>This code expires in <b>5 minutes</b> and can be used once.</p><div class="qr-box"><img id="pair-qr" alt="Scan to connect this order-control device"></div><div class="pair-url" id="pair-url">'+esc(p.connectUrl)+'</div><button type="button" class="btn secondary" id="copy-connection-link">COPY CONNECTION LINK</button></div>';
+  document.body.appendChild(wrap);
+  const copyButton=document.getElementById('copy-connection-link');
+  if(copyButton)copyButton.addEventListener('click',()=>copyConnectionLink(p.connectUrl,copyButton));
+  const qr=document.getElementById('pair-qr');
+  if(qr&&p.qrDataUrl)qr.src=p.qrDataUrl;
+  else if(qr)qr.alt='QR code could not be generated. Use the connection link below.';
+}
+async function revokeDevice(id){if(!confirm('Disconnect this order-control device?'))return;try{await api('/api/stations/'+id+'/revoke',{method:'POST',body:JSON.stringify({})});await load();}catch(x){alert(x.message)}}
+async function reactivateDevice(id){try{await api('/api/stations/'+id+'/reactivate',{method:'POST',body:JSON.stringify({})});await load();}catch(x){alert(x.message)}}
+
+load();

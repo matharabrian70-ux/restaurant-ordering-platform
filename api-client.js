@@ -1,17 +1,23 @@
 const API_BASE_URL = 'https://restaurant-ordering-api-ow3p.onrender.com';
 const BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
+const MANAGER_TOKEN_KEY = 'savanna_manager_session';
+function getManagerToken(){ return sessionStorage.getItem(MANAGER_TOKEN_KEY) || ''; }
+function setManagerToken(token){ if(token) sessionStorage.setItem(MANAGER_TOKEN_KEY,token); else sessionStorage.removeItem(MANAGER_TOKEN_KEY); }
+function managerLogoutLocal(){ setManagerToken(''); }
+async function managerLogin(email,password){ const data=await apiRequest('/api/manager/login',{method:'POST',body:JSON.stringify({businessId:BUSINESS_ID,email,password})}); setManagerToken(data.token); return data; }
 
 async function apiRequest(path, options = {}) {
   const response = await fetch(API_BASE_URL + path, {
     ...options,
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }
+    headers: { 'Content-Type': 'application/json', ...(getManagerToken()?{Authorization:'Bearer '+getManagerToken()}:{}), ...(options.headers || {}) }
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `API request failed (${response.status})`);
   return data;
 }
 
-async function createRemoteOrder({ customer, phone, email, note, payment, items, total }) {
+async function getDeliveryQuote({ pickupAddress, deliveryAddress, latitude, longitude }) { return apiRequest('/api/delivery/quote-v2', { method:'POST', body: JSON.stringify({ businessId: BUSINESS_ID, pickupAddress, deliveryAddress, customerLat: latitude, customerLng: longitude }) }); }
+async function createRemoteOrder({ customer, phone, email, note, payment, items, subtotal, total, quoteId, deliveryAddress }) {
   return apiRequest('/api/orders', {
     method: 'POST',
     body: JSON.stringify({
@@ -19,9 +25,11 @@ async function createRemoteOrder({ customer, phone, email, note, payment, items,
       customer: { name: customer, phone, email },
       items: items.map(item => ({ productId: null, name: item.name, quantity: item.qty, unitPrice: item.unit, options: item.options || {} })),
       paymentMethod: payment,
-      subtotal: total,
+      subtotal,
       total,
-      deliveryNote: note
+      quoteId,
+      deliveryNote: note,
+      deliveryAddress
     })
   });
 }
@@ -41,8 +49,8 @@ async function cancelRemoteOrder(orderId) {
 async function getRemoteRiders() {
   return apiRequest('/api/riders?businessId=' + encodeURIComponent(BUSINESS_ID));
 }
-async function createRemoteRider({ name, phone, vehicleType, numberPlate }) {
-  return apiRequest('/api/riders', { method: 'POST', body: JSON.stringify({ businessId: BUSINESS_ID, name, phone, vehicleType, numberPlate }) });
+async function createRemoteRider({ name, phone, email, vehicleType, numberPlate, password, payoutPhone }) {
+  return apiRequest('/api/riders', { method: 'POST', body: JSON.stringify({ businessId: BUSINESS_ID, name, phone, email, vehicleType, numberPlate, password, payoutPhone }) });
 }
 async function getRiderActiveDelivery(riderId) {
   return apiRequest('/api/riders/' + encodeURIComponent(riderId) + '/active-delivery');
@@ -50,3 +58,6 @@ async function getRiderActiveDelivery(riderId) {
 async function completeRiderDelivery(riderId) {
   return apiRequest('/api/riders/' + encodeURIComponent(riderId) + '/complete-delivery', { method: 'POST', body: JSON.stringify({}) });
 }
+
+async function getAdminRiders() { return apiRequest('/api/admin/riders?businessId='+encodeURIComponent(BUSINESS_ID)); }
+async function getAdminRiderTrips(riderId) { return apiRequest('/api/admin/riders/'+encodeURIComponent(riderId)+'/trips'); }

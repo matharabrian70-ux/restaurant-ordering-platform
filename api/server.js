@@ -301,6 +301,36 @@ app.post('/api/manager/login', async (req,res)=>{
     res.json({token,manager:{id:manager.id,businessId:manager.business_id,name:manager.name,email:manager.email,role:manager.role}});
   }catch(error){res.status(500).json({error:error.message||'Unable to sign in manager'});}
 });
+app.get('/api/manager/google/config',(req,res)=>res.json({clientId:String(process.env.GOOGLE_CLIENT_ID||'')}));
+app.post('/api/manager/google', async (req,res)=>{
+  try{
+    const businessId=String(req.body.businessId||process.env.MANAGER_BUSINESS_ID||'11111111-1111-4111-8111-111111111111');
+    const credential=String(req.body.credential||'').trim();
+    const clientId=String(process.env.GOOGLE_CLIENT_ID||'').trim();
+    if(!clientId) return res.status(503).json({error:'Google sign-in is not configured on the server'});
+    if(!credential) return res.status(400).json({error:'Google credential is required'});
+    const verify=await fetch('https://oauth2.googleapis.com/tokeninfo?id_token='+encodeURIComponent(credential));
+    const profile=await verify.json().catch(()=>({}));
+    if(!verify.ok || profile.aud!==clientId || profile.iss!=='https://accounts.google.com' || profile.email_verified!=='true') return res.status(401).json({error:'Google account could not be verified'});
+    const email=String(profile.email||'').trim().toLowerCase();
+    if(!email) return res.status(401).json({error:'Google did not provide an email address'});
+    let result=await pool.query('select * from manager_users where business_id=$1 and lower(email)=lower($2) and active=true',[businessId,email]);
+    if(!result.rowCount){
+      const configuredEmail=String(process.env.MANAGER_EMAIL||'').trim().toLowerCase();
+      if(email!==configuredEmail) return res.status(403).json({error:'This Google account is not authorized for this restaurant'});
+      const name=String(profile.name||process.env.MANAGER_NAME||'Restaurant Manager').trim()||'Restaurant Manager';
+      const hash=hashManagerPassword(crypto.randomBytes(32).toString('hex'));
+      await pool.query('insert into manager_users(id,business_id,name,email,password_hash,role,active) values(gen_random_uuid(),$1,$2,$3,$4,$5,true) on conflict(business_id,email) do nothing',[businessId,name,email,hash,String(process.env.MANAGER_ROLE||'OWNER').toUpperCase()==='OWNER'?'OWNER':'MANAGER']);
+      result=await pool.query('select * from manager_users where business_id=$1 and lower(email)=lower($2) and active=true',[businessId,email]);
+    }
+    const manager=result.rows[0];
+    if(!manager) return res.status(403).json({error:'Manager account is not configured'});
+    const token=crypto.randomBytes(32).toString('hex');
+    await pool.query('insert into manager_sessions(id,manager_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval \'30 days\')',[manager.id,hashSessionToken(token)]);
+    await pool.query('update manager_users set last_login_at=now() where id=$1',[manager.id]);
+    res.json({token,manager:{id:manager.id,businessId:manager.business_id,name:manager.name,email:manager.email,role:manager.role}});
+  }catch(error){res.status(500).json({error:error.message||'Unable to sign in with Google'});}
+});
 app.get('/api/manager/me',requireManager,(req,res)=>res.json({id:req.manager.id,businessId:req.manager.business_id,name:req.manager.name,email:req.manager.email,role:req.manager.role}));
 app.post('/api/manager/logout',requireManager,async(req,res)=>{
   try{const raw=String(req.headers.authorization||'');const token=raw.startsWith('Bearer ')?raw.slice(7).trim():'';if(token) await pool.query('delete from manager_sessions where token_hash=$1',[hashSessionToken(token)]);res.json({ok:true});}

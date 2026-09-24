@@ -16,7 +16,61 @@ function product(id){return PRODUCTS.find(p=>p.id===id)}
 function addItem(item){const c=getCart();const key=JSON.stringify(item.options||{});const existing=c.find(x=>x.id===item.id&&JSON.stringify(x.options||{})===key);if(existing)existing.qty+=item.qty;else c.push(item);saveCart(c);location.href='cart.html'}
 function removeItem(index){const c=getCart();c.splice(index,1);saveCart(c);renderCart()}
 function changeQty(index,delta){const c=getCart();c[index].qty=Math.max(1,c[index].qty+delta);saveCart(c);renderCart()}
-function renderMenu(){const grid=document.getElementById('menu-grid');if(!grid)return;grid.innerHTML=PRODUCTS.map(p=>`<article class="menu-card"><img src="${p.image}" alt="${p.name}"><div class="menu-card-body"><p class="eyebrow">${p.category}</p><h3>${p.name}</h3><p>${p.desc}</p><div class="price-row"><span class="price">${money(p.price)}</span><a class="add-btn" href="product.html?id=${p.id}">Customize →</a></div></div></article>`).join('')}
+const MENU_PRODUCTS = new Map();
+function escapeMenuHtml(value){return String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}
+function renderSignatureMenu(products){
+  const grid=document.getElementById('menu-grid');
+  if(!grid)return;
+  MENU_PRODUCTS.clear();
+  products.forEach(p=>MENU_PRODUCTS.set(String(p.id),p));
+  grid.innerHTML=products.map(p=>{
+    const id=escapeMenuHtml(p.id);
+    const name=escapeMenuHtml(p.name);
+    const category=escapeMenuHtml(p.category||'Menu');
+    const desc=escapeMenuHtml(p.desc||'');
+    const image=escapeMenuHtml(p.image||'');
+    const featured=p.featured?'<span class="signature-badge signature-featured"><span class="signature-star">★</span> FEATURED</span>':'';
+    return `<article class="signature-menu-card">
+      <div class="signature-menu-photo">
+        <img src="${image}" alt="${name}" loading="lazy">
+        <div class="signature-menu-wash"></div>
+        <div class="signature-menu-copy">
+          <p class="signature-category">${category}</p>
+          <h3>${name}</h3>
+          <p class="signature-description">${desc}</p>
+          <div class="signature-meta">
+            <strong class="signature-price">${money(p.price)}</strong>
+            <div class="signature-badges">
+              <span class="signature-badge signature-available"><span class="signature-dot"></span> AVAILABLE</span>
+              ${featured}
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="signature-menu-actions">
+        <button type="button" class="signature-add-btn" data-menu-add="${id}"><span class="signature-cart-icon">🛒</span> ADD TO CART</button>
+      </div>
+    </article>`;
+  }).join('');
+}
+function renderMenu(){renderSignatureMenu(PRODUCTS)}
+function addMenuProduct(id){
+  const p=MENU_PRODUCTS.get(String(id));
+  if(!p)return;
+  addItem({
+    id:p.id,
+    name:p.name,
+    base:Number(p.price||0),
+    unit:Number(p.price||0),
+    qty:1,
+    options:{},
+    image:p.image||''
+  });
+}
+document.addEventListener('click',e=>{
+  const b=e.target.closest('[data-menu-add]');
+  if(b){e.preventDefault();addMenuProduct(b.dataset.menuAdd)}
+});
 function renderProduct(){const el=document.getElementById('product-view');if(!el)return;const id=new URLSearchParams(location.search).get('id')||'burger';const p=product(id);if(!p){el.innerHTML='<div class="empty">Product not found.</div>';return}el.innerHTML=`<div class="product-layout"><img src="${p.image}" alt="${p.name}"><div class="product-info"><p class="eyebrow">${p.category}</p><h1>${p.name}</h1><p class="desc">${p.desc}</p><h2>${money(p.price)}</h2><form id="product-form">${p.options.map((o,i)=>`<div class="option-group"><h4>${o.name}</h4>${o.choices.map((c,j)=>`<label><input type="radio" name="option${i}" value="${c[0]}" data-price="${c[2]}" ${j===0?'checked':''}> ${c[1]} ${c[2]?'— '+money(c[2]):''}</label>`).join('')}</div>`).join('')}<div class="qty"><label for="qty">Quantity</label><input id="qty" type="number" min="1" value="1"></div><button class="btn wide" type="submit">Add to cart</button></form></div></div>`;document.getElementById('product-form').onsubmit=e=>{e.preventDefault();const opts={};let extra=0;p.options.forEach((o,i)=>{const x=document.querySelector(`input[name=option${i}]:checked`);if(x){opts[o.name]=x.value;extra+=Number(x.dataset.price)}});addItem({id:p.id,name:p.name,base:p.price,unit:p.price+extra,qty:Math.max(1,Number(document.getElementById('qty').value)||1),options:opts,image:p.image})}}
 function renderCart(){const el=document.getElementById('cart-view');if(!el)return;const c=getCart();if(!c.length){el.innerHTML='<div class="empty"><h2>Your cart is empty.</h2><p>Add products from the menu or directly from the homepage.</p><a class="btn" href="menu.html">Browse menu</a></div>';return}const total=c.reduce((s,i)=>s+i.unit*i.qty,0);el.innerHTML=`<div class="cart-layout"><section><p class="eyebrow">YOUR ORDER</p><h1>Cart</h1>${c.map((i,n)=>`<article class="cart-item"><img src="${i.image}" alt=""><div class="cart-item-main"><h3>${i.name}</h3><p>${Object.entries(i.options||{}).map(x=>x[0]+': '+x[1]).join(' • ')||'Standard item'}</p><strong>${money(i.unit*i.qty)}</strong><div class="cart-controls"><button onclick="changeQty(${n},-1)">−</button><span>${i.qty}</span><button onclick="changeQty(${n},1)">+</button><button class="remove" onclick="removeItem(${n})">Remove</button></div></div></article>`).join('')}</section><aside class="panel cart-summary"><h2>Summary</h2><div class="summary-row"><span>Items</span><strong>${c.reduce((s,i)=>s+i.qty,0)}</strong></div><div class="summary-row total"><span>Total</span><strong>${money(total)}</strong></div><a class="btn wide" href="checkout.html">Continue to checkout</a><a class="text-link" href="menu.html">← Add more products</a></aside></div>`}
 function renderCheckout(){const el=document.getElementById('checkout-view');if(!el)return;const c=getCart();if(!c.length){el.innerHTML='<div class="empty"><h2>Your cart is empty.</h2><a class="btn" href="menu.html">Browse menu</a></div>';return}const subtotal=c.reduce((s,i)=>s+i.unit*i.qty,0);el.innerHTML=`<div class="checkout-layout"><section><p class="eyebrow">CHECKOUT</p><h1>Complete your order.</h1><div class="panel"><h2>Your items</h2>${c.map(i=>`<div class="summary-row"><span>${i.qty} × ${i.name}<small style="display:block">${Object.entries(i.options||{}).map(x=>x[0]+': '+x[1]).join(' • ')}</small></span><strong>${money(i.unit*i.qty)}</strong></div>`).join('')}<div class="summary-row total"><span>Total</span><span>${money(subtotal)}</span></div></div></section><section class="panel"><h2>Customer details</h2><form id="checkout-form"><div class="field"><label>Name</label><input id="customer" required placeholder="Your name"></div><div class="field"><label>Phone</label><input id="phone" required placeholder="07xx xxx xxx"></div><div class="field"><label>Delivery / pickup note</label><input id="note" placeholder="e.g. Westlands, apartment 4B"></div><div class="option-group payment"><h4>Payment method</h4><label><input type="radio" name="payment" value="M-Pesa" checked> M-Pesa</label><label><input type="radio" name="payment" value="Card"> Card</label><label><input type="radio" name="payment" value="PayPal"> PayPal</label></div><button class="btn wide">Pay ${money(subtotal)} <small>(demo)</small></button></form></section></div>`;document.getElementById('checkout-form').onsubmit=e=>{e.preventDefault();const order={id:'SB-'+Date.now().toString().slice(-6),customer:document.getElementById('customer').value,phone:document.getElementById('phone').value,note:document.getElementById('note').value,payment:document.querySelector('input[name=payment]:checked').value,items:c,total:subtotal,status:'New',paymentStatus:'Demo paid',created:new Date().toISOString()};const orders=read('doe_orders',[]);orders.unshift(order);write('doe_orders',orders);write('doe_last_order',order.id);localStorage.removeItem('doe_cart');location.href='order.html?id='+order.id}}
@@ -30,7 +84,7 @@ try{
 const response=await fetch('https://restaurant-ordering-api-ow3p.onrender.com/api/menu/public?businessId='+encodeURIComponent(typeof BUSINESS_ID!=='undefined'?BUSINESS_ID:'11111111-1111-4111-8111-111111111111'));
 if(!response.ok)return;const data=await response.json();
 const products=(data.products||[]).map(p=>({id:p.id,name:p.name,category:p.category_name||p.category||'Menu',price:Number(p.price||0),image:p.image_url||'',desc:p.description||'',options:Array.isArray(p.options)?p.options:[]}));
-if(products.length){const grid=document.getElementById('menu-grid');if(grid)grid.innerHTML=products.map(p=>'<article class="menu-card"><img src="'+p.image+'" alt="'+p.name+'"><div class="menu-card-body"><p class="eyebrow">'+p.category+'</p><h3>'+p.name+'</h3><p>'+p.desc+'</p><div class="price-row"><span class="price">'+money(p.price)+'</span><a class="add-btn" href="product.html?id='+encodeURIComponent(p.id)+'">Customize →</a></div></div></article>').join('');}
+if(products.length){renderSignatureMenu(products);}
 const strip=document.getElementById('promotions-strip');if(strip){const promos=data.promotions||[];strip.innerHTML=promos.length?'<div class="promo-heading"><p class="eyebrow">RESTAURANT OFFERS</p><h2>Today\'s specials.</h2></div><div class="promo-list">'+promos.slice(0,6).map(p=>'<article><span>'+String(p.type||'OFFER').replaceAll('_',' ')+'</span><h3>'+p.name+'</h3><p>'+(p.banner_text||'Limited-time restaurant promotion')+'</p></article>').join('')+'</div>':'<div class="promo-heading"><p class="eyebrow">SAVANNA BITES</p><h2>Fresh from the kitchen.</h2></div>';}
 const offer=(data.promotions||[])[0],hero=document.querySelector('.hero-card small');if(offer&&hero){hero.textContent=offer.banner_text||offer.name;const strong=hero.parentElement?.querySelector('strong');if(strong)strong.textContent=offer.name}
 }catch{}

@@ -714,6 +714,8 @@ app.post('/api/stations/:id/reactivate',requireManagerStation,async(req,res)=>{
   catch(e){res.status(500).json({error:e.message||'Unable to reactivate station'});}
 });
 app.post('/api/station/pair',async(req,res)=>{
+  res.setHeader('Cache-Control','no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma','no-cache');
   const client=await pool.connect();
   try{
     const token=String(req.body.token||'').trim();

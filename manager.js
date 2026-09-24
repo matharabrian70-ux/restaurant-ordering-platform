@@ -113,9 +113,9 @@ async function pairDevice(id){
   catch(x){alert(x.message);}
 }
 function showPairingQR(p){
-  const wrap=document.createElement('div');wrap.className='qr-modal';wrap.innerHTML='<div class="qr-card"><button class="qr-close" onclick="this.closest(&quot;.qr-modal&quot;).remove()">×</button><span class="eyebrow">CONNECT DEVICE</span><h2>Scan this QR code</h2><p>This code expires in <b>5 minutes</b> and can be used once.</p><div class="qr-box"><canvas id="pair-qr"></canvas></div><div class="pair-url">'+esc(p.connectUrl)+'</div><button class="btn secondary" onclick="navigator.clipboard?.writeText('+JSON.stringify(p.connectUrl)+')">COPY CONNECTION LINK</button></div>';
+  const wrap=document.createElement('div');wrap.className='qr-modal';wrap.innerHTML='<div class="qr-card"><button class="qr-close" onclick="this.closest(&quot;.qr-modal&quot;).remove()">×</button><span class="eyebrow">CONNECT DEVICE</span><h2>Scan this QR code</h2><p>This code expires in <b>5 minutes</b> and can be used once.</p><div class="qr-box"><img id="pair-qr" alt="Scan to connect this order-control device"></div><div class="pair-url">'+esc(p.connectUrl)+'</div><button class="btn secondary" onclick="navigator.clipboard?.writeText('+JSON.stringify(p.connectUrl)+')">COPY CONNECTION LINK</button></div>';
   document.body.appendChild(wrap);
-  if(window.QRCode?.toCanvas)QRCode.toCanvas(document.getElementById('pair-qr'),p.connectUrl,{width:260,margin:2},err=>{if(err)console.error(err);});
+  const qr=document.getElementById('pair-qr');if(qr&&p.qrDataUrl)qr.src=p.qrDataUrl;else if(qr)qr.alt='QR code could not be generated. Use the connection link below.';
 }
 async function revokeDevice(id){if(!confirm('Disconnect this order-control device?'))return;try{await api('/api/stations/'+id+'/revoke',{method:'POST',body:JSON.stringify({})});await load();}catch(x){alert(x.message)}}
 async function reactivateDevice(id){try{await api('/api/stations/'+id+'/reactivate',{method:'POST',body:JSON.stringify({})});await load();}catch(x){alert(x.message)}}

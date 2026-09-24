@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
 import pg from 'pg';
+import QRCode from 'qrcode';
 import { registerDeliveryEngine } from './delivery-engine.js';
 import { registerMenuEngine } from './menu-engine.js';
 
@@ -696,7 +697,8 @@ app.post('/api/stations/:id/pairing-token',requireManagerStation,async(req,res)=
     await pool.query('update station_pairing_tokens set used_at=coalesce(used_at,now()) where station_id=$1 and used_at is null',[req.params.id]);
     await pool.query('insert into station_pairing_tokens(id,station_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval \'5 minutes\')',[req.params.id,hashSessionToken(raw)]);
     const connectUrl=`${FRONTEND_URL.replace(/\/$/,'')}/connect-device.html?token=${encodeURIComponent(raw)}`;
-    res.json({token:raw,connectUrl,expiresInSeconds:300});
+    const qrDataUrl=await QRCode.toDataURL(connectUrl,{width:320,margin:2,errorCorrectionLevel:'M'});
+    res.json({token:raw,connectUrl,qrDataUrl,expiresInSeconds:300});
   }catch(e){res.status(500).json({error:e.message||'Unable to create pairing code'});}
 });
 app.post('/api/stations/:id/revoke',requireManagerStation,async(req,res)=>{

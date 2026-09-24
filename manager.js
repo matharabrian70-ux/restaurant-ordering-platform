@@ -15,7 +15,34 @@ async function load(){
   }
 }
 function showLogin(message=''){
-  root.innerHTML='<section class="manager-login"><div class="manager-login-card"><span class="manager-kicker"><i></i> SAVANNA BITES</span><h1>Manager sign in</h1><p>Use your restaurant manager account. Order-control devices use QR pairing and do not sign in here.</p>'+(message?'<div class="login-error">'+esc(message)+'</div>':'')+'<form onsubmit="loginManager(event)"><label>Email<input id="manager-email" type="email" autocomplete="username" required></label><label>Password<input id="manager-password" type="password" autocomplete="current-password" required></label><button class="btn wide">SIGN IN</button></form></div></section>';
+  root.innerHTML='<section class="manager-login"><div class="manager-login-card"><span class="manager-kicker"><i></i> SAVANNA BITES</span><h1>Manager sign in</h1><p>Use your restaurant manager account. Order-control devices use QR pairing and do not sign in here.</p>'+(message?'<div class="login-error">'+esc(message)+'</div>':'')+'<form onsubmit="loginManager(event)"><label>Email<input id="manager-email" type="email" autocomplete="username" required></label><label>Password<div class="password-field"><input id="manager-password" type="password" autocomplete="current-password" required><button type="button" class="password-toggle" onclick="toggleManagerPassword()" aria-label="Show password">SHOW</button></div></label><button class="btn wide">SIGN IN</button></form><div class="login-divider"><span>OR</span></div><button type="button" class="google-login" onclick="googleManagerLogin()"><span class="google-mark">G</span><span>CONTINUE WITH GOOGLE</span></button><p class="google-note">Google will ask which account you want to use before continuing.</p></div></section>';
+}
+async function toggleManagerPassword(){
+  const input=document.getElementById('manager-password');
+  const button=document.querySelector('.password-toggle');
+  if(!input||!button)return;
+  input.type=input.type==='password'?'text':'password';
+  button.textContent=input.type==='password'?'SHOW':'HIDE';
+  button.setAttribute('aria-label',input.type==='password'?'Show password':'Hide password');
+}
+async function googleManagerLogin(){
+  try{
+    const cfg=await api('/api/manager/google/config');
+    if(!cfg.clientId) throw new Error('Google sign-in is not configured on the server yet.');
+    if(!window.google?.accounts?.id){
+      await new Promise((resolve,reject)=>{
+        const script=document.createElement('script');script.src='https://accounts.google.com/gsi/client';script.async=true;script.onload=resolve;script.onerror=()=>reject(new Error('Google sign-in could not load.'));
+        document.head.appendChild(script);
+      });
+    }
+    google.accounts.id.initialize({client_id:cfg.clientId,callback:async response=>{
+      try{
+        const data=await api('/api/manager/google',{method:'POST',body:JSON.stringify({businessId:B,credential:response.credential})});
+        setManagerToken(data.token);await load();
+      }catch(e){showLogin(e.message);}
+    }});
+    google.accounts.id.prompt();
+  }catch(e){showLogin(e.message);}
 }
 async function loginManager(e){
   e.preventDefault();const b=e.submitter;b.disabled=true;b.textContent='SIGNING IN…';

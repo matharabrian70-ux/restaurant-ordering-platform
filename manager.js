@@ -112,8 +112,29 @@ async function pairDevice(id){
   try{const p=await api('/api/stations/'+id+'/pairing-token',{method:'POST',body:JSON.stringify({})});showPairingQR(p);}
   catch(x){alert(x.message);}
 }
+async function copyConnectionLink(url,button){
+  if(!url)return;
+  const original=button?.textContent||'COPY CONNECTION LINK';
+  try{
+    if(navigator.clipboard&&window.isSecureContext){
+      await navigator.clipboard.writeText(url);
+    }else{
+      const ta=document.createElement('textarea');
+      ta.value=url;ta.setAttribute('readonly','');ta.style.position='fixed';ta.style.opacity='0';ta.style.pointerEvents='none';
+      document.body.appendChild(ta);ta.focus();ta.select();
+      const ok=document.execCommand('copy');
+      ta.remove();
+      if(!ok)throw new Error('Copy command was blocked');
+    }
+    if(button){button.textContent='COPIED ✓';button.classList.add('done');setTimeout(()=>{button.textContent=original;button.classList.remove('done')},1800);}
+  }catch(e){
+    if(button)button.textContent='COPY FAILED';
+    alert('The connection link could not be copied automatically. Please select and copy the link shown above.');
+    setTimeout(()=>{if(button){button.textContent=original;button.classList.remove('done')}},1800);
+  }
+}
 function showPairingQR(p){
-  const wrap=document.createElement('div');wrap.className='qr-modal';wrap.innerHTML='<div class="qr-card"><button class="qr-close" onclick="this.closest(&quot;.qr-modal&quot;).remove()">×</button><span class="eyebrow">CONNECT DEVICE</span><h2>Scan this QR code</h2><p>This code expires in <b>5 minutes</b> and can be used once.</p><div class="qr-box"><img id="pair-qr" alt="Scan to connect this order-control device"></div><div class="pair-url">'+esc(p.connectUrl)+'</div><button class="btn secondary" onclick="navigator.clipboard?.writeText('+JSON.stringify(p.connectUrl)+')">COPY CONNECTION LINK</button></div>';
+  const wrap=document.createElement('div');wrap.className='qr-modal';wrap.innerHTML='<div class="qr-card"><button class="qr-close" onclick="this.closest(&quot;.qr-modal&quot;).remove()">×</button><span class="eyebrow">CONNECT DEVICE</span><h2>Scan this QR code</h2><p>This code expires in <b>5 minutes</b> and can be used once.</p><div class="qr-box"><img id="pair-qr" alt="Scan to connect this order-control device"></div><div class="pair-url" id="pair-url">'+esc(p.connectUrl)+'</div><button type="button" class="btn secondary" onclick="copyConnectionLink("${p.connectUrl}",this)">COPY CONNECTION LINK</button></div>';
   document.body.appendChild(wrap);
   const qr=document.getElementById('pair-qr');if(qr&&p.qrDataUrl)qr.src=p.qrDataUrl;else if(qr)qr.alt='QR code could not be generated. Use the connection link below.';
 }

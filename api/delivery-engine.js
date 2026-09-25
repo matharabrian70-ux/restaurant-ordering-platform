@@ -16,7 +16,10 @@ const DEFAULT_RULES = {
   customerMargin: 1.08,
   peakMultiplier: 1,
   serviceRadiusKm: 18,
-  autoRoundKes: 10
+  autoRoundKes: 10,
+  manualDistanceFactor: 1.25,
+  manualSpeedKmh: 25,
+  manualTrafficMultiplier: 1
 };
 
 function num(v, fallback=0){ const n=Number(v); return Number.isFinite(n)?n:fallback; }
@@ -73,7 +76,7 @@ function chooseCandidates(branches,lat,lng){
     .filter(b=>b._straightKm<=Math.max(2,num(b.service_radius_km,18)))
     .sort((a,b)=>a._straightKm-b._straightKm).slice(0,Math.min(3,branches.length));
 }
-function normalizeRules(row){ if(!row) return DEFAULT_RULES; return {...DEFAULT_RULES,base_fee_kes:num(row.base_fee_kes,70),per_km_kes:num(row.per_km_kes,24),per_minute_kes:num(row.per_minute_kes,.9),minimum_fee_kes:num(row.minimum_fee_kes,100),maximum_fee_kes:num(row.maximum_fee_kes,450),rider_base_kes:num(row.rider_base_kes,55),rider_per_km_kes:num(row.rider_per_km_kes,17),rider_per_minute_kes:num(row.rider_per_minute_kes,.85),rider_minimum_kes:num(row.rider_minimum_kes,75),rider_maximum_kes:num(row.rider_maximum_kes,500),fuel_reference_kes:num(row.fuel_reference_kes,200),fuel_sensitivity:num(row.fuel_sensitivity,.35),customer_margin:num(row.customer_margin,1.08),peak_multiplier:num(row.peak_multiplier,1),service_radius_km:num(row.service_radius_km,18),auto_round_kes:num(row.auto_round_kes,10)}; }
+function normalizeRules(row){ if(!row) return DEFAULT_RULES; return {...DEFAULT_RULES,base_fee_kes:num(row.base_fee_kes,70),per_km_kes:num(row.per_km_kes,24),per_minute_kes:num(row.per_minute_kes,.9),minimum_fee_kes:num(row.minimum_fee_kes,100),maximum_fee_kes:num(row.maximum_fee_kes,450),rider_base_kes:num(row.rider_base_kes,55),rider_per_km_kes:num(row.rider_per_km_kes,17),rider_per_minute_kes:num(row.rider_per_minute_kes,.85),rider_minimum_kes:num(row.rider_minimum_kes,75),rider_maximum_kes:num(row.rider_maximum_kes,500),fuel_reference_kes:num(row.fuel_reference_kes,200),fuel_sensitivity:num(row.fuel_sensitivity,.35),customer_margin:num(row.customer_margin,1.08),peak_multiplier:num(row.peak_multiplier,1),service_radius_km:num(row.service_radius_km,18),auto_round_kes:num(row.auto_round_kes,10),manual_distance_factor:num(row.manual_distance_factor,1.25),manual_speed_kmh:num(row.manual_speed_kmh,25),manual_traffic_multiplier:num(row.manual_traffic_multiplier,1)}; }
 function calculatePrices({advanced,rules,fuel,km,minutes}){
   const r=normalizeRules(rules);
   const fuelMultiplier=Math.max(0.90,Math.min(1.15,1+((fuel-r.fuel_reference_kes)/Math.max(1,r.fuel_reference_kes))*r.fuel_sensitivity));
@@ -112,11 +115,22 @@ async function quote(pool,{businessId,customerLat,customerLng,deliveryAddress,br
   if(!branches.length) throw new Error('No active delivery branch is configured');
   const candidates=chooseCandidates(branches,lat,lng);
   if(!candidates.length) throw new Error('Your delivery location is outside the restaurant delivery area');
-  const routes=await matrixRoutes(candidates,lat,lng);
-  const ranked=routes.map(x=>({...candidates[x.branchIndex],...x})).sort((a,b)=>a.distanceMeters-b.distanceMeters);
-  if(!ranked.length) throw new Error('No drivable delivery route was found');
-  const selected=ranked[0];
-  const km=selected.distanceMeters/1000, minutes=selected.durationSeconds/60;
+  let selected,km,minutes;
+  if(advanced){
+    const routes=await matrixRoutes(candidates,lat,lng);
+    const ranked=routes.map(x=>({...candidates[x.branchIndex],...x})).sort((a,b)=>a.distanceMeters-b.distanceMeters);
+    if(!ranked.length) throw new Error('No drivable delivery route was found');
+    selected=ranked[0];
+    km=selected.distanceMeters/1000;
+    minutes=selected.durationSeconds/60;
+  }else{
+    const r=normalizeRules(rules);
+    selected=candidates[0];
+    const straightKm=num(selected._straightKm,0);
+    km=straightKm*Math.max(.5,r.manual_distance_factor);
+    minutes=km/Math.max(5,r.manual_speed_kmh)*60*Math.max(.5,r.manual_traffic_multiplier);
+    selected={...selected,distanceMeters:Math.round(km*1000),durationSeconds:Math.round(minutes*60)};
+  }
   const prices=calculatePrices({advanced,rules,fuel,km,minutes});
   const saved=await pool.query(`insert into delivery_quotes(id,business_id,branch_id,pickup_address,delivery_address,customer_lat,customer_lng,distance_meters,duration_seconds,fuel_price_kes,base_fee_kes,distance_fee_kes,time_fee_kes,demand_multiplier,delivery_fee_kes,rider_earning_kes,pricing_mode,status)
     values(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'QUOTED') returning *`,

@@ -54,7 +54,7 @@
   function normaliseApiTheme(data) {
     const business = data?.business || data?.restaurant || data?.tenant || {};
     const theme = data?.theme || business?.theme || {};
-    const colors = theme.colors || {};
+    const colors = theme.colors || {};\n    const businessPrimary = safeString(business.primary_color || business.primaryColor, '');
 
     return {
       id: safeString(business.id || data?.businessId, ''),
@@ -67,7 +67,7 @@
         paper: safeString(colors.paper || colors.background, ''),
         card: safeString(colors.card || colors.surface, ''),
         line: safeString(colors.line || colors.border, ''),
-        accent: safeString(colors.accent || colors.primary, ''),
+        accent: safeString(colors.accent || colors.primary || businessPrimary, ''),
         accentContrast: safeString(colors.accentContrast || colors.primaryText, '')
       }
     };

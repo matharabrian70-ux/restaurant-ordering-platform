@@ -325,6 +325,9 @@ create table if not exists delivery_pricing_rules (
   peak_multiplier numeric(8,4) not null default 1,
   service_radius_km numeric(8,2) not null default 18,
   auto_round_kes numeric(8,2) not null default 10,
+  manual_distance_factor numeric(8,4) not null default 1.25,
+  manual_speed_kmh numeric(8,2) not null default 25,
+  manual_traffic_multiplier numeric(8,4) not null default 1,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

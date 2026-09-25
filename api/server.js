@@ -1001,9 +1001,10 @@ app.get('/api/control/businesses',requireControl,async(req,res)=>{
     const r=await pool.query(`select b.id,b.name,b.slug,b.package_type,b.mpesa_phone,b.paystack_subaccount_code,b.created_at,
       coalesce(c.customer_connected,false) as customer_connected,coalesce(c.rider_connected,false) as rider_connected,
       c.website_url,c.customer_dashboard_url,c.manager_dashboard_url,c.rider_dashboard_url,
+      rb.logo_url,rb.primary_color,rb.secondary_color,rb.accent_color,rb.font_family,rb.imported_at,
       coalesce(f.rider_module_enabled,false) as rider_module_enabled,
       (select count(*) from orders o where o.business_id=b.id)::int as order_count
-      from businesses b left join business_connections c on c.business_id=b.id left join business_features f on f.business_id=b.id
+      from businesses b left join business_connections c on c.business_id=b.id left join business_features f on f.business_id=b.id left join restaurant_branding rb on rb.business_id=b.id
       order by b.created_at desc`);
     res.json({businesses:r.rows});
   }catch(e){res.status(500).json({error:e.message||'Unable to load businesses'});}

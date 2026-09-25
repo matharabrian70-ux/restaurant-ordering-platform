@@ -105,9 +105,12 @@ async function geocodeAddress(pool,address){
   return {lat:num(loc.lat),lng:num(loc.lng),cached:false};
 }
 async function quote(pool,{businessId,customerLat,customerLng,deliveryAddress,branchId=null}){
-  let lat=num(customerLat,NaN), lng=num(customerLng,NaN);
-  if(!Number.isFinite(lat)||!Number.isFinite(lng)){ const g=await geocodeAddress(pool,deliveryAddress); lat=g.lat; lng=g.lng; }
   const advanced=await getFeature(pool,businessId);
+  let lat=num(customerLat,NaN), lng=num(customerLng,NaN);
+  if(!Number.isFinite(lat)||!Number.isFinite(lng)){
+    if(!advanced) throw new Error('Digital Ordering delivery pricing needs the customer location. Use the location button or send latitude and longitude from the restaurant website.');
+    const g=await geocodeAddress(pool,deliveryAddress); lat=g.lat; lng=g.lng;
+  }
   const rules=await getRules(pool,businessId);
   const fuel=await getFuel(pool);
   let branches=await getBranches(pool,businessId);

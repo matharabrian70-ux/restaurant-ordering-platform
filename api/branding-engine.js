@@ -3,7 +3,7 @@ import net from 'node:net';
 
 const DEFAULT_BRANDING={display_name:'',logo_url:'',favicon_url:'',primary_color:'#176b32',secondary_color:'#172019',accent_color:'#d56a2d',background_color:'#f5f5f0',text_color:'#172019',font_family:'Inter,system-ui,-apple-system,"Segoe UI",sans-serif',website_detected_name:'',source_url:'',source_title:'',source_description:'',source_logo_url:'',imported_at:null};
 function clean(v){return String(v||'').replace(/\s+/g,' ').trim();}
-function meta(html,name){const n=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');const a=new RegExp('<meta[^>]+(?:name|property)\\s*=\\s*["\\']'+n+'["\\'][^>]*content\\s*=\\s*["\\']([^"\\']+)["\\'][^>]*>','i');const b=new RegExp('<meta[^>]+content\\s*=\\s*["\\']([^"\\']+)["\\'][^>]+(?:name|property)\\s*=\\s*["\\']'+n+'["\\']','i');return (html.match(a)||html.match(b)||[])[1]||'';}
+function meta(html,name){for(const m of html.matchAll(/<meta\\b[^>]*>/gi)){const t=m[0];const n=(t.match(/\\b(?:name|property)\\s*=\\s*["']([^"']+)["']/i)||[])[1];if(n&&n.toLowerCase()===String(name).toLowerCase()){const c=(t.match(/\\bcontent\\s*=\\s*["']([^"']*)["']/i)||[])[1];if(c)return c;}}return '';}
 function titleText(html){return clean(((html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)||[])[1]||'').replace(/<[^>]+>/g,' '));}
 function resolveUrl(raw,base){try{return new URL(String(raw||''),base).toString();}catch{return '';}}
 function privateIp(ip){if(net.isIPv4(ip)){const p=ip.split('.').map(Number);return p[0]===10||p[0]===127||(p[0]===172&&p[1]>=16&&p[1]<=31)||(p[0]===192&&p[1]===168)||(p[0]===169&&p[1]===254)||p[0]===0;}if(net.isIPv6(ip)){const x=ip.toLowerCase();return x==='::1'||x.startsWith('fc')||x.startsWith('fd')||x.startsWith('fe80:');}return true;}

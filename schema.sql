@@ -131,6 +131,31 @@ create unique index if not exists rider_active_trip_idx on rider_trips(rider_id)
 create unique index if not exists payments_provider_reference_idx on payments(provider_reference) where provider_reference is not null;
 create unique index if not exists refunds_provider_refund_id_idx on refunds(provider_refund_id) where provider_refund_id is not null;
 create index if not exists refunds_order_idx on refunds(order_id, created_at desc);
+alter table receipts add column if not exists receipt_access_token text;
+create unique index if not exists receipts_access_token_idx on receipts(receipt_access_token) where receipt_access_token is not null;
+
+create table if not exists restaurant_branding (
+  business_id uuid primary key references businesses(id) on delete cascade,
+  display_name text,
+  logo_url text,
+  favicon_url text,
+  primary_color text not null default '#176b32',
+  secondary_color text not null default '#172019',
+  accent_color text not null default '#d56a2d',
+  background_color text not null default '#f5f5f0',
+  text_color text not null default '#172019',
+  font_family text not null default 'Inter, system-ui, -apple-system, "Segoe UI", sans-serif',
+  website_detected_name text,
+  source_url text,
+  source_title text,
+  source_description text,
+  source_logo_url text,
+  receipt_config jsonb not null default '{}'::jsonb,
+  imported_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 
 alter table businesses add column if not exists pickup_address text;
 alter table businesses add column if not exists paystack_subaccount_code text;

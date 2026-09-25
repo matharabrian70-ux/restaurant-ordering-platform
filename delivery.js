@@ -90,4 +90,4 @@ async function bootRider(){
     clearInterval(pollTimer);pollTimer=setInterval(()=>loadRiderDashboard().catch(()=>{}),8000);
   }catch(err){clearRiderSession();document.getElementById('rider-login-error').textContent=err.message||'Rider session expired.';}
 }
-
+bootRider();

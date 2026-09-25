@@ -22,7 +22,7 @@
     document.body?.setAttribute('data-tenant-id',BUSINESS_ID_VALUE);
     document.body?.setAttribute('data-tenant-name',brand.display_name||'Restaurant');
     const name=brand.display_name||'Restaurant';
-    document.querySelectorAll('.brand,[data-tenant-name-target]').forEach(el=>{if(el.tagName==='A'||el.classList.contains('brand')){el.textContent=name;}else{el.textContent=name;}});
+    document.querySelectorAll('.brand').forEach(el=>{el.replaceChildren();if(brand.logo_url){const img=document.createElement('img');img.src=brand.logo_url;img.alt='';el.appendChild(img);}const span=document.createElement('span');span.textContent=name;el.appendChild(span);});document.querySelectorAll('[data-tenant-name-target]').forEach(el=>el.textContent=name);
     document.querySelectorAll('[data-tenant-logo]').forEach(el=>{if(brand.logo_url){el.src=brand.logo_url;el.hidden=false;}else{el.hidden=true;}});
     document.querySelectorAll('[data-tenant-name]').forEach(el=>el.textContent=name);
     if(brand.favicon_url){let icon=document.querySelector('link[data-tenant-favicon]');if(!icon){icon=document.createElement('link');icon.rel='icon';icon.dataset.tenantFavicon='true';document.head.appendChild(icon);}icon.href=brand.favicon_url;}
@@ -36,6 +36,5 @@
     try{const cached=sessionStorage.getItem(cacheKey);if(cached)apply(JSON.parse(cached));}catch{}
     try{const res=await fetch(API+'/api/businesses/'+encodeURIComponent(BUSINESS_ID_VALUE)+'/branding',{cache:'no-store'});if(!res.ok)throw new Error('branding '+res.status);const data=await res.json();apply(data.branding||DEFAULT);try{sessionStorage.setItem(cacheKey,JSON.stringify(data.branding||DEFAULT));}catch{}}catch{if(!window.RESTAURANT_BRANDING)apply(DEFAULT);}
   }
-  window.TenantTheme={id:BUSINESS_ID_VALUE,name:()=>brand.display_name||'Restaurant',logo:()=>brand.logo_url||'',get:()=>({...brand}),ready:load()};
-  load();
+  window.TenantTheme={id:BUSINESS_ID_VALUE,name:()=>brand.display_name||'Restaurant',logo:()=>brand.logo_url||'',get:()=>({...brand}),ready:null};window.TenantTheme.ready=load();
 })();

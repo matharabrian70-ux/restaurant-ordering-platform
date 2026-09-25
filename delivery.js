@@ -9,14 +9,26 @@ function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&l
 function riderMoney(v){return 'KSh '+Number(v||0).toLocaleString();}
 function mapsUrl(origin,destination){return 'https://www.google.com/maps/dir/?api=1&origin='+encodeURIComponent(origin||'')+'&destination='+encodeURIComponent(destination||'')+'&travelmode=driving';}
 
-async function loginRider(){
+async function loginRider(e){
+  e?.preventDefault();
   const phone=document.getElementById('rider-phone').value.trim(),password=document.getElementById('rider-password').value;
-  const error=document.getElementById('rider-login-error');error.textContent='Signing in…';
+  const error=document.getElementById('rider-login-error'),button=document.getElementById('rider-login-btn');
+  error.classList.remove('hidden');error.textContent='Signing in…';button.disabled=true;button.textContent='SIGNING IN…';
   try{
     const data=await riderApi('/api/riders/login',{method:'POST',body:JSON.stringify({businessId:RIDER_BUSINESS_ID,phone,password})});
     localStorage.setItem(RIDER_TOKEN_KEY,data.token);rider=data.rider;await bootRider();
-  }catch(err){error.textContent=err.message||'Could not sign in.';}
+  }catch(err){
+    error.textContent=err.message||'Could not sign in.';
+    button.disabled=false;button.textContent='SIGN IN';
+  }
 }
+function toggleRiderPassword(){
+  const input=document.getElementById('rider-password'),button=document.getElementById('rider-password-toggle');
+  if(!input||!button)return;
+  input.type=input.type==='password'?'text':'password';
+  button.textContent=input.type==='password'?'SHOW':'HIDE';
+}
+
 async function logoutRider(){try{await riderApi('/api/riders/logout',{method:'POST'});}catch{}clearRiderSession();location.reload();}
 async function setOnline(online){
   try{const data=await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/presence',{method:'POST',body:JSON.stringify({online})});document.getElementById('online-state').textContent=data.online?'ONLINE':'OFFLINE';await loadRiderDashboard();}
@@ -78,5 +90,4 @@ async function bootRider(){
     clearInterval(pollTimer);pollTimer=setInterval(()=>loadRiderDashboard().catch(()=>{}),8000);
   }catch(err){clearRiderSession();document.getElementById('rider-login-error').textContent=err.message||'Rider session expired.';}
 }
-document.getElementById('rider-login-btn').onclick=loginRider;
-bootRider();
+

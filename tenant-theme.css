@@ -1,0 +1,24 @@
+:root{
+  --tenant-primary:#176b32;
+  --tenant-secondary:#172019;
+  --tenant-accent:#d56a2d;
+  --tenant-paper:#f5f5f0;
+  --tenant-text:#172019;
+  --tenant-font:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+body{font-family:var(--tenant-font)}
+.brand{color:var(--tenant-secondary)!important}
+.brand img{width:34px;height:34px;object-fit:contain;border-radius:7px;vertical-align:middle;margin-right:8px}
+.btn,.wide.btn{background:var(--tenant-primary)!important;border-color:var(--tenant-primary)!important}
+.btn:hover{background:var(--tenant-secondary)!important;border-color:var(--tenant-secondary)!important}
+.eyebrow,.manager-kicker,.ops-kicker{color:var(--tenant-primary)}
+.manager-tab.active,.ops-tab.active{background:var(--tenant-secondary);border-color:var(--tenant-secondary)}
+.signature-add-btn{background:var(--tenant-primary)!important}
+.signature-add-btn:hover{background:var(--tenant-secondary)!important}
+.signature-available{color:var(--tenant-primary)}
+.signature-dot{background:var(--tenant-primary)}
+.timeline-step.active{border-color:var(--tenant-primary)}
+.timeline-step.active span{background:var(--tenant-primary);border-color:var(--tenant-primary)}
+.rider-actions button,.rider-actions a{background:var(--tenant-secondary)}
+.station-btn:not(.secondary){background:var(--tenant-primary)}
+[data-tenant-name-target]{font-weight:inherit}

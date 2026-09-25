@@ -131,6 +131,23 @@ function hashSessionToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
+async function ensureIntegrationSchema() {
+  await pool.query(`
+    create table if not exists business_integrations (
+      id uuid primary key,
+      business_id uuid not null unique references businesses(id) on delete cascade,
+      integration_type text not null check (integration_type in ('ORDER_BUTTON','EMBEDDED_MENU','FULL_ORDERING_PAGE','FULL_ORDERING_SUBDOMAIN')),
+      status text not null default 'ACTIVE' check (status in ('ACTIVE','REVOKED')),
+      public_token_hash text not null unique,
+      generated_at timestamptz not null default now(),
+      revoked_at timestamptz,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+    create index if not exists business_integrations_business_idx on business_integrations(business_id,status);
+  `);
+}
+
 function hashManagerPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const derived = crypto.scryptSync(String(password), salt, 64, { N: 131072, r: 8, p: 1, maxmem: 256 * 1024 * 1024 });
   return `scrypt$131072$8$1${salt}:${derived.toString('hex')}`;
@@ -1243,4 +1260,118 @@ registerReceiptEngine(app,pool,{requireManager});
 registerDeliveryEngine(app,pool,requireManager);
 registerMenuEngine(app,pool,requireManager,broadcastRealtime);
 
-app.listen(port, () => console.log(`Ordering API listening on ${port}`));
+
+function integrationTypeLabel(type){
+  return ({
+    ORDER_BUTTON:'Order button',
+    EMBEDDED_MENU:'Embedded menu',
+    FULL_ORDERING_PAGE:'Full ordering page',
+    FULL_ORDERING_SUBDOMAIN:'Full ordering subdomain'
+  })[type]||type;
+}
+function integrationCustomerUrl(businessId){
+  return `${FRONTEND_URL.replace(/\/$/,'')}/menu.html?businessId=${encodeURIComponent(businessId)}`;
+}
+
+app.post('/api/platform/businesses/:id/integration',requirePlatformAdmin,async(req,res)=>{
+  try{
+    const business=await pool.query('select id,name,slug,domain,website_url,primary_color,status from businesses where id=$1',[req.params.id]);
+    if(!business.rowCount)return res.status(404).json({error:'Restaurant not found'});
+    const type=String(req.body.type||'').toUpperCase();
+    const allowed=['ORDER_BUTTON','EMBEDDED_MENU','FULL_ORDERING_PAGE','FULL_ORDERING_SUBDOMAIN'];
+    if(!allowed.includes(type))return res.status(400).json({error:'Invalid integration type'});
+    if(business.rows[0].status!=='ACTIVE')return res.status(400).json({error:'Activate the restaurant before generating an integration'});
+    await ensureIntegrationSchema();
+    const token=crypto.randomBytes(24).toString('hex');
+    const tokenHash=hashSessionToken(token);
+    await pool.query(`insert into business_integrations(id,business_id,integration_type,status,public_token_hash,generated_at,revoked_at,updated_at)
+      values(gen_random_uuid(),$1,$2,'ACTIVE',$3,now(),null,now())
+      on conflict(business_id) do update set integration_type=excluded.integration_type,status='ACTIVE',public_token_hash=excluded.public_token_hash,generated_at=now(),revoked_at=null,updated_at=now()`,
+      [req.params.id,type,tokenHash]);
+    const b=business.rows[0];
+    const customerUrl=integrationCustomerUrl(b.id);
+    const apiOrigin=`${req.protocol}://${req.get('host')}`;
+    const connectorUrl=`${apiOrigin}/api/public/integrations/${token}.js`;
+    const domain=String(b.domain||'').trim();
+    const subdomainUrl=domain?(`https://${domain}`):null;
+    const dnsTarget=process.env.ORDERING_CUSTOM_DOMAIN_TARGET||'restaurant-ordering-platform.onrender.com';
+    const response={
+      type,
+      typeLabel:integrationTypeLabel(type),
+      status:'ACTIVE',
+      token,
+      connectorUrl,
+      customerUrl,
+      subdomainUrl,
+      websiteUrl:b.website_url||null,
+      domain:domain||null,
+      instructions: type==='ORDER_BUTTON'
+        ? ['Keep your existing website button/link. Add data-restaurant-order to that element.','Paste the generated connector script before the closing </body> tag.','The connector will route that button to this restaurant’s ordering page.']
+        : type==='EMBEDDED_MENU'
+        ? ['Add the generated iframe where the restaurant wants its ordering menu.','The menu, cart and checkout remain powered by this tenant.','No restaurant menu data is copied into the website code.']
+        : type==='FULL_ORDERING_PAGE'
+        ? ['Use the generated customer ordering URL as the restaurant’s Order Online destination.','The existing website can keep all of its other pages unchanged.']
+        : ['Use the requested restaurant subdomain for the ordering experience.','Add the subdomain to the ordering frontend hosting service and configure DNS.','After DNS verification, the ordering page will be available on that subdomain.'],
+      code: type==='ORDER_BUTTON'
+        ? `<script src="${connectorUrl}" defer></script>`
+        : type==='EMBEDDED_MENU'
+        ? `<iframe src="${customerUrl}" title="${b.name} ordering" style="width:100%;min-height:900px;border:0" loading="lazy"></iframe>`
+        : customerUrl,
+      dns: type==='FULL_ORDERING_SUBDOMAIN' && domain ? {host:domain,target:dnsTarget,note:'The DNS target is deployment-specific. Add/verify the custom domain on the ordering frontend before switching customer traffic.'} : null
+    };
+    res.json(response);
+  }catch(e){res.status(500).json({error:e.message||'Unable to generate website integration'});}
+});
+app.get('/api/platform/businesses/:id/integration',requirePlatformAdmin,async(req,res)=>{
+  try{
+    await ensureIntegrationSchema();
+    const r=await pool.query('select integration_type,status,generated_at,revoked_at from business_integrations where business_id=$1',[req.params.id]);
+    if(!r.rowCount)return res.json({configured:false});
+    res.json({configured:true,...r.rows[0]});
+  }catch(e){res.status(500).json({error:e.message||'Unable to load integration'});}
+});
+app.delete('/api/platform/businesses/:id/integration',requirePlatformAdmin,async(req,res)=>{
+  try{
+    await ensureIntegrationSchema();
+    await pool.query(`update business_integrations set status='REVOKED',revoked_at=now(),updated_at=now() where business_id=$1`,[req.params.id]);
+    res.json({ok:true});
+  }catch(e){res.status(500).json({error:e.message||'Unable to revoke integration'});}
+});
+
+app.get('/api/public/integrations/:token.js',(req,res)=>{
+  (async()=>{
+    try{
+      await ensureIntegrationSchema();
+      const token=String(req.params.token||'').trim();
+      const r=await pool.query(`select bi.integration_type,b.id,b.name,b.status,b.primary_color
+        from business_integrations bi join businesses b on b.id=bi.business_id
+        where bi.public_token_hash=$1 and bi.status='ACTIVE' and b.status='ACTIVE'`,[hashSessionToken(token)]);
+      if(!r.rowCount)return res.status(404).type('application/javascript').send('/* Integration not found or revoked. */');
+      const b=r.rows[0];
+      const menuUrl=integrationCustomerUrl(b.id);
+      const jsCode=`(function(){
+  var menuUrl=${JSON.stringify(menuUrl)};
+  function wire(){
+    document.querySelectorAll('[data-restaurant-order],[data-restaurant-menu]').forEach(function(el){
+      if(el.dataset.restaurantOrderingBound==='true')return;
+      el.dataset.restaurantOrderingBound='true';
+      if(el.tagName==='A')el.setAttribute('href',menuUrl);
+      el.addEventListener('click',function(event){
+        if(el.tagName!=='A')event.preventDefault();
+        window.location.href=menuUrl;
+      });
+    });
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',wire);else wire();
+  window.addEventListener('load',wire);
+})();`;
+      res.type('application/javascript').set('Cache-Control','no-store').send(jsCode);
+    }catch(e){res.status(500).type('application/javascript').send(`/* Integration error: ${String(e.message||'unknown').replace(/\*\//g,'')} */`);}
+  })();
+});
+
+async function startServer(){
+  await ensureIntegrationSchema();
+  app.listen(port, () => console.log(`Ordering API listening on ${port}`));
+}
+startServer().catch(error => { console.error('Unable to start ordering API', error); process.exit(1); });

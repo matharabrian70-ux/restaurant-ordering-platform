@@ -654,7 +654,14 @@ app.post('/api/riders/:id/suspend', requireRiderModule, requireManager, async(re
     await pool.query(`insert into rider_presence(rider_id,online) values($1,false) on conflict(rider_id) do update set online=false,updated_at=now()`,[req.params.id]);
     res.json({ok:true,rider:result.rows[0]});
   }catch(error){res.status(500).json({error:error.message||'Unable to suspend rider'});}
+});app.post('/api/riders/:id/reactivate', requireRiderModule, requireManager, async(req,res)=>{
+  try{
+    const result=await pool.query(`update riders set rider_status='ACTIVE',active=true where id=$1 and business_id=$2 and rider_status='SUSPENDED' returning id,name,phone,rider_status,active`,[req.params.id,req.manager.business_id]);
+    if(!result.rowCount)return res.status(404).json({error:'Suspended rider not found'});
+    res.json({ok:true,rider:result.rows[0]});
+  }catch(error){res.status(500).json({error:error.message||'Unable to reactivate rider'});}
 });
+
 
 app.post('/api/riders/logout', requireRiderModule, requireRiderAuth, async(req,res)=>{
   await pool.query('delete from rider_sessions where id=$1',[req.rider.session_id]);

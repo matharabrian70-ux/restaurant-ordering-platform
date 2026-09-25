@@ -631,3 +631,18 @@ create table if not exists business_connections (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+
+-- Tenant website integration system: generated connectors, embedded menus and subdomain integrations.
+create table if not exists business_integrations (
+  id uuid primary key,
+  business_id uuid not null unique references businesses(id) on delete cascade,
+  integration_type text not null check (integration_type in ('ORDER_BUTTON','EMBEDDED_MENU','FULL_ORDERING_PAGE','FULL_ORDERING_SUBDOMAIN')),
+  status text not null default 'ACTIVE' check (status in ('ACTIVE','REVOKED')),
+  public_token_hash text not null unique,
+  generated_at timestamptz not null default now(),
+  revoked_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists business_integrations_business_idx on business_integrations(business_id,status);

@@ -314,7 +314,26 @@ function detailPanel(b){
           <label>Domain<input id="edit-domain" value="${esc(b.domain||'')}" placeholder="orders.restaurant.com"></label>
         </div>
         <div class="pc-inline-actions"><button class="pc-btn" id="save-connection">SAVE CONNECTION</button><span id="save-state" class="pc-muted"></span></div>
-        <p class="pc-help">The URL identifies the restaurant website. The connector below is what links its Menu / Order Now buttons to this tenant's ordering system. A public URL alone does not grant permission to edit a third-party GitHub, Namecheap, Cloudflare or WordPress site.</p>
+        <p class="pc-help">The URL identifies the restaurant website. The integration below is what connects its existing site to this tenant's ordering system. A public URL alone does not grant permission to edit a third-party website.</p>
+      </div>
+
+      <div class="pc-section">
+        <span class="pc-kicker">INTEGRATION</span>
+        <div class="pc-integration-hero">
+          <div><strong>Connect this restaurant to your ordering platform</strong><span>Generate the exact integration the restaurant needs without rebuilding its website.</span></div>
+          <span class="pc-module on">TENANT ${esc(b.slug)}</span>
+        </div>
+        <div class="pc-integration-options">
+          <label><input type="radio" name="integration-type" value="ORDER_BUTTON" checked><span><strong>Order button</strong><small>Turn an existing Menu / Order button into the tenant's ordering link.</small></span></label>
+          <label><input type="radio" name="integration-type" value="EMBEDDED_MENU"><span><strong>Embedded menu</strong><small>Place the live ordering menu inside the existing website.</small></span></label>
+          <label><input type="radio" name="integration-type" value="FULL_ORDERING_PAGE"><span><strong>Full ordering page</strong><small>Use a complete customer ordering page while keeping the main website intact.</small></span></label>
+          <label><input type="radio" name="integration-type" value="FULL_ORDERING_SUBDOMAIN"><span><strong>Full ordering subdomain</strong><small>Serve ordering from a restaurant subdomain such as orders.restaurant.com.</small></span></label>
+        </div>
+        <div class="pc-integration-actions">
+          <button class="pc-btn" id="generate-integration">GENERATE INTEGRATION</button>
+          <span id="integration-status" class="pc-muted">Nothing generated yet.</span>
+        </div>
+        <div id="integration-result" class="pc-integration-result" hidden></div>
       </div>
 
       <div class="pc-section">
@@ -327,10 +346,10 @@ function detailPanel(b){
       </div>
 
       <div class="pc-section">
-        <span class="pc-kicker">WEBSITE CONNECTOR</span>
-        <p class="pc-help">Place your homepage's Menu and Order Now elements on the website, then use this small connector so both open the restaurant's customer dashboard.</p>
-        <div class="pc-code"><code id="connector-code">${esc(connectorCode(b))}</code></div>
-        <div class="pc-inline-actions"><button class="pc-mini" id="copy-connector">COPY CONNECTOR</button><span class="pc-muted">Tenant ID: ${esc(b.id)}</span></div>
+        <span class="pc-kicker">TENANT DETAILS</span>
+        <div class="pc-code"><code>Tenant ID: ${esc(b.id)}
+Slug: ${esc(b.slug)}
+Customer ordering URL: ${esc(customerUrl(b))}</code></div>
       </div>
 
       <div class="pc-section pc-two">
@@ -341,7 +360,6 @@ function detailPanel(b){
     </section>
   </div>`;
 }
-
 function bindDetail(){
   document.getElementById('detail-close')?.addEventListener('click',closeDetail);
   document.getElementById('close-detail-2')?.addEventListener('click',closeDetail);
@@ -350,9 +368,42 @@ function bindDetail(){
   document.getElementById('copy-connector')?.addEventListener('click',()=>copyText(connectorCode(state.selected),document.getElementById('copy-connector')));
   document.getElementById('save-connection')?.addEventListener('click',saveConnection);
   document.getElementById('save-tenant')?.addEventListener('click',saveTenant);
+  document.getElementById('generate-integration')?.addEventListener('click',generateIntegration);
 }
 
 function closeDetail(){state.selected=null;render();}
+
+async function generateIntegration(){
+  const b=state.selected;if(!b)return;
+  const button=document.getElementById('generate-integration');
+  const status=document.getElementById('integration-status');
+  const result=document.getElementById('integration-result');
+  const type=document.querySelector('input[name="integration-type"]:checked')?.value||'ORDER_BUTTON';
+  button.disabled=true;button.textContent='GENERATING…';status.textContent='Creating tenant integration…';result.hidden=true;
+  try{
+    const data=await api('/api/platform/businesses/'+encodeURIComponent(b.id)+'/integration',{method:'POST',body:JSON.stringify({type})});
+    result.innerHTML=renderIntegrationResult(data);
+    result.hidden=false;
+    status.textContent=data.typeLabel+' is active.';
+    bindIntegrationResult(data);
+  }catch(error){status.textContent=error.message;result.hidden=false;result.innerHTML=`<div class="pc-message pc-error">${esc(error.message)}</div>`;}
+  finally{button.disabled=false;button.textContent='GENERATE INTEGRATION';}
+}
+function renderIntegrationResult(data){
+  const code=String(data.code||'');
+  const instructions=(data.instructions||[]).map((x,i)=>`<li><span>${i+1}</span>${esc(x)}</li>`).join('');
+  const dns=data.dns?`<div class="pc-integration-dns"><strong>DNS / subdomain setup</strong><p>Host: <code>${esc(data.dns.host)}</code></p><p>Target: <code>${esc(data.dns.target)}</code></p><small>${esc(data.dns.note)}</small></div>`:'';
+  return `<div class="pc-integration-result-head"><div><strong>${esc(data.typeLabel)}</strong><span>Generated for ${esc(data.websiteUrl||'this tenant')}</span></div><span class="pc-pill active">ACTIVE</span></div>
+  <div class="pc-integration-steps"><strong>What to do next</strong><ol>${instructions}</ol></div>
+  <label class="pc-code-label">Generated integration</label>
+  <div class="pc-code pc-integration-code"><code>${esc(code)}</code></div>
+  <div class="pc-inline-actions"><button class="pc-mini" id="copy-generated-integration">COPY INTEGRATION</button><a class="pc-mini pc-link-button" href="${esc(data.customerUrl)}" target="_blank" rel="noopener">OPEN CUSTOMER ORDERING</a></div>
+  ${dns}
+  <p class="pc-help"><strong>Important:</strong> generating the integration creates the connection for this tenant. It does not silently rewrite a third-party website. The restaurant must install the generated snippet or authorize a supported CMS/repository connection.</p>`;
+}
+function bindIntegrationResult(data){
+  document.getElementById('copy-generated-integration')?.addEventListener('click',()=>copyText(data.code,document.getElementById('copy-generated-integration')));
+}
 
 async function saveConnection(){
   const b=state.selected;if(!b)return;

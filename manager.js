@@ -12,7 +12,7 @@ function startManagerRealtime(){
   const connect=()=>{
     if(!currentManager)return;
     managerEvents=new EventSource(API_BASE_URL+'/api/events?businessId='+encodeURIComponent(B));
-    const refresh=()=>{clearTimeout(window.managerRealtimeRetry);(window.TenantTheme?.ready||Promise.resolve()).then(()=>load());};
+    const refresh=()=>{clearTimeout(window.managerRealtimeRetry);(Promise.resolve()).then(()=>load());};
     managerEvents.addEventListener('order.updated',e=>{try{const d=JSON.parse(e.data||'{}');if(d.status==='NEW'&&d.paymentStatus==='PAID'){const key=String(d.orderId||'');if(!alertedOrders.has(key)){alertedOrders.set(key,Date.now());playOrderAlert();setTimeout(()=>alertedOrders.delete(key),15000)}}refresh();}catch{}});
     ['rider.updated','delivery.updated','refund.updated','station.updated','menu.updated','promotion.updated','branch.updated'].forEach(name=>managerEvents.addEventListener(name,refresh));
     managerEvents.onerror=()=>{if(managerEvents){managerEvents.close();managerEvents=null;}window.managerRealtimeRetry=setTimeout(connect,3000);};
@@ -39,7 +39,7 @@ async function load(){
   }
 }
 function showLogin(message=''){
-  root.innerHTML='<section class="manager-login"><div class="manager-login-card"><span class="manager-kicker"><i></i> '+esc(window.TenantTheme?.name?.()||'RESTAURANT')+'</span><h1>Manager sign in</h1><p>Use your restaurant manager account. Order-control devices use QR pairing and do not sign in here.</p>'+(message?'<div class="login-error">'+esc(message)+'</div>':'')+'<form onsubmit="loginManager(event)"><label>Email<input id="manager-email" type="email" autocomplete="username" required></label><label>Password<div class="password-field"><input id="manager-password" type="password" autocomplete="current-password" required><button type="button" class="password-toggle" onclick="toggleManagerPassword()" aria-label="Show password">SHOW</button></div></label><button class="btn wide">SIGN IN</button></form><div class="login-divider"><span>OR</span></div><button type="button" class="google-login" onclick="googleManagerLogin()"><span class="google-mark">G</span><span>CONTINUE WITH GOOGLE</span></button><p class="google-note">Google will ask which account you want to use before continuing.</p></div></section>';
+  root.innerHTML='<section class="manager-login"><div class="manager-login-card"><span class="manager-kicker"><i></i> '+esc(window.TENANT_THEME?.name||'RESTAURANT')+'</span><h1>Manager sign in</h1><p>Use your restaurant manager account. Order-control devices use QR pairing and do not sign in here.</p>'+(message?'<div class="login-error">'+esc(message)+'</div>':'')+'<form onsubmit="loginManager(event)"><label>Email<input id="manager-email" type="email" autocomplete="username" required></label><label>Password<div class="password-field"><input id="manager-password" type="password" autocomplete="current-password" required><button type="button" class="password-toggle" onclick="toggleManagerPassword()" aria-label="Show password">SHOW</button></div></label><button class="btn wide">SIGN IN</button></form><div class="login-divider"><span>OR</span></div><button type="button" class="google-login" onclick="googleManagerLogin()"><span class="google-mark">G</span><span>CONTINUE WITH GOOGLE</span></button><p class="google-note">Google will ask which account you want to use before continuing.</p></div></section>';
 }
 async function toggleManagerPassword(){
   const input=document.getElementById('manager-password');
@@ -62,7 +62,7 @@ async function googleManagerLogin(){
     google.accounts.id.initialize({client_id:cfg.clientId,callback:async response=>{
       try{
         const data=await api('/api/manager/google',{method:'POST',body:JSON.stringify({businessId:B,credential:response.credential})});
-        setManagerToken(data.token);await (window.TenantTheme?.ready||Promise.resolve()).then(()=>load());
+        setManagerToken(data.token);await (Promise.resolve()).then(()=>load());
       }catch(e){showLogin(e.message);}
     }});
     google.accounts.id.prompt();
@@ -70,7 +70,7 @@ async function googleManagerLogin(){
 }
 async function loginManager(e){
   e.preventDefault();const b=e.submitter;b.disabled=true;b.textContent='SIGNING IN…';
-  try{await managerLogin(document.getElementById('manager-email').value.trim(),document.getElementById('manager-password').value);await (window.TenantTheme?.ready||Promise.resolve()).then(()=>load());}
+  try{await managerLogin(document.getElementById('manager-email').value.trim(),document.getElementById('manager-password').value);await (Promise.resolve()).then(()=>load());}
   catch(x){b.disabled=false;b.textContent='SIGN IN';showLogin(x.message);}
 }
 async function logoutManager(){
@@ -97,7 +97,7 @@ async function accept(id,b){b.disabled=true;b.classList.add('done');b.textConten
 async function assignSelected(id,b){
   const riderId=selectedRiders[id];if(!riderId)return;
   b.disabled=true;b.classList.add('done');b.textContent='ASSIGNING…';
-  try{await api('/api/orders/'+id+'/assign-rider',{method:'POST',body:JSON.stringify({riderId})});b.textContent='✓ ASSIGNED';delete selectedRiders[id];await (window.TenantTheme?.ready||Promise.resolve()).then(()=>load());}
+  try{await api('/api/orders/'+id+'/assign-rider',{method:'POST',body:JSON.stringify({riderId})});b.textContent='✓ ASSIGNED';delete selectedRiders[id];await (Promise.resolve()).then(()=>load());}
   catch(e){b.disabled=false;b.classList.remove('done');b.textContent='ASSIGN RIDER';alert(e.message);}
 }
 function menu(){const m=D.menu;return '<div class="manager-grid two"><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">MENU STRUCTURE</span><h2>Categories</h2></div></div><form class="inline-form" onsubmit="category(event)"><input id="cat" required placeholder="Breakfast"><button class="btn">ADD CATEGORY</button></form><div class="category-list">'+m.categories.map(c=>'<div><b>'+esc(c.name)+'</b><span>'+esc(c.active?'ACTIVE':'HIDDEN')+'</span></div>').join('')+'</div></section><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">ADD ITEM</span><h2>New menu item</h2><p>Upload a photo or paste an image URL.</p></div></div><form onsubmit="addItem(event)"><div class="form-grid"><label>Name<input id="mn" required></label><label>Price (KES)<input id="mp" type="number" min="0" required></label></div><label>Description<textarea id="md"></textarea></label><div class="form-grid"><label>Category<select id="mc">'+m.categories.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('')+'</select></label><label>Photo<input id="mf" type="file" accept="image/*" onchange="pickPhoto(event)"></label></div><input id="mu" placeholder="Or paste an image URL"><div id="preview" class="photo-preview"></div><label class="check"><input id="mfeat" type="checkbox"> Featured item</label><button class="btn wide">PUBLISH MENU ITEM</button></form></section></div><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">LIVE MENU</span><h2>'+m.products.length+' items</h2></div></div><div class="menu-admin-grid">'+(m.products.map(itemCard).join('')||'<div class="empty-state">No menu items yet.</div>')+'</div></section>'}
@@ -163,7 +163,7 @@ async function inviteRider(e){
     riderInviteResult='<div class="rider-invite-success"><span class="eyebrow">INVITATION READY</span><h3>'+esc(data.rider.name)+' has been invited.</h3><p>Send this secure link to the rider. It expires in 48 hours.</p><div class="invite-link-row"><input value="'+esc(data.signupUrl)+'" readonly><button type="button" class="btn btn-small" onclick="copyRiderInvite(this)">COPY LINK</button></div></div>';
     out.innerHTML=riderInviteResult;
     document.getElementById('rin-name').value='';document.getElementById('rin-phone').value='';document.getElementById('rin-email').value='';document.getElementById('rin-plate').value='';
-    await (window.TenantTheme?.ready||Promise.resolve()).then(()=>load());
+    await (Promise.resolve()).then(()=>load());
     setTimeout(()=>{document.getElementById('rider-invite-panel')?.scrollIntoView({behavior:'smooth'});},80);
   }catch(x){out.innerHTML='<div class="login-error">'+esc(x.message)+'</div>';}
   finally{b.disabled=false;b.textContent='CREATE INVITATION';}
@@ -176,17 +176,17 @@ async function copyRiderInvite(button){
 }
 async function approveRider(id,button){
   button.disabled=true;button.textContent='APPROVING…';
-  try{await api('/api/riders/'+id+'/approve',{method:'POST',body:JSON.stringify({})});await (window.TenantTheme?.ready||Promise.resolve()).then(()=>load());}
+  try{await api('/api/riders/'+id+'/approve',{method:'POST',body:JSON.stringify({})});await (Promise.resolve()).then(()=>load());}
   catch(x){button.disabled=false;button.textContent='APPROVE RIDER';alert(x.message);}
 }
 async function suspendRider(id,button){
   if(!confirm('Suspend this rider? They will be signed out and cannot receive deliveries until reactivated.'))return;
   button.disabled=true;button.textContent='SUSPENDING…';
-  try{await api('/api/riders/'+id+'/suspend',{method:'POST',body:JSON.stringify({})});await (window.TenantTheme?.ready||Promise.resolve()).then(()=>load());}
+  try{await api('/api/riders/'+id+'/suspend',{method:'POST',body:JSON.stringify({})});await (Promise.resolve()).then(()=>load());}
   catch(x){button.disabled=false;button.textContent='SUSPEND';alert(x.message);}
 }async function reactivateRider(id,button){
   button.disabled=true;button.textContent='REACTIVATING…';
-  try{await api('/api/riders/'+id+'/reactivate',{method:'POST',body:JSON.stringify({})});await (window.TenantTheme?.ready||Promise.resolve()).then(()=>load());}
+  try{await api('/api/riders/'+id+'/reactivate',{method:'POST',body:JSON.stringify({})});await (Promise.resolve()).then(()=>load());}
   catch(x){button.disabled=false;button.textContent='REACTIVATE';alert(x.message);}
 }
 async function renewRiderInvite(id,button){
@@ -194,7 +194,7 @@ async function renewRiderInvite(id,button){
   try{
     const data=await api('/api/riders/'+id+'/invite',{method:'POST',body:JSON.stringify({})});
     riderInviteResult='<div class="rider-invite-success"><span class="eyebrow">NEW INVITATION LINK</span><h3>Registration link refreshed.</h3><p>Send this link to the rider. It expires in 48 hours.</p><div class="invite-link-row"><input value="'+esc(data.signupUrl)+'" readonly><button type="button" class="btn btn-small" onclick="copyRiderInvite(this)">COPY LINK</button></div></div>';
-    await (window.TenantTheme?.ready||Promise.resolve()).then(()=>load());
+    await (Promise.resolve()).then(()=>load());
     document.getElementById('rider-invite-panel')?.scrollIntoView({behavior:'smooth'});
   }catch(x){button.disabled=false;button.textContent='NEW INVITE LINK';alert(x.message);}
 }
@@ -268,7 +268,7 @@ function showPairingQR(p){
   if(qr&&p.qrDataUrl)qr.src=p.qrDataUrl;
   else if(qr)qr.alt='QR code could not be generated. Use the connection link below.';
 }
-async function revokeDevice(id){if(!confirm('Disconnect this order-control device?'))return;try{await api('/api/stations/'+id+'/revoke',{method:'POST',body:JSON.stringify({})});await (window.TenantTheme?.ready||Promise.resolve()).then(()=>load());}catch(x){alert(x.message)}}
-async function reactivateDevice(id){try{await api('/api/stations/'+id+'/reactivate',{method:'POST',body:JSON.stringify({})});await (window.TenantTheme?.ready||Promise.resolve()).then(()=>load());}catch(x){alert(x.message)}}
+async function revokeDevice(id){if(!confirm('Disconnect this order-control device?'))return;try{await api('/api/stations/'+id+'/revoke',{method:'POST',body:JSON.stringify({})});await (Promise.resolve()).then(()=>load());}catch(x){alert(x.message)}}
+async function reactivateDevice(id){try{await api('/api/stations/'+id+'/reactivate',{method:'POST',body:JSON.stringify({})});await (Promise.resolve()).then(()=>load());}catch(x){alert(x.message)}}
 
-(window.TenantTheme?.ready||Promise.resolve()).then(()=>load());
+(Promise.resolve()).then(()=>load());

@@ -15,7 +15,7 @@
     document.body?.classList.add('tenant-branded');
     const name=branding.display_name||'Restaurant';
     const logo=branding.logo_url||'';
-    document.title=document.title.replace(/^(Restaurant Manager|Rider Dashboard|Menu|Checkout|Track Order)[^—]*/i,name);
+    const path=location.pathname.toLowerCase();const page=path.includes('manager')?'Manager Dashboard':path.includes('rider')?'Rider Dashboard':path.includes('checkout')?'Checkout':path.includes('order')?'Order Tracking':path.includes('menu')?'Menu':path.includes('receipt')?'Receipt':'Restaurant';document.title=name+' — '+page;
     document.querySelectorAll('.brand').forEach(el=>{el.innerHTML=(logo?'<img class="tenant-brand-logo" src="'+esc(logo)+'" alt="">':'')+'<span class="tenant-brand-name">'+esc(name)+'</span>';});
     document.querySelectorAll('.manager-header h1').forEach(el=>{el.textContent=name+'.';});
     document.querySelectorAll('.manager-login .manager-kicker').forEach(el=>{el.innerHTML='<i></i> '+esc(name.toUpperCase());});

@@ -504,3 +504,46 @@ insert into order_audit_events(id,order_id,business_id,event_type,actor_type,not
 select gen_random_uuid(),r.order_id,o.business_id,'REFUND_EVENT','SYSTEM',coalesce(r.merchant_note,r.customer_note),jsonb_build_object('refund_id',r.id,'amount',r.amount,'status',r.status,'provider_refund_id',r.provider_refund_id),r.created_at
 from refunds r join orders o on o.id=r.order_id where not exists(select 1 from order_audit_events ae where ae.order_id=r.order_id and ae.event_type='REFUND_EVENT' and (ae.metadata->>'refund_id')=r.id::text);
 
+
+
+-- Platform owner control centre: tenant provisioning, packages and platform authentication.
+create table if not exists platform_admin_users (
+  id uuid primary key,
+  name text not null,
+  email text not null unique,
+  password_hash text not null,
+  active boolean not null default true,
+  last_login_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create table if not exists platform_admin_sessions (
+  id uuid primary key,
+  admin_id uuid not null references platform_admin_users(id) on delete cascade,
+  token_hash text not null unique,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists platform_admin_sessions_admin_idx on platform_admin_sessions(admin_id,expires_at desc);
+create table if not exists platform_packages (
+  key text primary key,
+  name text not null,
+  description text,
+  monthly_price_kes numeric(12,2) not null default 0,
+  active boolean not null default true,
+  features jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+alter table businesses add column if not exists status text not null default 'ACTIVE';
+alter table businesses add column if not exists plan_key text;
+alter table businesses add column if not exists logo_url text;
+alter table businesses add column if not exists primary_color text;
+alter table businesses add column if not exists domain text;
+alter table businesses add column if not exists updated_at timestamptz not null default now();
+insert into platform_packages(key,name,description,monthly_price_kes,features) values
+('STARTER','Starter','Core online ordering',0,'{"ordering":true,"riderModule":false,"advancedAnalytics":false}'::jsonb),
+('GROWTH','Growth','Ordering plus delivery operations',3500,'{"ordering":true,"riderModule":true,"advancedAnalytics":true}'::jsonb),
+('PRO','Pro','Full restaurant operations platform',7500,'{"ordering":true,"riderModule":true,"advancedAnalytics":true,"prioritySupport":true}'::jsonb)
+on conflict(key) do nothing;
+update businesses set plan_key=coalesce(plan_key,'STARTER'),status=coalesce(status,'ACTIVE'),updated_at=now();
+update businesses set plan_key='GROWTH' where slug='savanna-bites' and plan_key='STARTER';

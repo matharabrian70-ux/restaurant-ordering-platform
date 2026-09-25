@@ -142,6 +142,17 @@ function verifyManagerPassword(password, stored) {
     return actual.length === expected.length && crypto.timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'));
   } catch { return false; }
 }
+async function getControlAdminFromSession(req){
+  const raw=String(req.headers.authorization||'');
+  const token=raw.startsWith('Bearer ')?raw.slice(7).trim():'';
+  if(!token)return null;
+  const r=await pool.query(`select a.*,s.id as session_id,s.expires_at from platform_admin_sessions s join platform_admin_users a on a.id=s.admin_id where s.token_hash=$1 and s.expires_at>now() and a.active=true`,[hashSessionToken(token)]);
+  return r.rows[0]||null;
+}
+async function requireControl(req,res,next){
+  try{const admin=await getControlAdminFromSession(req);if(!admin)return res.status(401).json({error:'Platform control login required'});req.controlAdmin=admin;next();}
+  catch(e){res.status(500).json({error:'Unable to verify control session'});}
+}
 async function getManagerFromSession(req) {
   const raw = String(req.headers.authorization || '');
   const token = raw.startsWith('Bearer ') ? raw.slice(7).trim() : '';
@@ -954,6 +965,108 @@ app.get('/api/station/events',requireStation,(req,res)=>{
   req.on('close',()=>{clearInterval(heartbeat);stationRealtimeClients.delete(client);});
 });
 
+
+app.post('/api/control/login',async(req,res)=>{
+  try{
+    const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');
+    if(!email||!password)return res.status(400).json({error:'Email and password are required'});
+    let r=await pool.query('select * from platform_admin_users where lower(email)=lower($1) and active=true',[email]);
+    if(!r.rowCount){
+      const configuredEmail=String(process.env.PLATFORM_ADMIN_EMAIL||'').trim().toLowerCase();
+      const configuredPassword=String(process.env.PLATFORM_ADMIN_PASSWORD||'');
+      if(!configuredEmail||!configuredPassword||email!==configuredEmail||password!==configuredPassword)return res.status(401).json({error:'Invalid control centre login'});
+      const hash=hashManagerPassword(password);
+      await pool.query('insert into platform_admin_users(id,email,name,password_hash,active) values(gen_random_uuid(),$1,$2,$3,true) on conflict(email) do nothing',[email,String(process.env.PLATFORM_ADMIN_NAME||'Platform Owner'),hash]);
+      r=await pool.query('select * from platform_admin_users where lower(email)=lower($1) and active=true',[email]);
+    }
+    const admin=r.rows[0];
+    if(!admin||!verifyManagerPassword(password,admin.password_hash))return res.status(401).json({error:'Invalid control centre login'});
+    const token=crypto.randomBytes(32).toString('hex');
+    await pool.query('insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval \'30 days\')',[admin.id,hashSessionToken(token)]);
+    await pool.query('update platform_admin_users set last_login_at=now() where id=$1',[admin.id]);
+    res.json({token,admin:{id:admin.id,name:admin.name,email:admin.email}});
+  }catch(e){res.status(500).json({error:e.message||'Unable to sign in to control centre'});}
+});
+app.get('/api/control/me',requireControl,(req,res)=>res.json({id:req.controlAdmin.id,name:req.controlAdmin.name,email:req.controlAdmin.email}));
+app.post('/api/control/logout',requireControl,async(req,res)=>{
+  const raw=String(req.headers.authorization||'');const token=raw.startsWith('Bearer ')?raw.slice(7).trim():'';
+  if(token)await pool.query('delete from platform_admin_sessions where token_hash=$1',[hashSessionToken(token)]);
+  res.json({ok:true});
+});
+app.get('/api/control/businesses',requireControl,async(req,res)=>{
+  try{
+    const r=await pool.query(`select b.id,b.name,b.slug,b.package_type,b.mpesa_phone,b.created_at,
+      coalesce(c.customer_connected,false) as customer_connected,coalesce(c.rider_connected,false) as rider_connected,
+      c.website_url,c.customer_dashboard_url,c.manager_dashboard_url,c.rider_dashboard_url,
+      coalesce(f.rider_module_enabled,false) as rider_module_enabled,
+      (select count(*) from orders o where o.business_id=b.id)::int as order_count
+      from businesses b left join business_connections c on c.business_id=b.id left join business_features f on f.business_id=b.id
+      order by b.created_at desc`);
+    res.json({businesses:r.rows});
+  }catch(e){res.status(500).json({error:e.message||'Unable to load businesses'});}
+});
+function cleanControlUrl(value){
+  const v=String(value||'').trim();
+  if(!v)return null;
+  try{const u=new URL(v);if(!['http:','https:'].includes(u.protocol))throw new Error();return u.toString();}catch{throw new Error('Website URL must be a valid http or https URL');}
+}
+async function saveBusinessConnection(businessId,{websiteUrl,customerConnected,riderConnected}){
+  const web=cleanControlUrl(websiteUrl);
+  const customer=Boolean(customerConnected),rider=Boolean(riderConnected);
+  const customerUrl=`${FRONTEND_URL.replace(/\/$/,'')}/menu.html?businessId=${encodeURIComponent(businessId)}`;
+  const managerUrl=`${FRONTEND_URL.replace(/\/$/,'')}/manager.html?businessId=${encodeURIComponent(businessId)}`;
+  const riderUrl=`${FRONTEND_URL.replace(/\/$/,'')}/rider.html?businessId=${encodeURIComponent(businessId)}`;
+  await pool.query(`insert into business_connections(business_id,website_url,customer_dashboard_url,manager_dashboard_url,rider_dashboard_url,customer_connected,rider_connected,updated_at)
+    values($1,$2,$3,$4,$5,$6,$7,now())
+    on conflict(business_id) do update set website_url=excluded.website_url,customer_dashboard_url=excluded.customer_dashboard_url,manager_dashboard_url=excluded.manager_dashboard_url,rider_dashboard_url=excluded.rider_dashboard_url,customer_connected=excluded.customer_connected,rider_connected=excluded.rider_connected,updated_at=now()`,
+    [businessId,web,customerUrl,managerUrl,riderUrl,customer,rider]);
+  await pool.query(`insert into business_features(business_id,rider_module_enabled) values($1,$2) on conflict(business_id) do update set rider_module_enabled=$2,updated_at=now()`,[businessId,rider]);
+  return {websiteUrl:web,customerDashboardUrl:customerUrl,managerDashboardUrl:managerUrl,riderDashboardUrl:riderUrl,customerConnected:customer,riderConnected:rider};
+}
+app.post('/api/control/businesses',requireControl,async(req,res)=>{
+  const client=await pool.connect();
+  try{
+    const name=String(req.body.name||'').trim(),slug=String(req.body.slug||'').trim().toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-+|-+$/g,'');
+    const packageType=String(req.body.packageType||'DIGITAL_ORDERING').toUpperCase();
+    if(!name||!slug)return res.status(400).json({error:'Restaurant name and slug are required'});
+    if(!['DIGITAL_ORDERING','ADVANCED'].includes(packageType))return res.status(400).json({error:'Invalid package'});
+    await client.query('begin');
+    const r=await client.query('insert into businesses(id,name,slug,package_type,mpesa_phone) values(gen_random_uuid(),$1,$2,$3,$4) returning *',[name,slug,packageType,String(req.body.mpesaPhone||'').trim()||null]);
+    const business=r.rows[0];
+    await client.query('insert into delivery_pricing_rules(business_id) values($1) on conflict(business_id) do nothing',[business.id]);
+    await client.query('insert into business_features(business_id,rider_module_enabled) values($1,$2) on conflict(business_id) do update set rider_module_enabled=$2,updated_at=now()',[business.id,Boolean(req.body.riderConnected)]);
+    await client.query('insert into business_connections(business_id) values($1) on conflict(business_id) do nothing',[business.id]);
+    await client.query('commit');
+    const connection=await saveBusinessConnection(business.id,req.body);
+    res.status(201).json({business:{...business,...connection},connection});
+  }catch(e){try{await client.query('rollback')}catch{}res.status(400).json({error:e.code==='23505'?'That restaurant slug already exists':e.message||'Unable to create restaurant'});}finally{client.release();}
+});
+app.patch('/api/control/businesses/:id',requireControl,async(req,res)=>{
+  try{
+    const id=String(req.params.id),name=String(req.body.name||'').trim(),slug=String(req.body.slug||'').trim().toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-+|-+$/g,'');
+    const packageType=String(req.body.packageType||'DIGITAL_ORDERING').toUpperCase();
+    if(!name||!slug||!['DIGITAL_ORDERING','ADVANCED'].includes(packageType))return res.status(400).json({error:'Invalid restaurant configuration'});
+    const r=await pool.query('update businesses set name=$1,slug=$2,package_type=$3,mpesa_phone=$4 where id=$5 returning *',[name,slug,packageType,String(req.body.mpesaPhone||'').trim()||null,id]);
+    if(!r.rowCount)return res.status(404).json({error:'Restaurant not found'});
+    const connection=await saveBusinessConnection(id,req.body);
+    res.json({business:{...r.rows[0],...connection},connection});
+  }catch(e){res.status(400).json({error:e.code==='23505'?'That restaurant slug already exists':e.message||'Unable to update restaurant'});}
+});
+app.get('/api/control/businesses/:id/status',requireControl,async(req,res)=>{
+  try{
+    const id=String(req.params.id);
+    const [b,f,branches,connections,manager,riders]=await Promise.all([
+      pool.query('select id,name,slug,package_type,mpesa_phone,paystack_subaccount_code from businesses where id=$1',[id]),
+      pool.query('select rider_module_enabled from business_features where business_id=$1',[id]),
+      pool.query('select count(*)::int as count from business_branches where business_id=$1 and active=true',[id]),
+      pool.query('select * from business_connections where business_id=$1',[id]),
+      pool.query('select count(*)::int as count from manager_users where business_id=$1 and active=true',[id]),
+      pool.query('select count(*)::int as count from riders where business_id=$1',[id])
+    ]);
+    if(!b.rowCount)return res.status(404).json({error:'Restaurant not found'});
+    res.json({business:b.rows[0],riderModule:Boolean(f.rows[0]?.rider_module_enabled),branches:branches.rows[0].count,connections:connections.rows[0]||null,managerUsers:manager.rows[0].count,riders:riders.rows[0].count});
+  }catch(e){res.status(500).json({error:e.message||'Unable to load restaurant status'});}
+});
 registerDeliveryEngine(app,pool,requireManager);
 registerMenuEngine(app,pool,requireManager,broadcastRealtime);
 

@@ -7,8 +7,14 @@ create table if not exists businesses (
   id uuid primary key,
   name text not null,
   slug text unique not null,
+  package_type text not null default 'DIGITAL_ORDERING',
+  mpesa_phone text,
+  paystack_subaccount_code text,
   created_at timestamptz not null default now()
 );
+alter table businesses add column if not exists package_type text not null default 'DIGITAL_ORDERING';
+alter table businesses add column if not exists mpesa_phone text;
+alter table businesses add column if not exists paystack_subaccount_code text;
 
 create table if not exists customers (
   id uuid primary key,
@@ -520,3 +526,36 @@ insert into order_audit_events(id,order_id,business_id,event_type,actor_type,not
 select gen_random_uuid(),r.order_id,o.business_id,'REFUND_EVENT','SYSTEM',coalesce(r.merchant_note,r.customer_note),jsonb_build_object('refund_id',r.id,'amount',r.amount,'status',r.status,'provider_refund_id',r.provider_refund_id),r.created_at
 from refunds r join orders o on o.id=r.order_id where not exists(select 1 from order_audit_events ae where ae.order_id=r.order_id and ae.event_type='REFUND_EVENT' and (ae.metadata->>'refund_id')=r.id::text);
 
+
+
+-- Platform control centre: global administration and website/package connections.
+create table if not exists platform_admin_users (
+  id uuid primary key,
+  email text unique not null,
+  name text not null,
+  password_hash text not null,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  last_login_at timestamptz
+);
+create table if not exists platform_admin_sessions (
+  id uuid primary key,
+  admin_id uuid not null references platform_admin_users(id) on delete cascade,
+  token_hash text unique not null,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists platform_admin_sessions_admin_idx on platform_admin_sessions(admin_id,expires_at);
+
+create table if not exists business_connections (
+  business_id uuid primary key references businesses(id) on delete cascade,
+  website_url text,
+  customer_dashboard_url text,
+  manager_dashboard_url text,
+  rider_dashboard_url text,
+  customer_connected boolean not null default false,
+  rider_connected boolean not null default false,
+  integration_token_hash text unique,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);

@@ -249,11 +249,8 @@ alter table riders add column if not exists payout_phone text;
 alter table riders add column if not exists active boolean not null default true;
 alter table riders add column if not exists rider_status text not null default 'ACTIVE';
 update riders set rider_status=case when active then 'ACTIVE' else 'SUSPENDED' end where rider_status is null or rider_status='';
-DO $
-BEGIN
-  ALTER TABLE riders ADD CONSTRAINT riders_status_check CHECK (rider_status IN ('INVITED','PENDING_APPROVAL','ACTIVE','SUSPENDED'));
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $;
+ALTER TABLE riders DROP CONSTRAINT IF EXISTS riders_status_check;
+ALTER TABLE riders ADD CONSTRAINT riders_status_check CHECK (rider_status IN ('INVITED','PENDING_APPROVAL','ACTIVE','SUSPENDED'));
 
 create table if not exists rider_invites (
   id uuid primary key,

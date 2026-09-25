@@ -29,13 +29,23 @@ function login(message=''){
         ${message?`<div class="pc-message pc-error">${esc(message)}</div>`:''}
         <form id="login-form">
           <label>Email<input id="pa-email" type="email" autocomplete="username" required></label>
-          <label>Password<input id="pa-password" type="password" autocomplete="current-password" required></label>
-          <button class="pc-btn">SIGN IN</button>
+          <label>Password>
+            <span class="pc-password-field">
+              <input id="pa-password" type="password" autocomplete="current-password" required>
+              <button type="button" class="pc-password-toggle" id="pa-password-toggle" aria-label="Show password">SHOW</button>
+            </span>
+          </label>
+          <button type="submit" class="pc-btn pc-signin-btn">SIGN IN</button>
         </form>
+        <div class="pc-login-divider"><span>OR</span></div>
+        <button type="button" class="pc-google-btn" id="platform-google-btn"><span class="pc-google-mark">G</span><span>CONTINUE WITH GOOGLE</span></button>
+        <p class="pc-google-note">Google will ask which account you want to use before continuing.</p>
         <p class="pc-note">Uses the platform owner credentials already configured on Render.</p>
       </div>
     </section>`;
   document.getElementById('login-form').addEventListener('submit',loginSubmit);
+  document.getElementById('pa-password-toggle').addEventListener('click',togglePlatformPassword);
+  document.getElementById('platform-google-btn').addEventListener('click',googlePlatformLogin);
 }
 
 async function loginSubmit(e){
@@ -50,6 +60,41 @@ async function loginSubmit(e){
     localStorage.setItem('platform_admin_token',data.token);
     await load();
   }catch(error){button.disabled=false;button.textContent='SIGN IN';login(error.message);}
+}
+
+function togglePlatformPassword(){
+  const input=document.getElementById('pa-password'),button=document.getElementById('pa-password-toggle');
+  if(!input||!button)return;
+  input.type=input.type==='password'?'text':'password';
+  button.textContent=input.type==='password'?'SHOW':'HIDE';
+  button.setAttribute('aria-label',input.type==='password'?'Show password':'Hide password');
+}
+
+async function googlePlatformLogin(){
+  const button=document.getElementById('platform-google-btn');
+  try{
+    button.disabled=true;
+    const cfg=await api('/api/platform/google/config');
+    if(!cfg.clientId)throw new Error('Google sign-in is not configured on the server yet.');
+    if(!window.google?.accounts?.id){
+      await new Promise((resolve,reject)=>{
+        const script=document.createElement('script');
+        script.src='https://accounts.google.com/gsi/client';
+        script.async=true;
+        script.onload=resolve;
+        script.onerror=()=>reject(new Error('Google sign-in could not load.'));
+        document.head.appendChild(script);
+      });
+    }
+    google.accounts.id.initialize({client_id:cfg.clientId,callback:async response=>{
+      try{
+        const data=await api('/api/platform/google',{method:'POST',body:JSON.stringify({credential:response.credential})});
+        localStorage.setItem('platform_admin_token',data.token);
+        await load();
+      }catch(error){button.disabled=false;login(error.message);}
+    }});
+    google.accounts.id.prompt();
+  }catch(error){button.disabled=false;login(error.message);}
 }
 
 async function load(){

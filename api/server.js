@@ -1031,7 +1031,7 @@ app.post('/api/control/businesses',requireControl,async(req,res)=>{
     if(!name||!slug)return res.status(400).json({error:'Restaurant name and slug are required'});
     if(!['DIGITAL_ORDERING','ADVANCED'].includes(packageType))return res.status(400).json({error:'Invalid package'});
     await client.query('begin');
-    const r=await client.query('insert into businesses(id,name,slug,package_type,mpesa_phone,paystack_subaccount_code) values(gen_random_uuid(),$1,$2,$3,$4,$5) returning *',[name,slug,packageType,String(req.body.mpesaPhone||'').trim()||null]);
+    const r=await client.query('insert into businesses(id,name,slug,package_type,mpesa_phone,paystack_subaccount_code) values(gen_random_uuid(),$1,$2,$3,$4,$5) returning *',[name,slug,packageType,String(req.body.mpesaPhone||'').trim()||null,String(req.body.paystackSubaccountCode||'').trim()||null]);
     const business=r.rows[0];
     await client.query('insert into delivery_pricing_rules(business_id) values($1) on conflict(business_id) do nothing',[business.id]);
     await client.query('insert into business_features(business_id,rider_module_enabled) values($1,$2) on conflict(business_id) do update set rider_module_enabled=$2,updated_at=now()',[business.id,Boolean(req.body.riderConnected)]);

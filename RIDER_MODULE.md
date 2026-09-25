@@ -23,7 +23,12 @@ The core customer ordering, restaurant dashboard, payments and refunds continue 
 The module uses the existing riders, rider_trips and orders tables and these endpoints:
 
 - GET /api/riders
-- POST /api/riders
+- POST /api/rider-invites
+- GET /api/rider-invites/:token
+- POST /api/rider-invites/:token/complete
+- POST /api/riders/:id/approve
+- POST /api/riders/:id/suspend
+- POST /api/riders/:id/reactivate
 - GET /api/riders/:id/active-delivery
 - POST /api/riders/:id/complete-delivery
 - POST /api/orders/:id/assign-rider
@@ -44,7 +49,10 @@ The goal is to keep the advanced rider capability attachable to the same core or
 The advanced module now includes:
 
 - Secure rider login sessions instead of rider-ID-only access.
-- Restaurant-created rider accounts with phone, password, vehicle, plate and M-Pesa payout number.
+- Manager-created rider invitations with expiring secure registration links.
+- Rider-completed profiles with phone, password, vehicle, plate, M-Pesa payout number and profile photo.
+- Manager approval before a rider account becomes ACTIVE and can sign in.
+- Rider account lifecycle: INVITED → PENDING_APPROVAL → ACTIVE → SUSPENDED.
 - Online/offline presence and busy/available state.
 - Assignment → accepted → arrived at restaurant → picked up → on the way → delivered.
 - Rider dashboard with assignments, active trip, completed trips, daily/weekly earnings and history.

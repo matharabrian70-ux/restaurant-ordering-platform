@@ -86,7 +86,10 @@ async function googleManagerLogin(){
             const data=await api('/api/manager/google',{method:'POST',body:JSON.stringify({businessId:B,credential:response.credential})});
             setManagerToken(data.token);
             await (Promise.resolve()).then(()=>load());
-          }catch(e){showLogin(e.message);}
+          }catch(e){
+            const note=document.querySelector('.google-note');
+            if(note)note.textContent=e.message;
+          }
         }
       });
       googleManagerInitialized=true;
@@ -104,7 +107,8 @@ async function googleManagerLogin(){
     container.setAttribute('aria-busy','false');
   }catch(e){
     container.setAttribute('aria-busy','false');
-    showLogin(e.message);
+    const note=document.querySelector('.google-note');
+    if(note)note.textContent=e.message;
   }
 }
 async function loginManager(e){

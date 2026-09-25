@@ -21,7 +21,7 @@ async function renderCheckoutUpgrade(){
         <div class="field"><label>Name</label><input id="customer" required placeholder="Your name"></div>
         <div class="field"><label>Phone</label><input id="phone" required placeholder="07xx xxx xxx"></div>
         <div class="field"><label>Email</label><input id="email" type="email" required placeholder="you@example.com"></div>
-        <div class="field"><label>Delivery location</label><input id="delivery-address" required placeholder="House, apartment, estate, street or landmark"></div>
+        <div class="field"><label>Delivery location</label><input id="delivery-address" required placeholder="House, apartment, estate, street or landmark"><button class="btn secondary" type="button" id="location-button">USE MY LOCATION</button><small id="location-status" class="muted">For Digital Ordering, your location is used to estimate distance without live route pricing.</small></div>
         <div class="field"><label>Delivery note</label><input id="note" placeholder="Gate code, floor, directions…"></div>
         <div class="option-group payment"><h4>Payment method</h4><label><input type="radio" name="payment" value="M-Pesa" checked> M-Pesa</label><label><input type="radio" name="payment" value="Card"> Card</label><p class="muted">The delivery price is calculated from the route and current pricing inputs before payment.</p></div>
         <button class="btn wide" id="quote-button" type="button">CALCULATE DELIVERY FEE</button>
@@ -31,16 +31,19 @@ async function renderCheckoutUpgrade(){
     </section>
   </div>`;
 
-  let quote=null;
+  let quote=null,customerLat=null,customerLng=null;
   const quoteButton=document.getElementById('quote-button');
+  const locationButton=document.getElementById('location-button');
+  const locationStatus=document.getElementById('location-status');
+  locationButton.onclick=()=>{if(!navigator.geolocation){locationStatus.textContent='Location is not available in this browser.';return}locationButton.disabled=true;locationButton.textContent='LOCATING…';navigator.geolocation.getCurrentPosition(p=>{customerLat=p.coords.latitude;customerLng=p.coords.longitude;locationStatus.textContent='Location captured. The delivery calculator can use it.';locationButton.textContent='LOCATION CAPTURED ✓';locationButton.disabled=false},()=>{locationStatus.textContent='Location permission was not granted. Please enable it or use a delivery address supported by the active pricing mode.';locationButton.textContent='USE MY LOCATION';locationButton.disabled=false},{enableHighAccuracy:true,timeout:10000,maximumAge:60000})};
   const payButton=document.getElementById('pay-button');
   const error=document.getElementById('checkout-error');
   quoteButton.onclick=async()=>{
     const address=document.getElementById('delivery-address').value.trim();
     if(!address){error.textContent='Enter your delivery location first.';return;}
-    quoteButton.disabled=true; error.textContent='Calculating route and delivery fee…';
+    quoteButton.disabled=true; error.textContent=customerLat!==null?'Calculating delivery fee…':'Calculating delivery fee…';
     try{
-      quote=await getDeliveryQuote({pickupAddress:business.pickup_address||'Savanna Bites, Nairobi, Kenya',deliveryAddress:address});
+      quote=await getDeliveryQuote({pickupAddress:business.pickup_address||'Savanna Bites, Nairobi, Kenya',deliveryAddress:address,latitude:customerLat,longitude:customerLng});
       document.getElementById('delivery-fee').textContent=money(quote.deliveryFee);
       document.getElementById('checkout-total').textContent=money(subtotal+Number(quote.deliveryFee));
       document.getElementById('route-summary').textContent=`${Number(quote.km).toFixed(1)} km · about ${Math.max(1,Math.round(Number(quote.minutes)))} min · ${quote.branchName||'Best available branch'} · ${quote.pricingMode==='AUTO'?'automatic platform pricing':'restaurant pricing rules'}`;

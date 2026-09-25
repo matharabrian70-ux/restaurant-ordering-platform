@@ -1,5 +1,6 @@
 const API_BASE_URL = 'https://restaurant-ordering-api-ow3p.onrender.com';
-const BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
+const DEFAULT_BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
+const BUSINESS_ID = new URLSearchParams(location.search).get('businessId') || DEFAULT_BUSINESS_ID;
 const MANAGER_TOKEN_KEY = 'savanna_manager_session';
 function getManagerToken(){ return sessionStorage.getItem(MANAGER_TOKEN_KEY) || ''; }
 function setManagerToken(token){ if(token) sessionStorage.setItem(MANAGER_TOKEN_KEY,token); else sessionStorage.removeItem(MANAGER_TOKEN_KEY); }

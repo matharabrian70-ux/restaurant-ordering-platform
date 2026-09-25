@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#172019">
+<title>Rider Registration — Savanna Bites</title>
+<link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="rider.css">
+</head>
+<body>
+<header class="nav"><a class="brand" href="index.html">SAVANNA<span>BITES</span></a><nav><a href="index.html">Customer</a><a href="rider.html">Rider sign in</a></nav></header>
+<main class="rider-auth-page">
+<section class="rider-auth-card rider-signup-card">
+  <div class="rider-auth-brand"><i></i> SAVANNA BITES · RIDER REGISTRATION</div>
+  <h1>Complete your profile.</h1>
+  <p id="invite-intro" class="auth-subtitle">Your restaurant invitation is being verified.</p>
+  <div id="signup-error" class="rider-auth-error hidden"></div>
+  <div id="signup-loading" class="rider-status-message">Checking invitation…</div>
+  <form id="rider-signup-form" class="hidden">
+    <div class="rider-signup-grid">
+      <label>Full name
+        <input id="signup-name" required autocomplete="name" placeholder="Your full name">
+      </label>
+      <label>Phone
+        <input id="signup-phone" readonly>
+      </label>
+      <label>Email <span class="optional">OPTIONAL</span>
+        <input id="signup-email" type="email" autocomplete="email" placeholder="you@example.com">
+      </label>
+      <label>Vehicle type
+        <input id="signup-vehicle" required placeholder="Motorbike">
+      </label>
+      <label>Plate number
+        <input id="signup-plate" required placeholder="KDA 123X">
+      </label>
+      <label>M-Pesa payout phone <span class="optional">OPTIONAL</span>
+        <input id="signup-payout" inputmode="tel" placeholder="07xx xxx xxx">
+      </label>
+      <label class="full">Password
+        <div class="rider-password">
+          <input id="signup-password" type="password" autocomplete="new-password" minlength="8" required placeholder="At least 8 characters">
+          <button type="button" onclick="toggleSignupPassword()">SHOW</button>
+        </div>
+      </label>
+      <div class="auth-photo full">
+        <div id="photo-preview" class="auth-photo-preview">PHOTO</div>
+        <label>Profile picture
+          <input id="signup-photo" type="file" accept="image/*">
+          <small class="muted">Use a clear photo of yourself. The restaurant manager will see it when reviewing your profile.</small>
+        </label>
+      </div>
+    </div>
+    <button class="btn wide" id="signup-btn">SUBMIT FOR APPROVAL</button>
+  </form>
+  <div id="signup-success" class="hidden"></div>
+</section>
+</main>
+<footer>Rider operations • Advanced delivery module</footer>
+<script src="api-client.js"></script>
+<script>
+const token=new URLSearchParams(location.search).get('invite')||'';
+let photoData='';
+const $=id=>document.getElementById(id);
+function showError(message){$('signup-error').textContent=message;$('signup-error').classList.remove('hidden');$('signup-loading').classList.add('hidden');}
+function toggleSignupPassword(){const i=$('signup-password');const b=i.nextElementSibling;i.type=i.type==='password'?'text':'password';b.textContent=i.type==='password'?'SHOW':'HIDE';}
+function compressPhoto(file){
+  return new Promise((resolve,reject)=>{
+    if(!file)return resolve('');
+    if(!file.type.startsWith('image/'))return reject(new Error('Please choose an image file.'));
+    const reader=new FileReader();
+    reader.onload=()=>{const img=new Image();img.onload=()=>{
+      const scale=Math.min(1,700/Math.max(img.width,img.height));
+      const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(img.width*scale));canvas.height=Math.max(1,Math.round(img.height*scale));
+      canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);
+      resolve(canvas.toDataURL('image/jpeg',.78));
+    };img.onerror=()=>reject(new Error('The selected image could not be read.'));img.src=reader.result;};
+    reader.onerror=()=>reject(new Error('The selected image could not be read.'));reader.readAsDataURL(file);
+  });
+}
+$('signup-photo').addEventListener('change',async e=>{
+  try{photoData=await compressPhoto(e.target.files?.[0]);$('photo-preview').innerHTML=photoData?'<img src="'+photoData+'" alt="Profile preview">':'PHOTO';}
+  catch(err){photoData='';e.target.value='';showError(err.message);}
+});
+async function loadInvite(){
+  if(!token)return showError('This page needs a valid rider invitation link from the restaurant manager.');
+  try{
+    const data=await apiRequest('/api/rider-invites/'+encodeURIComponent(token));
+    $('invite-intro').textContent='You have been invited to join '+data.businessName+' as a rider. Complete your profile below.';
+    $('signup-name').value=data.rider.name||'';
+    $('signup-phone').value=data.rider.phone||'';
+    $('signup-email').value=data.rider.email||'';
+    $('signup-vehicle').value=data.rider.vehicle_type||'Motorbike';
+    $('signup-plate').value=data.rider.number_plate||'';
+    $('signup-loading').classList.add('hidden');$('rider-signup-form').classList.remove('hidden');
+  }catch(err){showError(err.message||'This invitation could not be verified.');}
+}
+$('rider-signup-form').addEventListener('submit',async e=>{
+  e.preventDefault();
+  const b=$('signup-btn');b.disabled=true;b.textContent='SUBMITTING…';$('signup-error').classList.add('hidden');
+  try{
+    const data=await apiRequest('/api/rider-invites/'+encodeURIComponent(token)+'/complete',{method:'POST',body:JSON.stringify({
+      name:$('signup-name').value.trim(),email:$('signup-email').value.trim(),vehicleType:$('signup-vehicle').value.trim(),numberPlate:$('signup-plate').value.trim(),payoutPhone:$('signup-payout').value.trim(),password:$('signup-password').value,profileImageUrl:photoData
+    })});
+    $('rider-signup-form').classList.add('hidden');
+    $('signup-success').classList.remove('hidden');
+    $('signup-success').innerHTML='<div class="rider-status-message"><strong>Profile submitted.</strong><p>Your rider account is now awaiting restaurant approval. Once approved, you can sign in to the Rider Dashboard.</p><a class="btn wide" href="rider.html">GO TO RIDER SIGN IN</a></div>';
+  }catch(err){$('signup-error').textContent=err.message||'Registration could not be completed.';$('signup-error').classList.remove('hidden');b.disabled=false;b.textContent='SUBMIT FOR APPROVAL';}
+});
+loadInvite();
+</script>
+</body>
+</html>

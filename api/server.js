@@ -1113,7 +1113,8 @@ app.patch('/api/platform/businesses/:id',requirePlatformAdmin,async(req,res)=>{
     const current=await pool.query('select * from businesses where id=$1',[req.params.id]);
     if(!current.rowCount)return res.status(404).json({error:'Restaurant not found'});
     const sets=[],vals=[];
-    const add=(col,val)=>{sets.push(col+'=    if(req.body.name!==undefined){const v=String(req.body.name||'').trim();if(v)add('name',v);}
+    const add=(col,val)=>{sets.push(col+'=$'+(vals.length+1));vals.push(val)};
+    if(req.body.name!==undefined){const v=String(req.body.name||'').trim();if(v)add('name',v);}
     if(req.body.domain!==undefined)add('domain',String(req.body.domain||'').trim()||null);
     if(req.body.websiteUrl!==undefined)add('website_url',String(req.body.websiteUrl||'').trim()||null);
     if(req.body.logoUrl!==undefined)add('logo_url',String(req.body.logoUrl||'').trim()||null);

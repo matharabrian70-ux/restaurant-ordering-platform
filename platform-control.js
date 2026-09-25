@@ -38,14 +38,14 @@ function login(message=''){
           <button type="submit" class="pc-btn pc-signin-btn">SIGN IN</button>
         </form>
         <div class="pc-login-divider"><span>OR</span></div>
-        <button type="button" class="pc-google-btn" id="platform-google-btn"><span class="pc-google-mark">G</span><span>CONTINUE WITH GOOGLE</span></button>
+        <div class="pc-google-btn" id="platform-google-btn" aria-label="Continue with Google"></div>
         <p class="pc-google-note">Google will ask which account you want to use before continuing.</p>
         <p class="pc-note">Uses the platform owner credentials already configured on Render.</p>
       </div>
     </section>`;
   document.getElementById('login-form').addEventListener('submit',loginSubmit);
   document.getElementById('pa-password-toggle').addEventListener('click',togglePlatformPassword);
-  document.getElementById('platform-google-btn').addEventListener('click',googlePlatformLogin);
+  googlePlatformLogin();
 }
 
 async function loginSubmit(e){
@@ -70,31 +70,64 @@ function togglePlatformPassword(){
   button.setAttribute('aria-label',input.type==='password'?'Show password':'Hide password');
 }
 
+let googlePlatformClientId='';
+let googlePlatformInitialized=false;
+async function loadGoogleIdentity(){
+  if(window.google?.accounts?.id)return;
+  await new Promise((resolve,reject)=>{
+    const existing=document.querySelector('script[data-google-identity]');
+    if(existing){
+      existing.addEventListener('load',resolve,{once:true});
+      existing.addEventListener('error',()=>reject(new Error('Google sign-in could not load.')),{once:true});
+      return;
+    }
+    const script=document.createElement('script');
+    script.src='https://accounts.google.com/gsi/client';
+    script.async=true;
+    script.defer=true;
+    script.dataset.googleIdentity='true';
+    script.onload=resolve;
+    script.onerror=()=>reject(new Error('Google sign-in could not load.'));
+    document.head.appendChild(script);
+  });
+}
 async function googlePlatformLogin(){
-  const button=document.getElementById('platform-google-btn');
+  const container=document.getElementById('platform-google-btn');
+  if(!container)return;
   try{
-    button.disabled=true;
+    container.setAttribute('aria-busy','true');
     const cfg=await api('/api/platform/google/config');
     if(!cfg.clientId)throw new Error('Google sign-in is not configured on the server yet.');
-    if(!window.google?.accounts?.id){
-      await new Promise((resolve,reject)=>{
-        const script=document.createElement('script');
-        script.src='https://accounts.google.com/gsi/client';
-        script.async=true;
-        script.onload=resolve;
-        script.onerror=()=>reject(new Error('Google sign-in could not load.'));
-        document.head.appendChild(script);
+    googlePlatformClientId=cfg.clientId;
+    await loadGoogleIdentity();
+    if(!googlePlatformInitialized){
+      google.accounts.id.initialize({
+        client_id:googlePlatformClientId,
+        callback:async response=>{
+          try{
+            const data=await api('/api/platform/google',{method:'POST',body:JSON.stringify({credential:response.credential})});
+            localStorage.setItem('platform_admin_token',data.token);
+            await load();
+          }catch(error){login(error.message);}
+        }
       });
+      googlePlatformInitialized=true;
     }
-    google.accounts.id.initialize({client_id:cfg.clientId,callback:async response=>{
-      try{
-        const data=await api('/api/platform/google',{method:'POST',body:JSON.stringify({credential:response.credential})});
-        localStorage.setItem('platform_admin_token',data.token);
-        await load();
-      }catch(error){button.disabled=false;login(error.message);}
-    }});
-    google.accounts.id.prompt();
-  }catch(error){button.disabled=false;login(error.message);}
+    container.innerHTML='';
+    google.accounts.id.renderButton(container,{
+      type:'standard',
+      theme:'outline',
+      size:'large',
+      text:'continue_with',
+      shape:'rectangular',
+      width:356,
+      logo_alignment:'center'
+    });
+    container.setAttribute('aria-busy','false');
+  }catch(error){
+    container.setAttribute('aria-busy','false');
+    login(error.message);
+  }
 }
 
 async function load(){

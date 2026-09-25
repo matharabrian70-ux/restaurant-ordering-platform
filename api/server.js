@@ -42,6 +42,10 @@ async function requireRiderModule(req, res, next) {
       const order = await pool.query('select business_id from orders where id=$1', [req.params.id]);
       businessId = order.rows[0]?.business_id ? String(order.rows[0].business_id) : '';
     }
+    if (!businessId && req.params?.token) {
+      const invite = await pool.query('select business_id from rider_invites where token_hash=$1 limit 1', [hashSessionToken(String(req.params.token))]);
+      businessId = invite.rows[0]?.business_id ? String(invite.rows[0].business_id) : '';
+    }
     if (!businessId) return res.status(404).json({ error: 'Rider module is not enabled for this business' });
     const feature = await pool.query('select rider_module_enabled from business_features where business_id=$1', [businessId]);
     if (!feature.rowCount || !feature.rows[0].rider_module_enabled) return res.status(404).json({ error: 'Rider module is not enabled for this business' });

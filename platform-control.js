@@ -29,7 +29,7 @@ function login(message=''){
         ${message?`<div class="pc-message pc-error">${esc(message)}</div>`:''}
         <form id="login-form">
           <label>Email<input id="pa-email" type="email" autocomplete="username" required></label>
-          <label>Password>
+          <label>Password
             <span class="pc-password-field">
               <input id="pa-password" type="password" autocomplete="current-password" required>
               <button type="button" class="pc-password-toggle" id="pa-password-toggle" aria-label="Show password">SHOW</button>

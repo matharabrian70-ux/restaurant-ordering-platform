@@ -625,6 +625,19 @@ app.post('/api/rider-invites/:token/complete', requireRiderModule, async(req,res
   }finally{client.release();}
 });
 
+app.post('/api/riders/:id/invite', requireRiderModule, requireManager, async(req,res)=>{
+  try{
+    const riderResult=await pool.query(`select id,business_id,name,rider_status from riders where id=$1 and business_id=$2`,[req.params.id,req.manager.business_id]);
+    if(!riderResult.rowCount)return res.status(404).json({error:'Rider not found'});
+    if(riderResult.rows[0].rider_status!=='INVITED')return res.status(409).json({error:'Only invited riders can receive a new registration link'});
+    const raw=crypto.randomBytes(32).toString('hex');
+    await pool.query('update rider_invites set used_at=coalesce(used_at,now()) where rider_id=$1 and used_at is null',[req.params.id]);
+    await pool.query(`insert into rider_invites(id,rider_id,business_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,$3,now()+interval '48 hours')`,[req.params.id,req.manager.business_id,hashSessionToken(raw)]);
+    const signupUrl=`${FRONTEND_URL.replace(/\/$/,'')}/rider-signup.html?invite=${encodeURIComponent(raw)}`;
+    res.json({ok:true,signupUrl,expiresInHours:48});
+  }catch(error){res.status(400).json({error:error.message||'Unable to generate rider invitation'});}
+});
+
 app.post('/api/riders/:id/approve', requireRiderModule, requireManager, async(req,res)=>{
   try{
     const result=await pool.query(`update riders set rider_status='ACTIVE',active=true where id=$1 and business_id=$2 and rider_status='PENDING_APPROVAL' returning id,name,phone,email,vehicle_type,number_plate,payout_phone,profile_image_url,rider_status,active`,[req.params.id,req.manager.business_id]);

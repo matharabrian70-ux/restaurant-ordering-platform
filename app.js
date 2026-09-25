@@ -79,6 +79,18 @@ function renderOrder(){const el=document.getElementById('order-view');if(!el)ret
 function renderDashboard(){const el=document.getElementById('dashboard-view');if(!el)return;const orders=read('doe_orders',[]);const statuses=['New','Preparing','Ready','Completed'];el.innerHTML=`<div class="dashboard-head"><div><p class="eyebrow">SAVANNA BITES • RESTAURANT</p><h1>Incoming orders.</h1><p class="muted">Prototype business dashboard</p></div><a class="btn" href="menu.html">Customer menu</a></div><div class="orders">${orders.length?orders.map(o=>`<article class="order-card"><div><h3>${o.id} · ${o.customer}</h3><p>${o.phone} · ${o.payment} · ${o.paymentStatus}</p><p>${o.items.map(i=>`${i.qty}× ${i.name}`).join(', ')}</p><p>${o.note||'No delivery note'}</p></div><div><div class="order-status">${o.status}</div><strong>${money(o.total)}</strong><div class="status-actions">${statuses.map(s=>`<button class="${o.status===s?'selected':''}" onclick="setStatus('${o.id}','${s}')">${s}</button>`).join('')}</div><a class="text-link" href="order.html?id=${o.id}">Customer tracking →</a></div></article>`).join(''):'<div class="empty"><h2>No orders yet.</h2><p>Place a demo order from the customer side to see it arrive here.</p></div>'}</div>`}
 function setStatus(id,status){const orders=read('doe_orders',[]);const o=orders.find(x=>x.id===id);if(o)o.status=status;write('doe_orders',orders);renderDashboard()}
 document.addEventListener('click',e=>{const b=e.target.closest('[data-order-product]');if(b){e.preventDefault();location.href='product.html?id='+encodeURIComponent(b.dataset.orderProduct)}});
+let restaurantMenuEvents=null;
+function startRestaurantRealtime(){
+  if(restaurantMenuEvents)return;
+  const businessId=typeof BUSINESS_ID!=='undefined'?BUSINESS_ID:'11111111-1111-4111-8111-111111111111';
+  const connect=()=>{
+    restaurantMenuEvents=new EventSource('https://restaurant-ordering-api-ow3p.onrender.com/api/events?businessId='+encodeURIComponent(businessId));
+    restaurantMenuEvents.addEventListener('menu.updated',()=>loadLiveRestaurantMenu());
+    restaurantMenuEvents.addEventListener('promotion.updated',()=>loadLiveRestaurantMenu());
+    restaurantMenuEvents.onerror=()=>{if(restaurantMenuEvents){restaurantMenuEvents.close();restaurantMenuEvents=null;}setTimeout(connect,3000);};
+  };
+  connect();
+}
 async function loadLiveRestaurantMenu(){
 try{
 const response=await fetch('https://restaurant-ordering-api-ow3p.onrender.com/api/menu/public?businessId='+encodeURIComponent(typeof BUSINESS_ID!=='undefined'?BUSINESS_ID:'11111111-1111-4111-8111-111111111111'));

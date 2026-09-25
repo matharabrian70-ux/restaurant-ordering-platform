@@ -120,7 +120,7 @@ function riders(){
 }
 function riderAdminCard(r){
   const status=r.rider_status|| (r.active?'ACTIVE':'SUSPENDED');
-  const action=status==='PENDING_APPROVAL'?'<button class="btn btn-small" onclick="approveRider(\''+r.id+'\',this)">APPROVE RIDER</button>':status==='ACTIVE'?'<button class="btn btn-small secondary" onclick="suspendRider(\''+r.id+'\',this)">SUSPEND</button>':'';
+  const action=status==='PENDING_APPROVAL'?'<button class="btn btn-small" onclick="approveRider(\''+r.id+'\',this)">APPROVE RIDER</button>':status==='ACTIVE'?'<button class="btn btn-small secondary" onclick="suspendRider(\''+r.id+'\',this)">SUSPEND</button>':status==='SUSPENDED'?'<button class="btn btn-small" onclick="reactivateRider(\''+r.id+'\',this)">REACTIVATE</button>':status==='INVITED'?'<button class="btn btn-small secondary" onclick="renewRiderInvite(\''+r.id+'\',this)">NEW INVITE LINK</button>':'';
   const availability=status==='ACTIVE'?(r.available?'AVAILABLE':'OFFLINE / BUSY'):riderStatusLabel(status);
   return '<article class="rider-admin-card"><div class="rider-admin-avatar">'+(r.profile_image_url?'<img src="'+esc(r.profile_image_url)+'" alt="">':esc((r.name||'?')[0]))+'</div><div class="rider-admin-main"><div class="rider-admin-top"><div><b>'+esc(r.name)+'</b><span>'+esc(r.phone||'')+(r.email?' · '+esc(r.email):'')+'</span></div><span class="rider-status '+riderStatusClass(status)+'"><i></i>'+esc(riderStatusLabel(status))+'</span></div><div class="rider-admin-meta"><span>'+esc(r.vehicle_type||'Vehicle')+'</span><span>'+esc(r.number_plate||'Plate not set')+'</span><span>'+Number(r.trip_count||0)+' completed</span></div><div class="rider-admin-actions">'+action+(status==='INVITED'?'<span class="pending-note">Registration link awaiting completion</span>':'')+(status==='PENDING_APPROVAL'?'<span class="pending-note">Review profile before activating access</span>':'')+'</div></div></article>';
 }
@@ -155,7 +155,21 @@ async function suspendRider(id,button){
   button.disabled=true;button.textContent='SUSPENDING…';
   try{await api('/api/riders/'+id+'/suspend',{method:'POST',body:JSON.stringify({})});await load();}
   catch(x){button.disabled=false;button.textContent='SUSPEND';alert(x.message);}
+}async function reactivateRider(id,button){
+  button.disabled=true;button.textContent='REACTIVATING…';
+  try{await api('/api/riders/'+id+'/reactivate',{method:'POST',body:JSON.stringify({})});await load();}
+  catch(x){button.disabled=false;button.textContent='REACTIVATE';alert(x.message);}
 }
+async function renewRiderInvite(id,button){
+  button.disabled=true;button.textContent='CREATING…';
+  try{
+    const data=await api('/api/riders/'+id+'/invite',{method:'POST',body:JSON.stringify({})});
+    riderInviteResult='<div class="rider-invite-success"><span class="eyebrow">NEW INVITATION LINK</span><h3>Registration link refreshed.</h3><p>Send this link to the rider. It expires in 48 hours.</p><div class="invite-link-row"><input value="'+esc(data.signupUrl)+'" readonly><button type="button" class="btn btn-small" onclick="copyRiderInvite(this)">COPY LINK</button></div></div>';
+    await load();
+    document.getElementById('rider-invite-panel')?.scrollIntoView({behavior:'smooth'});
+  }catch(x){button.disabled=false;button.textContent='NEW INVITE LINK';alert(x.message);}
+}
+
 
 function station(){
   const stations=D.stations||[];

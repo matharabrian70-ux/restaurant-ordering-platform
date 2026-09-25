@@ -81,7 +81,7 @@ function setStatus(id,status){const orders=read('doe_orders',[]);const o=orders.
 document.addEventListener('click',e=>{const b=e.target.closest('[data-order-product]');if(b){e.preventDefault();location.href='product.html?id='+encodeURIComponent(b.dataset.orderProduct)}});
 async function loadLiveRestaurantMenu(){
 try{
-const response=await fetch('https://restaurant-ordering-api-ow3p.onrender.com/api/menu/public?businessId='+encodeURIComponent(typeof BUSINESS_ID!=='undefined'?BUSINESS_ID:'11111111-1111-4111-8111-111111111111'));
+const response=await fetch('https://restaurant-ordering-api-ow3p.onrender.com/api/menu/public?businessId='+encodeURIComponent(window.TENANT_BUSINESS_ID || (typeof BUSINESS_ID!=='undefined'?BUSINESS_ID:'11111111-1111-4111-8111-111111111111')));
 if(!response.ok)return;const data=await response.json();
 const products=(data.products||[]).map(p=>({id:p.id,name:p.name,category:p.category_name||p.category||'Menu',price:Number(p.price||0),image:p.image_url||'',desc:p.description||'',options:Array.isArray(p.options)?p.options:[]}));
 if(products.length){renderSignatureMenu(products);}

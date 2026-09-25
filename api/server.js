@@ -955,6 +955,6 @@ app.get('/api/station/events',requireStation,(req,res)=>{
 });
 
 registerDeliveryEngine(app,pool,requireManager);
-registerMenuEngine(app,pool,requireManager);
+registerMenuEngine(app,pool,requireManager,broadcastRealtime);
 
 app.listen(port, () => console.log(`Ordering API listening on ${port}`));

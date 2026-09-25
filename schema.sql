@@ -247,6 +247,21 @@ alter table orders add column if not exists cancellation_reason text;
 alter table riders add column if not exists email text;
 alter table riders add column if not exists payout_phone text;
 alter table riders add column if not exists active boolean not null default true;
+alter table riders add column if not exists rider_status text not null default 'ACTIVE';
+update riders set rider_status=case when active then 'ACTIVE' else 'SUSPENDED' end where rider_status is null or rider_status='';
+alter table riders add constraint riders_status_check check (rider_status in ('INVITED','PENDING_APPROVAL','ACTIVE','SUSPENDED'));
+
+create table if not exists rider_invites (
+  id uuid primary key,
+  rider_id uuid not null references riders(id) on delete cascade,
+  business_id uuid not null references businesses(id) on delete cascade,
+  token_hash text not null unique,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists rider_invites_rider_idx on rider_invites(rider_id,created_at desc);
+create index if not exists rider_invites_business_idx on rider_invites(business_id,created_at desc);
 
 create index if not exists rider_sessions_rider_idx on rider_sessions(rider_id, expires_at desc);
 create index if not exists delivery_events_trip_idx on delivery_events(trip_id, created_at);

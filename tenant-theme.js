@@ -84,15 +84,7 @@
       '--tenant-card': theme.colors.card,
       '--tenant-line': theme.colors.line,
       '--tenant-accent': theme.colors.accent,
-      '--tenant-accent-contrast': theme.colors.accentContrast,
-
-      // Backwards-compatible aliases. Existing CSS can migrate gradually.
-      '--ink': theme.colors.ink,
-      '--muted': theme.colors.muted,
-      '--paper': theme.colors.paper,
-      '--card': theme.colors.card,
-      '--line': theme.colors.line,
-      '--accent': theme.colors.accent
+      '--tenant-accent-contrast': theme.colors.accentContrast
     }).forEach(([name, value]) => root.style.setProperty(name, value));
 
     root.dataset.tenantId = theme.id || '';

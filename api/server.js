@@ -808,6 +808,134 @@ app.get('/api/station/events',requireStation,(req,res)=>{
   req.on('close',()=>{clearInterval(heartbeat);stationRealtimeClients.delete(client);});
 });
 
+
+function platformAdminFromToken(req) {
+  const raw=String(req.headers.authorization||'');
+  return raw.startsWith('Bearer ')?raw.slice(7).trim():'';
+}
+async function getPlatformAdmin(req) {
+  const token=platformAdminFromToken(req);
+  if(!token)return null;
+  const r=await pool.query(`select a.*,s.id as session_id from platform_admin_sessions s join platform_admin_users a on a.id=s.admin_id where s.token_hash=$1 and s.expires_at>now() and a.active=true`,[hashSessionToken(token)]);
+  return r.rows[0]||null;
+}
+async function requirePlatformAdmin(req,res,next){
+  try{
+    const admin=await getPlatformAdmin(req);
+    if(!admin)return res.status(401).json({error:'Platform owner login required'});
+    req.platformAdmin=admin;next();
+  }catch(e){res.status(500).json({error:'Unable to verify platform owner session'});}
+}
+function platformSlug(value){
+  return String(value||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,80);
+}
+app.post('/api/platform/login',async(req,res)=>{
+  try{
+    const email=String(req.body.email||'').trim().toLowerCase();
+    const password=String(req.body.password||'');
+    const configuredEmail=String(process.env.PLATFORM_ADMIN_EMAIL||'').trim().toLowerCase();
+    const configuredPassword=String(process.env.PLATFORM_ADMIN_PASSWORD||'');
+    if(!email||!password)return res.status(400).json({error:'Email and password are required'});
+    if(!configuredEmail||!configuredPassword)return res.status(503).json({error:'Platform owner credentials are not configured on the API'});
+    let r=await pool.query('select * from platform_admin_users where lower(email)=lower($1) and active=true',[email]);
+    if(!r.rowCount){
+      if(email!==configuredEmail||password!==configuredPassword)return res.status(401).json({error:'Invalid platform owner login'});
+      const hash=hashManagerPassword(password);
+      await pool.query('insert into platform_admin_users(id,name,email,password_hash,active) values(gen_random_uuid(),$1,$2,$3,true) on conflict(email) do nothing',[String(process.env.PLATFORM_ADMIN_NAME||'Platform Owner'),email,hash]);
+      r=await pool.query('select * from platform_admin_users where lower(email)=lower($1) and active=true',[email]);
+    }
+    const admin=r.rows[0];
+    if(!admin||!verifyManagerPassword(password,admin.password_hash))return res.status(401).json({error:'Invalid platform owner login'});
+    const token=crypto.randomBytes(32).toString('hex');
+    await pool.query("insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval '30 days')",[admin.id,hashSessionToken(token)]);
+    await pool.query('update platform_admin_users set last_login_at=now() where id=$1',[admin.id]);
+    res.json({token,admin:{id:admin.id,name:admin.name,email:admin.email}});
+  }catch(e){res.status(500).json({error:e.message||'Unable to sign in platform owner'});}
+});
+app.get('/api/platform/me',requirePlatformAdmin,(req,res)=>res.json({id:req.platformAdmin.id,name:req.platformAdmin.name,email:req.platformAdmin.email}));
+app.post('/api/platform/logout',requirePlatformAdmin,async(req,res)=>{
+  try{await pool.query('delete from platform_admin_sessions where id=$1',[req.platformAdmin.session_id]);res.json({ok:true});}
+  catch(e){res.status(500).json({error:'Unable to sign out'});}
+});
+app.get('/api/platform/packages',requirePlatformAdmin,async(req,res)=>{
+  try{const r=await pool.query('select key,name,description,monthly_price_kes,active,features from platform_packages where active=true order by monthly_price_kes,key');res.json(r.rows);}
+  catch(e){res.status(500).json({error:e.message||'Unable to load packages'});}
+});
+app.get('/api/platform/overview',requirePlatformAdmin,async(req,res)=>{
+  try{
+    const [b,o]=await Promise.all([
+      pool.query("select count(*)::int as restaurants,count(*) filter(where status='ACTIVE')::int as active from businesses"),
+      pool.query("select count(*)::int as orders,coalesce(sum(total) filter(where payment_status='PAID' and status<>'CANCELLED'),0)::numeric as revenue from orders")
+    ]);
+    res.json({restaurants:b.rows[0].restaurants,active:b.rows[0].active,orders:o.rows[0].orders,revenue:Number(o.rows[0].revenue||0)});
+  }catch(e){res.status(500).json({error:e.message||'Unable to load platform overview'});}
+});
+app.get('/api/platform/businesses',requirePlatformAdmin,async(req,res)=>{
+  try{
+    const r=await pool.query(`select b.id,b.name,b.slug,b.status,b.plan_key,b.domain,b.logo_url,b.primary_color,b.pickup_address,b.created_at,
+      coalesce(p.name,b.plan_key,'STARTER') as plan_name,
+      count(o.id)::int as order_count,
+      coalesce(sum(o.total) filter(where o.payment_status='PAID' and o.status<>'CANCELLED'),0)::numeric as revenue
+      from businesses b left join platform_packages p on p.key=b.plan_key left join orders o on o.business_id=b.id
+      group by b.id,p.name order by b.created_at desc`);
+    res.json(r.rows.map(x=>({...x,revenue:Number(x.revenue||0)})));
+  }catch(e){res.status(500).json({error:e.message||'Unable to load tenants'});}
+});
+app.post('/api/platform/businesses',requirePlatformAdmin,async(req,res)=>{
+  const client=await pool.connect();
+  try{
+    const name=String(req.body.name||'').trim();
+    const slug=platformSlug(req.body.slug||name);
+    const address=String(req.body.address||'').trim();
+    const planKey=String(req.body.planKey||'STARTER').trim().toUpperCase();
+    const domain=String(req.body.domain||'').trim()||null;
+    const primaryColor=String(req.body.primaryColor||'').trim()||null;
+    if(!name||!slug||!address)return res.status(400).json({error:'Restaurant name, slug and pickup address are required'});
+    const pkg=await client.query('select key,features from platform_packages where key=$1 and active=true',[planKey]);
+    if(!pkg.rowCount)return res.status(400).json({error:'Unknown or inactive package'});
+    await client.query('begin');
+    const business=await client.query(`insert into businesses(id,name,slug,status,plan_key,domain,primary_color,pickup_address,updated_at)
+      values(gen_random_uuid(),$1,$2,'ACTIVE',$3,$4,$5,$6,now()) returning *`,[name,slug,planKey,domain,primaryColor,address]);
+    const b=business.rows[0];
+    await client.query('insert into business_features(business_id,rider_module_enabled) values($1,$2)',[b.id,Boolean(pkg.rows[0].features?.riderModule)]);
+    await client.query('insert into delivery_pricing_rules(business_id) values($1) on conflict(business_id) do nothing',[b.id]);
+    await client.query('insert into business_branches(id,business_id,name,address,latitude,longitude,active,accepting_orders) values(gen_random_uuid(),$1,$2,$3,-1.286389,36.817223,true,true)',[b.id,'Main Branch',address]);
+    for(const [category,sort] of [['Mains',10],['Sides',20],['Drinks',30],['Desserts',40]]) await client.query('insert into menu_categories(id,business_id,name,sort_order) values(gen_random_uuid(),$1,$2,$3)',[b.id,category,sort]);
+    await client.query('commit');
+    res.status(201).json({id:b.id,name:b.name,slug:b.slug,status:b.status,planKey});
+  }catch(e){try{await client.query('rollback')}catch{}res.status(400).json({error:e.message||'Unable to provision restaurant'});}
+  finally{client.release();}
+});
+app.patch('/api/platform/businesses/:id',requirePlatformAdmin,async(req,res)=>{
+  try{
+    const current=await pool.query('select * from businesses where id=$1',[req.params.id]);
+    if(!current.rowCount)return res.status(404).json({error:'Restaurant not found'});
+    const sets=[],vals=[];
+    const add=(col,val)=>{sets.push(col+'=
+registerMenuEngine(app,pool,requireManager);
+
+app.listen(port, () => console.log(`Ordering API listening on ${port}`));
++(vals.length+1));vals.push(val)};
+    if(req.body.name!==undefined){const v=String(req.body.name||'').trim();if(v)add('name',v);}
+    if(req.body.domain!==undefined)add('domain',String(req.body.domain||'').trim()||null);
+    if(req.body.logoUrl!==undefined)add('logo_url',String(req.body.logoUrl||'').trim()||null);
+    if(req.body.primaryColor!==undefined)add('primary_color',String(req.body.primaryColor||'').trim()||null);
+    if(req.body.status!==undefined){const v=String(req.body.status).toUpperCase();if(!['ACTIVE','SUSPENDED'].includes(v))return res.status(400).json({error:'Invalid tenant status'});add('status',v);}
+    let plan=null;
+    if(req.body.planKey!==undefined){
+      const key=String(req.body.planKey||'').toUpperCase();
+      const p=await pool.query('select key,features from platform_packages where key=$1 and active=true',[key]);
+      if(!p.rowCount)return res.status(400).json({error:'Unknown or inactive package'});
+      add('plan_key',key);plan=p.rows[0];
+    }
+    if(!sets.length)return res.status(400).json({error:'No changes supplied'});
+    vals.push(req.params.id);
+    const updated=await pool.query(`update businesses set ${sets.join(',')},updated_at=now() where id=${vals.length} returning *`,vals);
+    if(plan)await pool.query('insert into business_features(business_id,rider_module_enabled) values($1,$2) on conflict(business_id) do update set rider_module_enabled=excluded.rider_module_enabled,updated_at=now()',[req.params.id,Boolean(plan.features?.riderModule)]);
+    res.json(updated.rows[0]);
+  }catch(e){res.status(400).json({error:e.message||'Unable to update restaurant'});}
+});
+
 registerDeliveryEngine(app,pool,requireManager);
 registerMenuEngine(app,pool,requireManager);
 

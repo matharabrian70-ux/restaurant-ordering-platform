@@ -40,8 +40,8 @@ async function load(){
 }
 function showLogin(message=''){
   root.innerHTML='<section class="manager-login"><div class="manager-login-card"><span class="manager-kicker"><i></i> '+esc(window.TENANT_THEME?.name||'RESTAURANT')+'</span><h1>Manager sign in</h1><p>Use your restaurant manager account. Order-control devices use QR pairing and do not sign in here.</p>'+(message?'<div class="login-error">'+esc(message)+'</div>':'')+'<form onsubmit="loginManager(event)"><label>Email<input id="manager-email" type="email" autocomplete="username" required></label><label>Password<div class="password-field"><input id="manager-password" type="password" autocomplete="current-password" required><button type="button" class="password-toggle" onclick="toggleManagerPassword()" aria-label="Show password">SHOW</button></div></label><button class="btn wide">SIGN IN</button></form><div class="login-divider"><span>OR</span></div><div class="google-login" id="manager-google-btn" aria-label="Continue with Google"></div><p class="google-note">Google will ask which account you want to use before continuing.</p></div></section>';
+  googleManagerLogin();
 }
-setTimeout(()=>googleManagerLogin(),0);
 async function toggleManagerPassword(){
   const input=document.getElementById('manager-password');
   const button=document.querySelector('.password-toggle');

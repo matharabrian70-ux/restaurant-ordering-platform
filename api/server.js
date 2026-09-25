@@ -26,8 +26,18 @@ app.get('/api/features', async (req, res) => {
   if (RIDER_MODULE_ENABLED) return res.json({ riderModule: true });
   if (!businessId) return res.json({ riderModule: false });
   try {
-    const result = await pool.query('select rider_module_enabled from business_features where business_id=$1', [businessId]);
-    return res.json({ riderModule: result.rowCount ? Boolean(result.rows[0].rider_module_enabled) : false });
+    const result = await pool.query(`
+      select
+        coalesce((bf.rider_module_enabled), false) as business_feature_enabled,
+        coalesce((p.features->>'riderModule')::boolean, false) as package_feature_enabled
+      from businesses b
+      left join business_features bf on bf.business_id=b.id
+      left join platform_packages p on p.key=b.plan_key
+      where b.id=$1
+      limit 1
+    `, [businessId]);
+    const row=result.rows[0];
+    return res.json({ riderModule: Boolean(row?.business_feature_enabled || row?.package_feature_enabled) });
   } catch {
     return res.json({ riderModule: false });
   }
@@ -50,7 +60,16 @@ async function requireRiderModule(req, res, next) {
     }
     if (!businessId) return res.status(404).json({ error: 'Rider module is not enabled for this business' });
     const feature = await pool.query('select rider_module_enabled from business_features where business_id=$1', [businessId]);
-    if (!feature.rowCount || !feature.rows[0].rider_module_enabled) return res.status(404).json({ error: 'Rider module is not enabled for this business' });
+    const packageFeature = await pool.query(`
+      select coalesce((p.features->>'riderModule')::boolean, false) as rider_module_enabled
+      from businesses b
+      left join platform_packages p on p.key=b.plan_key
+      where b.id=$1
+      limit 1
+    `, [businessId]);
+    const businessFeatureEnabled = Boolean(feature.rowCount && feature.rows[0].rider_module_enabled);
+    const packageFeatureEnabled = Boolean(packageFeature.rowCount && packageFeature.rows[0].rider_module_enabled);
+    if (!businessFeatureEnabled && !packageFeatureEnabled) return res.status(404).json({ error: 'Rider module is not enabled for this business' });
     next();
   } catch {
     res.status(500).json({ error: 'Unable to check rider module status' });

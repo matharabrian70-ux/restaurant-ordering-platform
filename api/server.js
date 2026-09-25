@@ -872,7 +872,7 @@ app.get('/api/platform/overview',requirePlatformAdmin,async(req,res)=>{
 });
 app.get('/api/platform/businesses',requirePlatformAdmin,async(req,res)=>{
   try{
-    const r=await pool.query(`select b.id,b.name,b.slug,b.status,b.plan_key,b.domain,b.logo_url,b.primary_color,b.pickup_address,b.created_at,
+    const r=await pool.query(`select b.id,b.name,b.slug,b.status,b.plan_key,b.domain,b.website_url,b.logo_url,b.primary_color,b.pickup_address,b.created_at,
       coalesce(p.name,b.plan_key,'STARTER') as plan_name,
       count(o.id)::int as order_count,
       coalesce(sum(o.total) filter(where o.payment_status='PAID' and o.status<>'CANCELLED'),0)::numeric as revenue
@@ -890,6 +890,7 @@ app.post('/api/platform/businesses',requirePlatformAdmin,async(req,res)=>{
     const planKey=String(req.body.planKey||'STARTER').trim().toUpperCase();
     const domain=String(req.body.domain||'').trim()||null;
     const primaryColor=String(req.body.primaryColor||'').trim()||null;
+    const websiteUrl=String(req.body.websiteUrl||'').trim()||null;
     if(!name||!slug||!address)return res.status(400).json({error:'Restaurant name, slug and pickup address are required'});
     const pkg=await client.query('select key,features from platform_packages where key=$1 and active=true',[planKey]);
     if(!pkg.rowCount)return res.status(400).json({error:'Unknown or inactive package'});
@@ -918,6 +919,7 @@ app.listen(port, () => console.log(`Ordering API listening on ${port}`));
 +(vals.length+1));vals.push(val)};
     if(req.body.name!==undefined){const v=String(req.body.name||'').trim();if(v)add('name',v);}
     if(req.body.domain!==undefined)add('domain',String(req.body.domain||'').trim()||null);
+    if(req.body.websiteUrl!==undefined)add('website_url',String(req.body.websiteUrl||'').trim()||null);
     if(req.body.logoUrl!==undefined)add('logo_url',String(req.body.logoUrl||'').trim()||null);
     if(req.body.primaryColor!==undefined)add('primary_color',String(req.body.primaryColor||'').trim()||null);
     if(req.body.status!==undefined){const v=String(req.body.status).toUpperCase();if(!['ACTIVE','SUSPENDED'].includes(v))return res.status(400).json({error:'Invalid tenant status'});add('status',v);}

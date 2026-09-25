@@ -540,6 +540,7 @@ alter table businesses add column if not exists logo_url text;
 alter table businesses add column if not exists primary_color text;
 alter table businesses add column if not exists domain text;
 alter table businesses add column if not exists updated_at timestamptz not null default now();
+alter table businesses add column if not exists website_url text;
 insert into platform_packages(key,name,description,monthly_price_kes,features) values
 ('STARTER','Starter','Core online ordering',0,'{"ordering":true,"riderModule":false,"advancedAnalytics":false}'::jsonb),
 ('GROWTH','Growth','Ordering plus delivery operations',3500,'{"ordering":true,"riderModule":true,"advancedAnalytics":true}'::jsonb),

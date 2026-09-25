@@ -6,6 +6,8 @@ import pg from 'pg';
 import QRCode from 'qrcode';
 import { registerDeliveryEngine } from './delivery-engine.js';
 import { registerMenuEngine } from './menu-engine.js';
+import { registerBrandingEngine } from './branding-engine.js';
+import { registerReceiptEngine, ensureReceipt } from './receipt-engine.js';
 
 const { Pool } = pg;
 const app = express();
@@ -1067,6 +1069,8 @@ app.get('/api/control/businesses/:id/status',requireControl,async(req,res)=>{
     res.json({business:b.rows[0],riderModule:Boolean(f.rows[0]?.rider_module_enabled),branches:branches.rows[0].count,connections:connections.rows[0]||null,managerUsers:manager.rows[0].count,riders:riders.rows[0].count});
   }catch(e){res.status(500).json({error:e.message||'Unable to load restaurant status'});}
 });
+registerBrandingEngine(app,pool,{requireControl,requireManager,broadcastRealtime});
+registerReceiptEngine(app,pool,{requireManager});
 registerDeliveryEngine(app,pool,requireManager);
 registerMenuEngine(app,pool,requireManager,broadcastRealtime);
 

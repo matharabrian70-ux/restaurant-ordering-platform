@@ -54,3 +54,115 @@
 @media(max-width:700px){.orders-hero{align-items:flex-start;flex-direction:column}.orders-actions{width:100%}.orders-summary{grid-template-columns:1fr 1fr}.orders-toolbar{flex-direction:column}.order-search{min-width:0}.orders-status-strip{display:grid;grid-template-columns:1fr 1fr;gap:10px}.orders-status-strip span{border-right:0;padding-right:0}.orders-status-strip button{grid-column:1/-1;text-align:left}.alert-settings-grid{grid-template-columns:1fr}.orders-list-heading{align-items:flex-start;gap:10px;flex-direction:column}}
 
 .manager-summary .summary-click,.orders-summary .summary-click{cursor:pointer;transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease}.manager-summary .summary-click:hover,.orders-summary .summary-click:hover{transform:translateY(-2px);box-shadow:0 10px 24px #17201910;border-color:#c8cbc4}.manager-summary .summary-click:focus-visible,.orders-summary .summary-click:focus-visible{outline:2px solid #2f8f46;outline-offset:2px}.manager-summary .summary-click small{display:block;color:var(--muted);font-size:9px;margin-top:5px}
+/* Professional manager dashboard: rider administration + receipt studio */
+.riders-page{margin-top:8px}
+.riders-hero{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;padding:18px 0 24px}
+.riders-hero h2{font-size:clamp(48px,6vw,76px);letter-spacing:-.07em;margin:8px 0 5px}
+.riders-hero p{margin:0;color:var(--muted);font-size:14px}
+.rider-hero-actions{display:flex;align-items:center;gap:10px}
+.rider-admin-summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+.rider-admin-summary article{background:#fff;border:1px solid var(--line);padding:18px;min-height:86px}
+.rider-admin-summary article.attention{border-top:3px solid #d56a2d;padding-top:15px}
+.rider-admin-summary span{display:block;font-size:9px;font-weight:900;letter-spacing:.12em;color:var(--muted)}
+.rider-admin-summary strong{display:block;font-size:30px;letter-spacing:-.04em;margin:7px 0 2px}
+.rider-admin-summary small{font-size:10px;color:var(--muted)}
+.rider-admin-list{display:grid;gap:10px}
+.rider-admin-card{display:grid;grid-template-columns:54px 1fr;gap:14px;padding:15px;border:1px solid var(--line);background:#fff;border-radius:10px;transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease;cursor:pointer}
+.rider-admin-card:hover{transform:translateY(-1px);box-shadow:0 10px 25px #17201910;border-color:#c6ccc6}
+.rider-admin-card:focus-visible{outline:2px solid #2f8f46;outline-offset:2px}
+.rider-admin-avatar{width:54px;height:54px;border-radius:50%;display:grid;place-items:center;background:#edf4ee;color:#246d35;font-weight:900;font-size:18px;overflow:hidden;border:1px solid #d8e6da}
+.rider-admin-avatar img{width:100%;height:100%;object-fit:cover}
+.rider-admin-main{min-width:0}
+.rider-admin-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.rider-admin-top b{font-size:15px;display:block}
+.rider-admin-top>div>span{display:block;color:var(--muted);font-size:10px;margin-top:4px;word-break:break-word}
+.rider-status{display:inline-flex;align-items:center;gap:5px;padding:5px 8px;border-radius:999px;font-size:8px;font-weight:900;letter-spacing:.06em;white-space:nowrap;background:#f0f0ed;color:#666}
+.rider-status i{width:6px;height:6px;border-radius:50%;background:#777}
+.rider-status.active{background:#eaf6ec;color:#246d35}.rider-status.active i{background:#2f8f46}
+.rider-status.pending-approval{background:#fff3e8;color:#9a5a20}.rider-status.pending-approval i{background:#d56a2d}
+.rider-status.suspended{background:#ededeb;color:#555}.rider-status.suspended i{background:#777}
+.rider-status.invited{background:#eef2f5;color:#53616a}.rider-status.invited i{background:#71808a}
+.rider-admin-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.rider-admin-meta span{font-size:9px;font-weight:800;color:#53605a;background:var(--paper);border:1px solid var(--line);padding:6px 8px;border-radius:6px}
+.rider-admin-actions{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:12px}
+.rider-admin-actions .btn{position:relative;z-index:2}
+.rider-admin-actions .pending-note{font-size:9px;color:var(--muted)}
+.rider-profile-modal{position:fixed;inset:0;z-index:1000;background:rgba(23,32,25,.62);backdrop-filter:blur(7px);display:grid;place-items:center;padding:24px}
+.rider-profile-dialog{position:relative;width:min(1080px,100%);max-height:min(88vh,900px);overflow:auto;background:#f7f6f1;border:1px solid #d7d9d2;box-shadow:0 30px 90px #0005;border-radius:14px;padding:28px}
+.rider-profile-close{position:absolute;right:16px;top:12px;width:36px;height:36px;border:1px solid var(--line);background:#fff;border-radius:50%;font-size:24px;line-height:1;cursor:pointer;z-index:2}
+.rider-profile-head{display:grid;grid-template-columns:82px 1fr;gap:18px;align-items:center;padding:4px 42px 24px 2px;border-bottom:1px solid var(--line)}
+.rider-profile-avatar{width:82px;height:82px;border-radius:50%;display:grid;place-items:center;background:#e9f4eb;color:#246d35;font-size:28px;font-weight:900;overflow:hidden;border:1px solid #d4e4d7}
+.rider-profile-avatar img{width:100%;height:100%;object-fit:cover}
+.rider-profile-head h2{font-size:32px;letter-spacing:-.05em;margin:5px 0}
+.rider-profile-head p{margin:0;color:var(--muted);font-size:12px}
+.profile-pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.profile-pills span{font-size:8px;font-weight:900;letter-spacing:.06em;background:#fff;border:1px solid var(--line);padding:6px 8px;border-radius:999px}
+.profile-pills span.active{background:#eaf6ec;color:#246d35}.profile-pills span.suspended{background:#ededeb;color:#555}
+.rider-profile-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin:18px 0}
+.rider-profile-grid article{background:#fff;border:1px solid var(--line);padding:16px;border-radius:9px}
+.rider-profile-grid span{display:block;font-size:8px;letter-spacing:.11em;font-weight:900;color:var(--muted)}
+.rider-profile-grid strong{display:block;font-size:23px;letter-spacing:-.04em;margin:7px 0 2px}
+.rider-profile-grid small{font-size:9px;color:var(--muted)}
+.rider-profile-section{background:#fff;border:1px solid var(--line);border-radius:10px;padding:18px}
+.rider-profile-section-head{display:flex;justify-content:space-between;align-items:end;gap:12px;margin-bottom:12px}
+.rider-profile-section-head h3{font-size:22px;margin:4px 0 0}
+.rider-profile-section-head>small{font-size:9px;color:var(--muted)}
+.rider-trip-table-wrap{overflow:auto}
+.rider-trip-table{width:100%;border-collapse:collapse;font-size:10px;min-width:760px}
+.rider-trip-table th{text-align:left;font-size:8px;letter-spacing:.1em;color:var(--muted);padding:10px;border-bottom:1px solid var(--line)}
+.rider-trip-table td{padding:11px 10px;border-bottom:1px solid #ecece7;vertical-align:top}
+.rider-trip-table td small{display:block;color:var(--muted);margin-top:3px}
+.profile-trip-status{display:inline-block;padding:5px 7px;background:#eef5ef;border-radius:999px;font-size:8px;font-weight:900}
+.profile-empty{text-align:center;color:var(--muted);padding:28px!important}
+.rider-profile-loading{text-align:center;padding:80px 20px}
+
+/* Receipt studio */
+.receipt-settings-form{display:grid;gap:14px}
+.receipt-settings-form .form-grid{margin:0}
+.receipt-settings-form>label{display:grid!important;gap:7px!important;margin:0!important}
+.receipt-settings-form label small{font-size:8px;color:var(--muted);font-weight:700}
+.receipt-checks{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.receipt-checks label{display:flex!important;grid-template-columns:none!important;align-items:center;gap:9px;margin:0!important;padding:10px 11px;background:var(--paper);border:1px solid var(--line);border-radius:7px;font-size:9px!important;font-weight:800!important}
+.receipt-checks input{width:16px!important;height:16px!important;margin:0;accent-color:#2f8f46}
+.receipt-preview-wrap{min-height:520px;background:#efeee8;border:1px solid var(--line);display:flex;justify-content:center;align-items:flex-start;padding:24px;overflow:auto}
+.receipt-preview-paper{box-sizing:border-box;max-width:100%;min-height:430px;background:#fff;color:#20251f;border:1px solid #d8d8d1;box-shadow:0 12px 30px #17201918;padding:18px 14px;font-family:Arial,sans-serif;font-size:11px;line-height:1.35}
+.receipt-preview-head{display:flex;flex-direction:column;gap:3px;border-bottom:1px dashed #aaa;padding-bottom:12px;margin-bottom:12px}
+.receipt-preview-head.left{align-items:flex-start;text-align:left}.receipt-preview-head.center{align-items:center;text-align:center}.receipt-preview-head.right{align-items:flex-end;text-align:right}
+.receipt-preview-head strong{font-size:17px;color:var(--receipt-brand,#176b32)}
+.receipt-preview-head span{font-size:9px;font-weight:900;letter-spacing:.1em}
+.receipt-preview-head small{font-size:8px;color:#666}
+.receipt-preview-head img{margin-bottom:4px}
+.receipt-preview-lines{display:grid;gap:7px;border-bottom:1px dashed #aaa;padding-bottom:11px}
+.receipt-preview-lines>div,.receipt-preview-details span,.receipt-preview-total{display:flex;justify-content:space-between;gap:10px}
+.receipt-preview-lines b,.receipt-preview-total b{white-space:nowrap}
+.receipt-preview-details{display:grid;gap:3px;padding:10px 0;border-bottom:1px dashed #aaa;font-size:8px;color:#666}
+.receipt-preview-total{padding:11px 0;font-size:11px}
+.receipt-preview-total b{font-size:14px;color:var(--receipt-brand,#176b32)}
+.receipt-preview-footer{text-align:center;border-top:1px dashed #aaa;padding-top:11px;font-size:8px;color:#666}
+.receipt-order-row{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:14px 0;border-top:1px solid var(--line)}
+.receipt-order-row>div:first-child b{display:block;font-size:12px}
+.receipt-order-row>div:first-child span{display:block;color:var(--muted);font-size:10px;margin-top:4px}
+.receipt-order-row .button-row{margin-top:0}
+@media(max-width:1050px){
+  .rider-admin-summary{grid-template-columns:repeat(2,1fr)}
+  .rider-profile-grid{grid-template-columns:repeat(2,1fr)}
+}
+@media(max-width:700px){
+  .riders-hero{flex-direction:column;align-items:flex-start}
+  .rider-hero-actions{width:100%}
+  .rider-admin-summary{grid-template-columns:1fr 1fr}
+  .rider-admin-card{grid-template-columns:44px 1fr}
+  .rider-admin-avatar{width:44px;height:44px}
+  .rider-admin-top{flex-direction:column}
+  .rider-profile-modal{padding:10px}
+  .rider-profile-dialog{padding:18px}
+  .rider-profile-head{grid-template-columns:58px 1fr;padding-right:36px}
+  .rider-profile-avatar{width:58px;height:58px;font-size:21px}
+  .rider-profile-head h2{font-size:24px}
+  .rider-profile-grid{grid-template-columns:1fr 1fr}
+  .receipt-checks{grid-template-columns:1fr}
+  .receipt-preview-wrap{padding:12px}
+  .receipt-order-row{align-items:flex-start;flex-direction:column}
+  .receipt-order-row .button-row{width:100%}
+  .receipt-order-row .button-row .btn{flex:1}
+}

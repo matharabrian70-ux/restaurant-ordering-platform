@@ -1,6 +1,6 @@
 const RIDER_TOKEN_KEY='rider_session_token';
 const RIDER_BUSINESS_ID=BUSINESS_ID;
-let rider=null,lastTripId=null,pollTimer=null;
+let rider=null,lastTripId=null,pollTimer=null,riderEvents=null;
 
 function riderHeaders(){const token=localStorage.getItem(RIDER_TOKEN_KEY);return token?{'Authorization':'Bearer '+token}:{};}
 async function riderApi(path,options={}){return apiRequest(path,{...options,headers:{...riderHeaders(),...(options.headers||{})}});}
@@ -9,14 +9,26 @@ function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&l
 function riderMoney(v){return 'KSh '+Number(v||0).toLocaleString();}
 function mapsUrl(origin,destination){return 'https://www.google.com/maps/dir/?api=1&origin='+encodeURIComponent(origin||'')+'&destination='+encodeURIComponent(destination||'')+'&travelmode=driving';}
 
-async function loginRider(){
+async function loginRider(e){
+  e?.preventDefault();
   const phone=document.getElementById('rider-phone').value.trim(),password=document.getElementById('rider-password').value;
-  const error=document.getElementById('rider-login-error');error.textContent='Signing in…';
+  const error=document.getElementById('rider-login-error'),button=document.getElementById('rider-login-btn');
+  error.classList.remove('hidden');error.textContent='Signing in…';button.disabled=true;button.textContent='SIGNING IN…';
   try{
     const data=await riderApi('/api/riders/login',{method:'POST',body:JSON.stringify({businessId:RIDER_BUSINESS_ID,phone,password})});
     localStorage.setItem(RIDER_TOKEN_KEY,data.token);rider=data.rider;await bootRider();
-  }catch(err){error.textContent=err.message||'Could not sign in.';}
+  }catch(err){
+    error.textContent=err.message||'Could not sign in.';
+    button.disabled=false;button.textContent='SIGN IN';
+  }
 }
+function toggleRiderPassword(){
+  const input=document.getElementById('rider-password'),button=document.getElementById('rider-password-toggle');
+  if(!input||!button)return;
+  input.type=input.type==='password'?'text':'password';
+  button.textContent=input.type==='password'?'SHOW':'HIDE';
+}
+
 async function logoutRider(){try{await riderApi('/api/riders/logout',{method:'POST'});}catch{}clearRiderSession();location.reload();}
 async function setOnline(online){
   try{const data=await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/presence',{method:'POST',body:JSON.stringify({online})});document.getElementById('online-state').textContent=data.online?'ONLINE':'OFFLINE';await loadRiderDashboard();}
@@ -72,11 +84,29 @@ async function bootRider(){
   try{
     rider=await riderApi('/api/riders/me');
     document.getElementById('rider-login').classList.add('hidden');document.getElementById('rider-app').classList.remove('hidden');
-    document.getElementById('rider-header').innerHTML='<div class="rider-top"><div><p class="eyebrow">RIDER OPERATIONS</p><h1>'+esc(rider.name)+'</h1><p class="muted">'+esc(rider.vehicle_type)+' · '+esc(rider.number_plate)+' · '+esc(rider.payout_phone||rider.phone)+'</p></div><div><div class="online-toggle"><input id="online-check" type="checkbox"><label for="online-check"><strong id="online-state">OFFLINE</strong></label></div><div class="rider-actions"><button class="secondary" onclick="requestNotifications()">ENABLE NOTIFICATIONS</button><button class="secondary" onclick="logoutRider()">LOG OUT</button></div></div></div>';
+    document.getElementById('rider-header').innerHTML='<div class="rider-top"><div class="rider-profile-line">'+(rider.profile_image_url?'<img src="'+esc(rider.profile_image_url)+'" alt="">':'<span class="rider-profile-fallback">'+esc((rider.name||'?')[0])+'</span>')+'<div><p class="eyebrow">RIDER OPERATIONS</p><h1>'+esc(rider.name)+'</h1><p class="muted">'+esc(rider.vehicle_type)+' · '+esc(rider.number_plate)+' · '+esc(rider.payout_phone||rider.phone)+'</p></div></div><div><div class="online-toggle"><input id="online-check" type="checkbox"><label for="online-check"><strong id="online-state">OFFLINE</strong></label></div><div class="rider-actions"><button class="secondary" onclick="requestNotifications()">ENABLE NOTIFICATIONS</button><button class="secondary" onclick="logoutRider()">LOG OUT</button></div></div></div>';
     document.getElementById('online-check').onchange=e=>setOnline(e.target.checked);
-    await requestNotifications();await loadRiderDashboard();
-    clearInterval(pollTimer);pollTimer=setInterval(()=>loadRiderDashboard().catch(()=>{}),8000);
-  }catch(err){clearRiderSession();document.getElementById('rider-login-error').textContent=err.message||'Rider session expired.';}
+    await requestNotifications();await loadRiderDashboard();startRiderRealtime();
+    clearInterval(pollTimer);pollTimer=setInterval(()=>loadRiderDashboard().catch(()=>{}),30000);
+  }catch(err){clearRiderSession();document.getElementById('rider-login-error').classList.remove('hidden');document.getElementById('rider-login-error').textContent=err.message||'Rider session expired.';}
 }
-document.getElementById('rider-login-btn').onclick=loginRider;
+function startRiderRealtime(){
+  if(riderEvents||!rider)return;
+  const token=localStorage.getItem(RIDER_TOKEN_KEY);
+  if(!token)return;
+  const connect=()=>{
+    if(!rider)return;
+    riderEvents=new EventSource(API_BASE_URL+'/api/riders/events?businessId='+encodeURIComponent(RIDER_BUSINESS_ID)+'&riderToken='+encodeURIComponent(token));
+    const refresh=()=>loadRiderDashboard().catch(()=>{});
+    ['rider.updated','order.updated','delivery.updated'].forEach(name=>riderEvents.addEventListener(name,e=>{
+      try{
+        const d=JSON.parse(e.data||'{}');
+        if(d.action==='SUSPENDED'){clearRiderSession();location.reload();return;}
+        refresh();
+      }catch{refresh();}
+    }));
+    riderEvents.onerror=()=>{if(riderEvents){riderEvents.close();riderEvents=null;}setTimeout(connect,3000);};
+  };
+  connect();
+}
 bootRider();

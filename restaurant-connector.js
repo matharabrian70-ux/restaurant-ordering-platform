@@ -1,0 +1,1 @@
+(()=>{const s=document.currentScript,b=s?.dataset?.businessId;if(!b)return;const base=s.src.split('/restaurant-connector.js')[0];const menu=base+'/menu.html?businessId='+encodeURIComponent(b);document.querySelectorAll('[data-restaurant-menu],[data-restaurant-order]').forEach(a=>a.href=menu);})();

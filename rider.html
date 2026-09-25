@@ -1,31 +1,52 @@
 <!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Rider Dashboard — Savanna Bites</title><link rel="stylesheet" href="styles.css">
+<title>Rider Dashboard — Savanna Bites</title><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="rider.css?v=rider-live-3">
 <style>
 .rider-shell{max-width:1250px;margin:auto;padding:45px 6vw}.rider-top{display:flex;justify-content:space-between;gap:20px;align-items:flex-start}.rider-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:24px 0}.rider-stat{background:#fff;border:1px solid var(--line);padding:22px}.rider-stat strong{font-size:30px;display:block}.rider-layout{display:grid;grid-template-columns:1.2fr .8fr;gap:18px}.rider-card{background:#fff;border:1px solid var(--line);padding:20px;margin:12px 0}.rider-card h3{margin:0 0 8px}.rider-meta{display:flex;flex-wrap:wrap;gap:8px;color:var(--muted);font-size:13px}.status-pill{display:inline-block;border:1px solid var(--line);padding:6px 9px;font-size:11px;font-weight:800;letter-spacing:.06em}.rider-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:15px}.rider-actions button,.rider-actions a{border:1px solid var(--line);background:var(--ink);color:#fff;padding:10px 13px;text-decoration:none;cursor:pointer;font-weight:800}.rider-actions button.secondary{background:var(--paper);color:var(--ink)}.rider-map{width:100%;height:250px;border:0;background:#eee}.login-box{max-width:520px;margin:8vh auto}.hidden{display:none!important}.notice{padding:12px 15px;background:#f0eee7;border:1px solid var(--line);margin:12px 0}.timeline-mini{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}.timeline-mini span{font-size:11px;border:1px solid var(--line);padding:6px}.timeline-mini .active{background:var(--ink);color:#fff}.online-toggle{display:flex;align-items:center;gap:10px}.online-toggle input{width:18px;height:18px}@media(max-width:900px){.rider-grid{grid-template-columns:repeat(2,1fr)}.rider-layout{grid-template-columns:1fr}}@media(max-width:600px){.rider-shell{padding:28px 4vw}.rider-grid{grid-template-columns:1fr 1fr}.rider-top{flex-direction:column}}
 </style></head>
 <body>
-<header class="nav"><a class="brand" href="index.html" data-tenant-brand>Savanna Bites</a><nav><a href="dashboard.html">Restaurant</a><a href="index.html">Customer</a></nav></header>
-<main class="rider-shell">
-  <div id="rider-login" class="login-box panel">
-    <p class="eyebrow">ADVANCED DELIVERY MODULE</p><h1>Rider sign in.</h1>
-    <p class="muted">Use the phone number and password created by the restaurant.</p>
-    <div class="field"><label>Phone</label><input id="rider-phone" placeholder="07xx xxx xxx"></div>
-    <div class="field"><label>Password</label><input id="rider-password" type="password" placeholder="Password"></div>
-    <button class="btn wide" id="rider-login-btn">SIGN IN</button><p id="rider-login-error" class="muted"></p>
-  </div>
-  <div id="rider-app" class="hidden">
-    <div id="rider-header"></div><div id="rider-notice"></div>
-    <div id="rider-stats" class="rider-grid"></div>
-    <div class="rider-layout"><section><div class="panel"><h2>Available deliveries</h2><p class="muted">New delivery assignments appear here.</p><div id="available-deliveries"></div></div>
-      <div class="panel" style="margin-top:18px"><h2>Active delivery</h2><div id="active-delivery"></div></div>
-    </section>
-    <aside><div class="panel"><h2>Today's earnings</h2><div id="earnings-summary"></div></div>
-      <div class="panel" style="margin-top:18px"><h2>Delivery history</h2><div id="delivery-history"></div></div>
-    </aside></div>
-  </div>
+<header class="nav"><a class="brand" href="index.html">SAVANNA<span>BITES</span></a><nav><a href="index.html">Customer</a></nav></header>
+<main>
+  <section id="rider-login" class="rider-auth-page">
+    <div class="rider-auth-card">
+      <div class="rider-auth-brand"><i></i> SAVANNA BITES · RIDER OPERATIONS</div>
+      <h1>Rider sign in.</h1>
+      <p class="auth-subtitle">Access your delivery assignments, availability, earnings and trip history.</p>
+      <div id="rider-login-error" class="rider-auth-error hidden"></div>
+      <form onsubmit="loginRider(event)">
+        <label>Phone
+          <input id="rider-phone" type="tel" inputmode="tel" autocomplete="username" placeholder="07xx xxx xxx" required>
+        </label>
+        <label>Password
+          <div class="rider-password">
+            <input id="rider-password" type="password" autocomplete="current-password" placeholder="Password" required>
+            <button type="button" id="rider-password-toggle" onclick="toggleRiderPassword()">SHOW</button>
+          </div>
+        </label>
+        <button class="btn wide" id="rider-login-btn">SIGN IN</button>
+      </form>
+      <div class="rider-auth-note"><strong>Rider account required.</strong> Your restaurant manager must invite you first. Complete the secure registration link, wait for approval, then sign in here.</div>
+    </div>
+  </section>
+
+  <section id="rider-app" class="hidden">
+    <div class="rider-shell">
+      <div id="rider-header"></div><div id="rider-notice"></div>
+      <div id="rider-stats" class="rider-grid"></div>
+      <div class="rider-layout">
+        <section>
+          <div class="panel"><h2>Available deliveries</h2><p class="muted">New delivery assignments appear here.</p><div id="available-deliveries"></div></div>
+          <div class="panel" style="margin-top:18px"><h2>Active delivery</h2><div id="active-delivery"></div></div>
+        </section>
+        <aside>
+          <div class="panel"><h2>Today's earnings</h2><div id="earnings-summary"></div></div>
+          <div class="panel" style="margin-top:18px"><h2>Delivery history</h2><div id="delivery-history"></div></div>
+        </aside>
+      </div>
+    </div>
+  </section>
 </main>
 <footer>Rider operations • Advanced delivery module</footer>
-<script src="tenant-theme.js"></script><script src="api-client.js"></script><script src="delivery.js"></script>
-</body></html>
+<script src="api-client.js"></script><script src="tenant-theme.js"></script><script src="delivery.js?v=rider-live-3"></script>
+</body>\n</html>

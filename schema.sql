@@ -7,8 +7,14 @@ create table if not exists businesses (
   id uuid primary key,
   name text not null,
   slug text unique not null,
+  package_type text not null default 'DIGITAL_ORDERING',
+  mpesa_phone text,
+  paystack_subaccount_code text,
   created_at timestamptz not null default now()
 );
+alter table businesses add column if not exists package_type text not null default 'DIGITAL_ORDERING';
+alter table businesses add column if not exists mpesa_phone text;
+alter table businesses add column if not exists paystack_subaccount_code text;
 
 create table if not exists customers (
   id uuid primary key,
@@ -125,6 +131,31 @@ create unique index if not exists rider_active_trip_idx on rider_trips(rider_id)
 create unique index if not exists payments_provider_reference_idx on payments(provider_reference) where provider_reference is not null;
 create unique index if not exists refunds_provider_refund_id_idx on refunds(provider_refund_id) where provider_refund_id is not null;
 create index if not exists refunds_order_idx on refunds(order_id, created_at desc);
+alter table receipts add column if not exists receipt_access_token text;
+create unique index if not exists receipts_access_token_idx on receipts(receipt_access_token) where receipt_access_token is not null;
+
+create table if not exists restaurant_branding (
+  business_id uuid primary key references businesses(id) on delete cascade,
+  display_name text,
+  logo_url text,
+  favicon_url text,
+  primary_color text not null default '#176b32',
+  secondary_color text not null default '#172019',
+  accent_color text not null default '#d56a2d',
+  background_color text not null default '#f5f5f0',
+  text_color text not null default '#172019',
+  font_family text not null default 'Inter, system-ui, -apple-system, "Segoe UI", sans-serif',
+  website_detected_name text,
+  source_url text,
+  source_title text,
+  source_description text,
+  source_logo_url text,
+  receipt_config jsonb not null default '{}'::jsonb,
+  imported_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 
 alter table businesses add column if not exists pickup_address text;
 alter table businesses add column if not exists paystack_subaccount_code text;
@@ -247,6 +278,22 @@ alter table orders add column if not exists cancellation_reason text;
 alter table riders add column if not exists email text;
 alter table riders add column if not exists payout_phone text;
 alter table riders add column if not exists active boolean not null default true;
+alter table riders add column if not exists rider_status text not null default 'ACTIVE';
+update riders set rider_status=case when active then 'ACTIVE' else 'SUSPENDED' end where rider_status is null or rider_status='';
+ALTER TABLE riders DROP CONSTRAINT IF EXISTS riders_status_check;
+ALTER TABLE riders ADD CONSTRAINT riders_status_check CHECK (rider_status IN ('INVITED','PENDING_APPROVAL','ACTIVE','SUSPENDED'));
+
+create table if not exists rider_invites (
+  id uuid primary key,
+  rider_id uuid not null references riders(id) on delete cascade,
+  business_id uuid not null references businesses(id) on delete cascade,
+  token_hash text not null unique,
+  expires_at timestamptz not null,
+  used_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists rider_invites_rider_idx on rider_invites(rider_id,created_at desc);
+create index if not exists rider_invites_business_idx on rider_invites(business_id,created_at desc);
 
 create index if not exists rider_sessions_rider_idx on rider_sessions(rider_id, expires_at desc);
 create index if not exists delivery_events_trip_idx on delivery_events(trip_id, created_at);
@@ -303,6 +350,9 @@ create table if not exists delivery_pricing_rules (
   peak_multiplier numeric(8,4) not null default 1,
   service_radius_km numeric(8,2) not null default 18,
   auto_round_kes numeric(8,2) not null default 10,
+  manual_distance_factor numeric(8,4) not null default 1.25,
+  manual_speed_kmh numeric(8,2) not null default 25,
+  manual_traffic_multiplier numeric(8,4) not null default 1,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -548,3 +598,36 @@ insert into platform_packages(key,name,description,monthly_price_kes,features) v
 on conflict(key) do nothing;
 update businesses set plan_key=coalesce(plan_key,'STARTER'),status=coalesce(status,'ACTIVE'),updated_at=now();
 update businesses set plan_key='GROWTH' where slug='savanna-bites' and plan_key='STARTER';
+
+
+-- Platform control centre: global administration and website/package connections.
+create table if not exists platform_admin_users (
+  id uuid primary key,
+  email text unique not null,
+  name text not null,
+  password_hash text not null,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  last_login_at timestamptz
+);
+create table if not exists platform_admin_sessions (
+  id uuid primary key,
+  admin_id uuid not null references platform_admin_users(id) on delete cascade,
+  token_hash text unique not null,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists platform_admin_sessions_admin_idx on platform_admin_sessions(admin_id,expires_at);
+
+create table if not exists business_connections (
+  business_id uuid primary key references businesses(id) on delete cascade,
+  website_url text,
+  customer_dashboard_url text,
+  manager_dashboard_url text,
+  rider_dashboard_url text,
+  customer_connected boolean not null default false,
+  rider_connected boolean not null default false,
+  integration_token_hash text unique,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);

@@ -108,7 +108,10 @@ async function googlePlatformLogin(){
             const data=await api('/api/platform/google',{method:'POST',body:JSON.stringify({credential:response.credential})});
             localStorage.setItem('platform_admin_token',data.token);
             await load();
-          }catch(error){login(error.message);}
+          }catch(error){
+            const note=document.querySelector('.pc-google-note');
+            if(note)note.textContent=error.message;
+          }
         }
       });
       googlePlatformInitialized=true;
@@ -126,7 +129,8 @@ async function googlePlatformLogin(){
     container.setAttribute('aria-busy','false');
   }catch(error){
     container.setAttribute('aria-busy','false');
-    login(error.message);
+    const note=document.querySelector('.pc-google-note');
+    if(note)note.textContent=error.message;
   }
 }
 

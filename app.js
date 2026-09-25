@@ -102,4 +102,4 @@ const offer=(data.promotions||[])[0],hero=document.querySelector('.hero-card sma
 }catch{}
 }
 updateCount();renderMenu();renderProduct();renderCart();renderCheckout();renderOrder();renderDashboard();
-loadLiveRestaurantMenu();
+loadLiveRestaurantMenu();startRestaurantRealtime();

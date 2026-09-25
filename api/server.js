@@ -6,6 +6,8 @@ import pg from 'pg';
 import QRCode from 'qrcode';
 import { registerDeliveryEngine } from './delivery-engine.js';
 import { registerMenuEngine } from './menu-engine.js';
+import { registerBrandingEngine } from './branding-engine.js';
+import { registerReceiptEngine, ensureReceipt } from './receipt-engine.js';
 
 const { Pool } = pg;
 const app = express();
@@ -42,6 +44,10 @@ async function requireRiderModule(req, res, next) {
       const order = await pool.query('select business_id from orders where id=$1', [req.params.id]);
       businessId = order.rows[0]?.business_id ? String(order.rows[0].business_id) : '';
     }
+    if (!businessId && req.params?.token) {
+      const invite = await pool.query('select business_id from rider_invites where token_hash=$1 limit 1', [hashSessionToken(String(req.params.token))]);
+      businessId = invite.rows[0]?.business_id ? String(invite.rows[0].business_id) : '';
+    }
     if (!businessId) return res.status(404).json({ error: 'Rider module is not enabled for this business' });
     const feature = await pool.query('select rider_module_enabled from business_features where business_id=$1', [businessId]);
     if (!feature.rowCount || !feature.rows[0].rider_module_enabled) return res.status(404).json({ error: 'Rider module is not enabled for this business' });
@@ -60,17 +66,22 @@ function sendRealtime(client, event, data) {
     client.res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   } catch {}
 }
-function broadcastRealtime({ businessId, orderId = null, event = 'order.updated', data = {} }) {
+function broadcastRealtime({ businessId, orderId = null, riderId = null, event = 'order.updated', data = {} }) {
   for (const client of realtimeClients) {
     if (client.businessId !== String(businessId)) continue;
     if (client.orderId && orderId && client.orderId !== String(orderId)) continue;
     if (client.orderId && !orderId) continue;
+    if (client.riderId && riderId && client.riderId !== String(riderId)) continue;
+    if (client.riderId && !riderId) continue;
     sendRealtime(client, event, data);
   }
   for (const client of stationRealtimeClients) {
     if (client.businessId !== String(businessId)) continue;
     sendRealtime(client, event, data);
   }
+}
+function broadcastRider({ businessId, riderId, orderId = null, action, data = {} }) {
+  broadcastRealtime({businessId,riderId,orderId,event:'rider.updated',data:{riderId,action,...data}});
 }
 function broadcastOrder(order, extra = {}) {
   if (!order) return;
@@ -132,6 +143,17 @@ function verifyManagerPassword(password, stored) {
     const actual = crypto.scryptSync(String(password), salt, expected.length / 2, { N: Number(n), r: Number(r), p: Number(p), maxmem: 256 * 1024 * 1024 }).toString('hex');
     return actual.length === expected.length && crypto.timingSafeEqual(Buffer.from(actual, 'hex'), Buffer.from(expected, 'hex'));
   } catch { return false; }
+}
+async function getControlAdminFromSession(req){
+  const raw=String(req.headers.authorization||'');
+  const token=raw.startsWith('Bearer ')?raw.slice(7).trim():'';
+  if(!token)return null;
+  const r=await pool.query(`select a.*,s.id as session_id,s.expires_at from platform_admin_sessions s join platform_admin_users a on a.id=s.admin_id where s.token_hash=$1 and s.expires_at>now() and a.active=true`,[hashSessionToken(token)]);
+  return r.rows[0]||null;
+}
+async function requireControl(req,res,next){
+  try{const admin=await getControlAdminFromSession(req);if(!admin)return res.status(401).json({error:'Platform control login required'});req.controlAdmin=admin;next();}
+  catch(e){res.status(500).json({error:'Unable to verify control session'});}
 }
 async function getManagerFromSession(req) {
   const raw = String(req.headers.authorization || '');
@@ -353,7 +375,8 @@ app.get('/api/events', async (req, res) => {
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders?.();
-  const client = { res, businessId, orderId };
+  const riderId = req.query.riderId ? String(req.query.riderId) : null;
+  const client = { res, businessId, orderId, riderId };
   realtimeClients.add(client);
   sendRealtime(client, 'connected', { ok: true });
   const heartbeat = setInterval(() => sendRealtime(client, 'heartbeat', { at: new Date().toISOString() }), 25000);
@@ -390,6 +413,7 @@ async function markPaymentSuccessful(reference, paystackData = null) {
     await client.query(`update payments set status='PAID', confirmed_at=coalesce(confirmed_at,now()) where id=$1`, [payment.id]);
     const updated = await client.query(`update orders set payment_status='PAID' where id=$1 returning *`, [payment.order_id]);
     paidOrder = updated.rows[0];
+    await ensureReceipt(client,payment.order_id);
     cancelledOrderId = payment.order_status === 'CANCELLED' ? payment.order_id : null;
     await client.query('commit');
     if (paidOrder) broadcastOrder(paidOrder, { reason: 'payment.confirmed', notification: 'New paid order' });
@@ -451,7 +475,20 @@ app.get('/api/customers/:id/record', requireManager, async (req,res)=>{
 app.get('/api/orders/:id', async (req, res) => { try { const result = await pool.query(`select o.*, c.name as customer_name, c.phone, c.email, r.name as rider_name, r.vehicle_type, r.number_plate, r.phone as rider_phone from orders o join customers c on c.id=o.customer_id left join riders r on r.id=(select rider_id from rider_trips t where t.order_id=o.id order by assigned_at desc limit 1) where o.id=$1`, [req.params.id]); if (!result.rowCount) return res.status(404).json({ error: 'Order not found' }); res.json(result.rows[0]); } catch { res.status(500).json({ error: 'Unable to load order' }); } });
 app.get('/api/orders/:id/refunds', async (req, res) => { try { const result = await pool.query(`select id,amount,currency,status,created_at,updated_at,customer_note,merchant_note from refunds where order_id=$1 order by created_at desc`, [req.params.id]); res.json(result.rows); } catch { res.status(500).json({ error: 'Unable to load refunds' }); } });
 app.get('/api/orders', requireManager, async (req, res) => { try { const { businessId, q = '' } = req.query; if (!businessId) return res.status(400).json({ error: 'businessId is required' }); const result = await pool.query(`select o.id,o.business_id,o.order_number,o.status,o.payment_status,o.payment_method,o.total,o.created_at,o.delivery_note,c.name,c.phone,c.email,coalesce((select r.name from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_name,coalesce((select r.vehicle_type from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_vehicle,coalesce((select r.number_plate from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_plate from orders o join customers c on c.id=o.customer_id where o.business_id=$1 and ($2='' or c.name ilike '%'||$2||'%' or c.phone ilike '%'||$2||'%' or coalesce(c.email,'') ilike '%'||$2||'%' or o.order_number ilike '%'||$2||'%') order by o.created_at desc limit 200`, [businessId, String(q).trim()]); res.json(result.rows); } catch { res.status(500).json({ error: 'Unable to load orders' }); } });
-app.get('/api/riders', requireManager, async (req, res) => { try { const { businessId } = req.query; if (!businessId) return res.status(400).json({ error: 'businessId is required' }); const result = await pool.query(`select r.id,r.name,r.phone,r.email,r.vehicle_type,r.number_plate,r.profile_image_url,r.active,coalesce(p.online,false) as online,exists(select 1 from rider_trips t join orders o on o.id=t.order_id where t.rider_id=r.id and t.completed_at is null) as busy,(select count(*) from rider_trips t where t.rider_id=r.id and t.completed_at is not null) as trip_count,(select max(t.completed_at) from rider_trips t where t.rider_id=r.id and t.completed_at is not null) as last_completed_at from riders r left join rider_presence p on p.rider_id=r.id where r.business_id=$1 order by r.name`, [businessId]); res.json(result.rows.map(r => ({ ...r, available: r.active && r.online && !r.busy }))); } catch { res.status(500).json({ error: 'Unable to load riders' }); } });
+app.get('/api/riders/:id/profile', requireManager, async(req,res)=>{
+  try{
+    const riderId=String(req.params.id);
+    const base=await pool.query(`select r.id,r.business_id,r.name,r.phone,r.email,r.vehicle_type,r.number_plate,r.payout_phone,r.profile_image_url,r.active,r.rider_status,r.created_at,coalesce(p.online,false) as online from riders r left join rider_presence p on p.rider_id=r.id where r.id=$1 and r.business_id=$2`,[riderId,req.manager.business_id]);
+    if(!base.rowCount)return res.status(404).json({error:'Rider not found'});
+    const [summary,trips]=await Promise.all([
+      pool.query(`select count(t.id)::int as total_trips,count(t.id) filter (where t.completed_at is not null)::int as completed_trips,count(t.id) filter (where t.completed_at is null)::int as active_trips,coalesce(sum(o.total) filter (where t.completed_at is not null),0)::numeric as delivered_order_value,coalesce(sum(o.route_distance_meters) filter (where t.completed_at is not null),0)::numeric as distance_meters,coalesce(sum(re.amount) filter (where t.completed_at is not null),0)::numeric as total_earnings,coalesce(sum(re.amount) filter (where t.completed_at is not null and t.completed_at>=current_date),0)::numeric as today_earnings,coalesce(sum(re.amount) filter (where t.completed_at is not null and t.completed_at>=current_date-interval '6 days'),0)::numeric as week_earnings,count(distinct o.delivery_address) filter (where t.completed_at is not null)::int as places_delivered,max(t.completed_at) as last_delivery_at from rider_trips t join orders o on o.id=t.order_id left join rider_earnings re on re.trip_id=t.id where t.rider_id=$1`,[riderId]),
+      pool.query(`select t.id,t.assigned_at,t.completed_at,o.order_number,o.status,o.total,o.delivery_address,o.route_distance_meters,o.route_duration_seconds,coalesce(re.amount,0)::numeric as earning,c.name as customer_name,c.phone as customer_phone from rider_trips t join orders o on o.id=t.order_id join customers c on c.id=o.customer_id left join rider_earnings re on re.trip_id=t.id where t.rider_id=$1 order by coalesce(t.completed_at,t.assigned_at) desc limit 100`,[riderId])
+    ]);
+    res.json({rider:base.rows[0],summary:summary.rows[0]||{},trips:trips.rows});
+  }catch(error){res.status(500).json({error:error.message||'Unable to load rider profile'});}
+});
+
+app.get('/api/riders', requireManager, async (req, res) => { try { const { businessId } = req.query; if (!businessId) return res.status(400).json({ error: 'businessId is required' }); const result = await pool.query(`select r.id,r.name,r.phone,r.email,r.vehicle_type,r.number_plate,r.profile_image_url,r.active,r.rider_status,coalesce(p.online,false) as online,exists(select 1 from rider_trips t join orders o on o.id=t.order_id where t.rider_id=r.id and t.completed_at is null) as busy,(select count(*) from rider_trips t where t.rider_id=r.id and t.completed_at is not null) as trip_count,(select max(t.completed_at) from rider_trips t where t.rider_id=r.id and t.completed_at is not null) as last_completed_at from riders r left join rider_presence p on p.rider_id=r.id where r.business_id=$1 order by r.name`, [businessId]); res.json(result.rows.map(r => ({ ...r, available: r.active && r.online && !r.busy }))); } catch { res.status(500).json({ error: 'Unable to load riders' }); } });
 app.post('/api/orders/:id/status', requireManagerOrder, async (req, res) => { try { const nextStatus = String(req.body.status || '').toUpperCase(); if (!['ACCEPTED','DELIVERED'].includes(nextStatus)) return res.status(400).json({ error: 'Invalid status transition' }); const orderResult = await pool.query(`select * from orders where id=$1 for update`, [req.params.id]); if (!orderResult.rowCount) return res.status(404).json({ error: 'Order not found' }); const order = orderResult.rows[0]; if (nextStatus === 'ACCEPTED' && !(order.status === 'NEW' && order.payment_status === 'PAID')) return res.status(409).json({ error: 'Only paid NEW orders can be accepted' }); if (nextStatus === 'DELIVERED' && order.status !== 'OUT_FOR_DELIVERY') return res.status(409).json({ error: 'Only orders out for delivery can be delivered' }); const result = nextStatus === 'ACCEPTED' ? await pool.query(`update orders set status='ACCEPTED',accepted_at=coalesce(accepted_at,now()) where id=$1 returning *`, [req.params.id]) : await pool.query(`update orders set status='DELIVERED',delivered_at=coalesce(delivered_at,now()) where id=$1 returning *`, [req.params.id]); broadcastOrder(result.rows[0], { reason: nextStatus === 'ACCEPTED' ? 'restaurant.accepted' : 'restaurant.delivered' }); res.json(result.rows[0]); } catch { res.status(500).json({ error: 'Unable to update order status' }); } });
 app.post('/api/orders/:id/cancel', async (req, res) => { const client = await pool.connect(); try { let order; try { await client.query('begin'); const result = await client.query(`select * from orders where id=$1 for update`, [req.params.id]); if (!result.rowCount) { await client.query('rollback'); return res.status(404).json({ error: 'Order not found' }); } order = result.rows[0]; if (order.status !== 'NEW') { await client.query('rollback'); return res.status(409).json({ error: 'This order can no longer be cancelled because the restaurant has accepted it.' }); } await client.query(`update orders set status='CANCELLED' where id=$1`, [order.id]); const updated = await client.query(`select * from orders where id=$1`, [order.id]); await client.query('commit'); order = updated.rows[0]; broadcastOrder(order, { reason: 'customer.cancelled' }); } catch (error) { try { await client.query('rollback'); } catch {} throw error; } let refund = null; if (order.payment_status === 'PAID') refund = await initiateRefundForOrder(order.id, 'Customer cancelled before restaurant acceptance', 'Automatic cancellation refund'); const latest = await pool.query(`select * from orders where id=$1`, [order.id]); res.json({ order: latest.rows[0], refund }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to cancel order' }); } finally { client.release(); } });
 app.post('/api/delivery/quote', async (req,res)=>{
@@ -524,56 +561,174 @@ app.post('/api/payments/paystack/initialize', async (req,res)=>{
     return res.json({mode:'redirect',orderId,reference:transaction.data.reference,authorizationUrl:transaction.data.authorization_url});
   }catch(error){res.status(500).json({error:error.message||'Unable to initialize payment'});}
 });
-app.get('/api/payments/paystack/callback', async (req, res) => { const reference = String(req.query.reference || ''); if (!reference) return res.redirect(`${FRONTEND_URL}/order.html?payment=missing`); try { const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' }); const data = verified.data; if (data?.status !== 'success') throw new Error('Payment was not successful'); const orderId = await markPaymentSuccessful(reference, data); if (!orderId) return res.redirect(`${FRONTEND_URL}/order.html?payment=not-found`); return res.redirect(`${FRONTEND_URL}/order.html?id=${encodeURIComponent(orderId)}&payment=success`); } catch { const payment = await pool.query(`select order_id from payments where provider='PAYSTACK' and provider_reference=$1`, [reference]); const orderId = payment.rows[0]?.order_id; const target = orderId ? `${FRONTEND_URL}/order.html?id=${encodeURIComponent(orderId)}&payment=failed` : `${FRONTEND_URL}/order.html?payment=failed`; return res.redirect(target); } });
-app.post('/api/payments/paystack/verify', async (req, res) => { try { const reference = String(req.body.reference || ''); if (!reference) return res.status(400).json({ error: 'reference is required' }); const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' }); if (verified.data?.status === 'success') { const orderId = await markPaymentSuccessful(reference, verified.data); return res.json({ status: 'success', orderId }); } res.json({ status: verified.data?.status || 'pending' }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to verify payment' }); } });
+app.get('/api/payments/paystack/callback', async (req, res) => { const reference = String(req.query.reference || ''); if (!reference) return res.redirect(`${FRONTEND_URL}/order.html?payment=missing`); try { const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' }); const data = verified.data; if (data?.status !== 'success') throw new Error('Payment was not successful'); const orderId = await markPaymentSuccessful(reference, data); if (!orderId) return res.redirect(`${FRONTEND_URL}/order.html?payment=not-found`); const receipt = await pool.query('select receipt_access_token from receipts where order_id=$1',[orderId]); const token = receipt.rows[0]?.receipt_access_token || ''; return res.redirect(`${FRONTEND_URL}/order.html?id=${encodeURIComponent(orderId)}&payment=success${token?'&receipt='+encodeURIComponent(token):''}`); } catch { const payment = await pool.query(`select order_id from payments where provider='PAYSTACK' and provider_reference=$1`, [reference]); const orderId = payment.rows[0]?.order_id; const target = orderId ? `${FRONTEND_URL}/order.html?id=${encodeURIComponent(orderId)}&payment=failed` : `${FRONTEND_URL}/order.html?payment=failed`; return res.redirect(target); } });
+app.post('/api/payments/paystack/verify', async (req, res) => { try { const reference = String(req.body.reference || ''); if (!reference) return res.status(400).json({ error: 'reference is required' }); const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' }); if (verified.data?.status === 'success') { const orderId = await markPaymentSuccessful(reference, verified.data); const receipt = orderId ? await pool.query('select receipt_access_token from receipts where order_id=$1',[orderId]) : null; return res.json({ status: 'success', orderId, receiptToken: receipt?.rows[0]?.receipt_access_token || null }); } res.json({ status: verified.data?.status || 'pending' }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to verify payment' }); } });
 app.get('/api/payments/paystack/webhook', (_req, res) => { res.status(405).json({ error: 'Webhook endpoint accepts POST requests from Paystack.' }); });
 app.post('/api/payments/paystack/webhook', async (req, res) => { const signature = req.headers['x-paystack-signature']; const secret = process.env.PAYSTACK_SECRET_KEY; if (!signature || !secret || !req.rawBody) return res.sendStatus(401); const expected = crypto.createHmac('sha512', secret).update(req.rawBody).digest('hex'); const providedBuffer = Buffer.from(String(signature), 'utf8'); const expectedBuffer = Buffer.from(expected, 'utf8'); if (providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) return res.sendStatus(401); try { const event = req.body; if (event.event === 'charge.success' && event.data?.reference && event.data?.status === 'success') await markPaymentSuccessful(event.data.reference, event.data); if (event.event?.startsWith('refund.') && event.data) await updateRefundFromWebhook(event.data); return res.sendStatus(200); } catch (error) { console.error('Paystack webhook processing failed:', error.message); return res.sendStatus(500); } });
 app.post('/api/admin/refunds', async (req, res) => { if (!requireRefundAdmin(req, res)) return; try { const { orderId, amount, customerNote, merchantNote } = req.body; const requestedAmount = Number(amount); if (!orderId || !Number.isFinite(requestedAmount) || requestedAmount <= 0) return res.status(400).json({ error: 'orderId and a positive refund amount are required' }); const orderResult = await pool.query(`select o.id,o.business_id,o.total,o.payment_status,p.id as payment_id,p.provider_reference,p.amount as paid_amount from orders o join payments p on p.order_id=o.id and p.provider='PAYSTACK' where o.id=$1`, [orderId]); if (!orderResult.rowCount) return res.status(404).json({ error: 'Paid Paystack order not found' }); const order = orderResult.rows[0]; if (order.payment_status !== 'PAID') return res.status(409).json({ error: 'Only paid orders can be refunded' }); if (order.delivery_fee_released_at && Number(requestedAmount) > Number(order.food_subtotal || order.subtotal)) return res.status(400).json({ error: 'Delivery fee is not refundable after completed delivery; refund can only cover the food portion.' }); if (!order.provider_reference) return res.status(409).json({ error: 'Paystack transaction reference is missing' }); const refundedResult = await pool.query(`select coalesce(sum(amount),0) as total from refunds where payment_id=$1 and status in ('PENDING','PROCESSING','PROCESSED')`, [order.payment_id]); const alreadyRefunded = Number(refundedResult.rows[0].total); const remaining = Number(order.paid_amount) - alreadyRefunded; if (requestedAmount > remaining + 0.0001) return res.status(400).json({ error: `Refund exceeds the remaining refundable amount (${remaining.toFixed(2)} KES)` }); const refund = await paystackRequest('/refund', { method: 'POST', body: JSON.stringify({ transaction: order.provider_reference, amount: String(Math.round(requestedAmount * 100)), currency: 'KES', customer_note: customerNote || undefined, merchant_note: merchantNote || undefined }) }); const data = refund.data || {}; const insert = await pool.query(`insert into refunds (id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,customer_note,merchant_note) values (gen_random_uuid(),$1,$2,'PAYSTACK',$3,$4,$5,'KES',$6,$7,$8) returning *`, [order.id, order.payment_id, data.id ? String(data.id) : null, order.provider_reference, requestedAmount, String(data.status || 'pending').toUpperCase(), customerNote || null, merchantNote || null]); broadcastRealtime({ businessId: order.business_id, orderId: order.id, event: 'refund.updated', data: { orderId: order.id, refund: insert.rows[0] } }); res.status(201).json(insert.rows[0]); } catch (error) { res.status(500).json({ error: error.message || 'Unable to initiate refund' }); } });
 
 
-app.post('/api/riders/login', requireRiderModule, async (req,res)=>{
+app.get('/api/riders/events', requireRiderModule, async(req,res)=>{
+  try{
+    const token=String(req.query.riderToken||'').trim();
+    if(!token)return res.status(401).json({error:'Rider login required'});
+    const rider=await getRiderFromSession({headers:{authorization:'Bearer '+token}});
+    if(!rider)return res.status(401).json({error:'Rider login required'});
+    const businessId=String(rider.business_id);
+    res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache, no-transform');res.setHeader('Connection','keep-alive');res.flushHeaders?.();
+    const client={res,businessId,riderId:String(rider.id),orderId:null};
+    realtimeClients.add(client);
+    sendRealtime(client,'connected',{ok:true,riderId:rider.id});
+    const heartbeat=setInterval(()=>sendRealtime(client,'heartbeat',{at:new Date().toISOString()}),25000);
+    req.on('close',()=>{clearInterval(heartbeat);realtimeClients.delete(client);});
+  }catch(error){res.status(500).json({error:error.message||'Unable to open rider events'});}
+});
+
+app.post('/api/riders/login', requireRiderModule, async(req,res)=>{
   try{
     const {businessId,phone,password}=req.body;
     if(!businessId||!phone||!password) return res.status(400).json({error:'Business, phone and password are required'});
-    const result=await pool.query(`select r.*,a.password_hash from riders r join rider_auth a on a.rider_id=r.id where r.business_id=$1 and r.phone=$2 and r.active=true`,[businessId,String(phone).trim()]);
+    const normalized=normalizeKenyanPhone(phone);
+    const result=await pool.query(`select r.*,a.password_hash from riders r join rider_auth a on a.rider_id=r.id where r.business_id=$1 and r.phone=$2 and r.active=true and r.rider_status='ACTIVE'`,[businessId,normalized]);
     if(!result.rowCount||!verifyPassword(password,result.rows[0].password_hash)) return res.status(401).json({error:'Invalid rider login'});
     const token=crypto.randomBytes(32).toString('hex');
     await pool.query('insert into rider_sessions(id,rider_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval \'30 days\')',[result.rows[0].id,hashSessionToken(token)]);
     await pool.query('update rider_auth set last_login_at=now() where rider_id=$1',[result.rows[0].id]);
     await pool.query(`insert into rider_presence(rider_id,online) values($1,true) on conflict(rider_id) do update set online=true,updated_at=now()`,[result.rows[0].id]);
     const r=result.rows[0];
-    res.json({token,rider:{id:r.id,name:r.name,phone:r.phone,email:r.email,vehicle_type:r.vehicle_type,number_plate:r.number_plate,payout_phone:r.payout_phone}});
+    res.json({token,rider:{id:r.id,name:r.name,phone:r.phone,email:r.email,vehicle_type:r.vehicle_type,number_plate:r.number_plate,payout_phone:r.payout_phone,profile_image_url:r.profile_image_url,rider_status:r.rider_status}});
   }catch(error){res.status(500).json({error:error.message||'Unable to sign in'});}
 });
-app.post('/api/riders', requireRiderModule, requireManager, async(req,res)=>{
+
+app.post('/api/rider-invites', requireRiderModule, requireManager, async(req,res)=>{
+  const client=await pool.connect();
   try{
-    const {businessId,name,phone,email,vehicleType,numberPlate,password,payoutPhone,profileImageUrl}=req.body;
-    if(!businessId||!name||!phone||!vehicleType||!numberPlate||!password) return res.status(400).json({error:'Business, name, phone, vehicle type, number plate and password are required'});
+    const {businessId,name,phone,email,vehicleType='Motorbike',numberPlate=''}=req.body;
+    if(!businessId||!name||!phone) return res.status(400).json({error:'Name and phone are required'});
     const normalized=normalizeKenyanPhone(phone);
-    const payout=normalizeKenyanPhone(payoutPhone||phone);
-    const passwordData=hashPassword(password);
-    const client=await pool.connect();
-    try{
-      await client.query('begin');
-      const r=await client.query(`insert into riders(id,business_id,name,phone,email,vehicle_type,number_plate,active,payout_phone,profile_image_url) values(gen_random_uuid(),$1,$2,$3,$4,$5,$6,true,$7,$8) returning id,name,phone,email,vehicle_type,number_plate,active,payout_phone,profile_image_url`,[businessId,String(name).trim(),normalized,String(email||'').trim()||null,String(vehicleType).trim(),String(numberPlate).trim(),payout,String(profileImageUrl||'').trim()||null]);
-      await client.query('insert into rider_auth(rider_id,password_hash,payout_phone) values($1,$2,$3)',[r.rows[0].id,passwordData.hash,payout]);
-      await client.query('insert into rider_presence(rider_id,online) values($1,false)',[r.rows[0].id]);
-      await client.query('commit');
-      res.status(201).json({...r.rows[0],available:false,trip_count:0});
-    }catch(e){try{await client.query('rollback')}catch{}throw e}finally{client.release()}
-  }catch(error){res.status(400).json({error:error.code==='23505'?'A rider with that phone already exists':error.message||'Unable to create rider'});}
+    await client.query('begin');
+    const existing=await client.query(`select id,rider_status from riders where business_id=$1 and phone=$2 for update`,[businessId,normalized]);
+    let rider;
+    if(existing.rowCount){
+      const status=existing.rows[0].rider_status;
+      if(status==='ACTIVE') throw new Error('A rider with that phone is already active');
+      if(status==='PENDING_APPROVAL') throw new Error('This rider has already completed registration and is awaiting approval');
+      const updated=await client.query(`update riders set name=$2,email=$3,vehicle_type=$4,number_plate=$5,rider_status='INVITED',active=false where id=$1 returning id,name,phone,email,vehicle_type,number_plate,rider_status`,[existing.rows[0].id,String(name).trim(),String(email||'').trim()||null,String(vehicleType).trim()||'Motorbike',String(numberPlate||'').trim()]);
+      rider=updated.rows[0];
+      await client.query('update rider_invites set used_at=coalesce(used_at,now()) where rider_id=$1 and used_at is null',[rider.id]);
+    }else{
+      const inserted=await client.query(`insert into riders(id,business_id,name,phone,email,vehicle_type,number_plate,active,rider_status) values(gen_random_uuid(),$1,$2,$3,$4,$5,$6,false,'INVITED') returning id,name,phone,email,vehicle_type,number_plate,rider_status`,[businessId,String(name).trim(),normalized,String(email||'').trim()||null,String(vehicleType).trim()||'Motorbike',String(numberPlate||'').trim()]);
+      rider=inserted.rows[0];
+    }
+    const raw=crypto.randomBytes(32).toString('hex');
+    await client.query(`insert into rider_invites(id,rider_id,business_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,$3,now()+interval '48 hours')`,[rider.id,businessId,hashSessionToken(raw)]);
+    await client.query('commit');
+    broadcastRider({businessId,riderId:rider.id,action:'INVITED',data:{rider}});
+    const signupUrl=`${FRONTEND_URL.replace(/\/$/,'')}/rider-signup.html?invite=${encodeURIComponent(raw)}`;
+    res.status(201).json({ok:true,rider,signupUrl,expiresInHours:48});
+  }catch(error){
+    try{await client.query('rollback')}catch{}
+    res.status(400).json({error:error.code==='23505'?'A rider invitation already exists for that phone':error.message||'Unable to create rider invitation'});
+  }finally{client.release();}
 });
+
+app.get('/api/rider-invites/:token', requireRiderModule, async(req,res)=>{
+  try{
+    const token=String(req.params.token||'').trim();
+    if(!token) return res.status(400).json({error:'Invitation token is required'});
+    const result=await pool.query(`select i.expires_at,i.used_at,r.id,r.name,r.phone,r.email,r.vehicle_type,r.number_plate,r.rider_status,b.name as business_name
+      from rider_invites i join riders r on r.id=i.rider_id join businesses b on b.id=i.business_id
+      where i.token_hash=$1 and i.expires_at>now() and i.used_at is null and r.rider_status='INVITED'`,[hashSessionToken(token)]);
+    if(!result.rowCount) return res.status(410).json({error:'This rider invitation is expired, already used, or no longer available'});
+    const r=result.rows[0];
+    res.json({rider:{id:r.id,name:r.name,phone:r.phone,email:r.email,vehicle_type:r.vehicle_type,number_plate:r.number_plate},businessName:r.business_name,expiresAt:r.expires_at});
+  }catch(error){res.status(500).json({error:error.message||'Unable to verify rider invitation'});}
+});
+
+app.post('/api/rider-invites/:token/complete', requireRiderModule, async(req,res)=>{
+  const client=await pool.connect();
+  try{
+    const token=String(req.params.token||'').trim();
+    const {name,email,vehicleType,numberPlate,payoutPhone,password,profileImageUrl}=req.body;
+    if(!token||!name||!password||!vehicleType||!numberPlate) return res.status(400).json({error:'Name, vehicle type, plate number and password are required'});
+    if(String(password).length<8) return res.status(400).json({error:'Password must be at least 8 characters'});
+    if(profileImageUrl&&String(profileImageUrl).length>700000) return res.status(400).json({error:'Profile photo is too large. Please choose a smaller photo'});
+    await client.query('begin');
+    const invite=await client.query(`select i.id,i.rider_id,i.business_id,r.phone,r.rider_status
+      from rider_invites i join riders r on r.id=i.rider_id
+      where i.token_hash=$1 and i.expires_at>now() and i.used_at is null
+      for update`,[hashSessionToken(token)]);
+    if(!invite.rowCount||invite.rows[0].rider_status!=='INVITED') throw new Error('This rider invitation is expired, already used, or no longer available');
+    const row=invite.rows[0];
+    const normalizedPayout=payoutPhone?normalizeKenyanPhone(payoutPhone):row.phone;
+    const passwordData=hashPassword(password);
+    const updated=await client.query(`update riders set name=$2,email=$3,vehicle_type=$4,number_plate=$5,payout_phone=$6,profile_image_url=$7,active=false,rider_status='PENDING_APPROVAL' where id=$1 returning id,business_id,name,phone,email,vehicle_type,number_plate,payout_phone,profile_image_url,rider_status`,[row.rider_id,String(name).trim(),String(email||'').trim()||null,String(vehicleType).trim(),String(numberPlate).trim(),normalizedPayout,String(profileImageUrl||'').trim()||null]);
+    await client.query(`insert into rider_auth(rider_id,password_hash,payout_phone) values($1,$2,$3)
+      on conflict(rider_id) do update set password_hash=excluded.password_hash,payout_phone=excluded.payout_phone`,[row.rider_id,passwordData.hash,normalizedPayout]);
+    await client.query('update rider_invites set used_at=now() where id=$1',[invite.rows[0].id]);
+    await client.query('insert into rider_presence(rider_id,online) values($1,false) on conflict(rider_id) do update set online=false,updated_at=now()',[row.rider_id]);
+    await client.query('commit');
+    broadcastRider({businessId:row.business_id,riderId:row.rider_id,action:'REGISTRATION_COMPLETED',data:{rider:updated.rows[0]}});
+    res.json({ok:true,status:'PENDING_APPROVAL',rider:updated.rows[0]});
+  }catch(error){
+    try{await client.query('rollback')}catch{}
+    res.status(400).json({error:error.message||'Unable to complete rider registration'});
+  }finally{client.release();}
+});
+
+app.post('/api/riders/:id/invite', requireRiderModule, requireManager, async(req,res)=>{
+  try{
+    const riderResult=await pool.query(`select id,business_id,name,rider_status from riders where id=$1 and business_id=$2`,[req.params.id,req.manager.business_id]);
+    if(!riderResult.rowCount)return res.status(404).json({error:'Rider not found'});
+    if(riderResult.rows[0].rider_status!=='INVITED')return res.status(409).json({error:'Only invited riders can receive a new registration link'});
+    const raw=crypto.randomBytes(32).toString('hex');
+    await pool.query('update rider_invites set used_at=coalesce(used_at,now()) where rider_id=$1 and used_at is null',[req.params.id]);
+    await pool.query(`insert into rider_invites(id,rider_id,business_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,$3,now()+interval '48 hours')`,[req.params.id,req.manager.business_id,hashSessionToken(raw)]);
+    const signupUrl=`${FRONTEND_URL.replace(/\/$/,'')}/rider-signup.html?invite=${encodeURIComponent(raw)}`;
+    res.json({ok:true,signupUrl,expiresInHours:48});
+  }catch(error){res.status(400).json({error:error.message||'Unable to generate rider invitation'});}
+});
+
+app.post('/api/riders/:id/approve', requireRiderModule, requireManager, async(req,res)=>{
+  try{
+    const result=await pool.query(`update riders set rider_status='ACTIVE',active=true where id=$1 and business_id=$2 and rider_status='PENDING_APPROVAL' returning id,name,phone,email,vehicle_type,number_plate,payout_phone,profile_image_url,rider_status,active`,[req.params.id,req.manager.business_id]);
+    if(!result.rowCount)return res.status(404).json({error:'Rider is not awaiting approval'});
+    broadcastRider({businessId:req.manager.business_id,riderId:req.params.id,action:'APPROVED',data:{rider:result.rows[0]}});
+    res.json({ok:true,rider:result.rows[0]});
+  }catch(error){res.status(500).json({error:error.message||'Unable to approve rider'});}
+});
+
+app.post('/api/riders/:id/suspend', requireRiderModule, requireManager, async(req,res)=>{
+  try{
+    const result=await pool.query(`update riders set rider_status='SUSPENDED',active=false where id=$1 and business_id=$2 returning id,name,rider_status,active`,[req.params.id,req.manager.business_id]);
+    if(!result.rowCount)return res.status(404).json({error:'Rider not found'});
+    await pool.query('delete from rider_sessions where rider_id=$1',[req.params.id]);
+    await pool.query(`insert into rider_presence(rider_id,online) values($1,false) on conflict(rider_id) do update set online=false,updated_at=now()`,[req.params.id]);
+    broadcastRider({businessId:req.manager.business_id,riderId:req.params.id,action:'SUSPENDED',data:{rider:result.rows[0]}});
+    res.json({ok:true,rider:result.rows[0]});
+  }catch(error){res.status(500).json({error:error.message||'Unable to suspend rider'});}
+});app.post('/api/riders/:id/reactivate', requireRiderModule, requireManager, async(req,res)=>{
+  try{
+    const result=await pool.query(`update riders set rider_status='ACTIVE',active=true where id=$1 and business_id=$2 and rider_status='SUSPENDED' returning id,name,phone,rider_status,active`,[req.params.id,req.manager.business_id]);
+    if(!result.rowCount)return res.status(404).json({error:'Suspended rider not found'});
+    broadcastRider({businessId:req.manager.business_id,riderId:req.params.id,action:'REACTIVATED',data:{rider:result.rows[0]}});
+    res.json({ok:true,rider:result.rows[0]});
+  }catch(error){res.status(500).json({error:error.message||'Unable to reactivate rider'});}
+});
+
+
 app.post('/api/riders/logout', requireRiderModule, requireRiderAuth, async(req,res)=>{
   await pool.query('delete from rider_sessions where id=$1',[req.rider.session_id]);
   await pool.query(`insert into rider_presence(rider_id,online) values($1,false) on conflict(rider_id) do update set online=false,updated_at=now()`,[req.rider.id]);
   res.json({ok:true});
 });
 app.get('/api/riders/me', requireRiderModule, requireRiderAuth, async(req,res)=>{
-  const r=req.rider; res.json({id:r.id,name:r.name,phone:r.phone,email:r.email,vehicle_type:r.vehicle_type,number_plate:r.number_plate,payout_phone:r.payout_phone,active:r.active});
+  const r=req.rider; res.json({id:r.id,name:r.name,phone:r.phone,email:r.email,vehicle_type:r.vehicle_type,number_plate:r.number_plate,payout_phone:r.payout_phone,profile_image_url:r.profile_image_url,rider_status:r.rider_status,active:r.active});
 });
 app.post('/api/riders/:id/presence', requireRiderModule, requireRiderAuth, async(req,res)=>{
   const online=Boolean(req.body.online);
   await pool.query(`insert into rider_presence(rider_id,online) values($1,$2) on conflict(rider_id) do update set online=$2,updated_at=now()`,[req.rider.id,online]);
+  broadcastRider({businessId:req.rider.business_id,riderId:req.rider.id,action:online?'ONLINE':'OFFLINE',data:{online}});
   res.json({online});
 });
 app.get('/api/riders/:id/dashboard', requireRiderModule, requireRiderAuth, async(req,res)=>{
@@ -593,6 +748,8 @@ app.post('/api/riders/:id/deliveries/:tripId/accept', requireRiderModule, requir
   if(result.rows[0].completed_at) return res.status(409).json({error:'Delivery already completed'});
   await pool.query(`insert into delivery_events(id,trip_id,status) values(gen_random_uuid(),$1,'ACCEPTED')`,[req.params.tripId]);
   await pool.query(`update orders set delivery_status='ACCEPTED' where id=$1`,[result.rows[0].order_id]);
+  broadcastRider({businessId:result.rows[0].business_id,riderId:req.rider.id,orderId:result.rows[0].order_id,action:'DELIVERY_ACCEPTED',data:{tripId:req.params.tripId,status:'ACCEPTED'}});
+  broadcastRealtime({businessId:result.rows[0].business_id,orderId:result.rows[0].order_id,event:'delivery.updated',data:{orderId:result.rows[0].order_id,status:'ACCEPTED',riderId:req.rider.id}});
   res.json({ok:true,status:'ACCEPTED'});
 });
 async function createRiderRecipientAndPayout(rider, amount, tripId) {
@@ -632,10 +789,12 @@ async function updateDeliveryStatus(req,res,nextStatus){
         console.error('Rider payout queued/failed:',payoutError.message);
       }
       broadcastOrder((await pool.query('select * from orders where id=$1',[trip.order_id])).rows[0],{reason:'delivery.completed',notification:'Delivery completed'});
+      broadcastRider({businessId:trip.business_id,riderId:req.rider.id,orderId:trip.order_id,action:'DELIVERY_COMPLETED',data:{tripId:trip.id,status:nextStatus,earning:earning.rows[0]}});
       return res.json({ok:true,status:nextStatus,earning:earning.rows[0]});
     }
     await pool.query('update orders set delivery_status=$1 where id=$2',[nextStatus,trip.order_id]);
-    broadcastRealtime({businessId:trip.business_id,orderId:trip.order_id,event:'delivery.updated',data:{orderId:trip.order_id,status:nextStatus}});
+    broadcastRider({businessId:trip.business_id,riderId:req.rider.id,orderId:trip.order_id,action:'DELIVERY_STATUS',data:{tripId:trip.id,status:nextStatus}});
+    broadcastRealtime({businessId:trip.business_id,orderId:trip.order_id,event:'delivery.updated',data:{orderId:trip.order_id,status:nextStatus,riderId:req.rider.id}});
     res.json({ok:true,status:nextStatus});
   }catch(error){res.status(500).json({error:error.message||'Unable to update delivery'});}
 }
@@ -672,6 +831,7 @@ app.post('/api/orders/:id/assign-rider',requireRiderModule,requireManagerOrder,a
     await client.query(`update orders set status='OUT_FOR_DELIVERY',out_for_delivery_at=coalesce(out_for_delivery_at,now()),delivery_status='ASSIGNED',delivery_fee_status='HELD',rider_earning=delivery_fee where id=$1`,[order.id]);
     await client.query('commit');
     broadcastOrder((await pool.query('select * from orders where id=$1',[order.id])).rows[0],{reason:'restaurant.dispatched',notification:'New delivery assigned'});
+    broadcastRider({businessId:order.business_id,riderId:riderId,orderId:order.id,action:'DELIVERY_ASSIGNED',data:{tripId:trip.rows[0].id,status:'ASSIGNED'}});
     res.json({ok:true,tripId:trip.rows[0].id});
   }catch(error){try{await client.query('rollback')}catch{}res.status(500).json({error:error.message||'Unable to assign rider'});}finally{client.release();}
 });
@@ -934,8 +1094,113 @@ app.patch('/api/platform/businesses/:id',requirePlatformAdmin,async(req,res)=>{
   }catch(e){res.status(400).json({error:e.message||'Unable to update restaurant'});}
 });
 
+
+app.post('/api/control/login',async(req,res)=>{
+  try{
+    const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');
+    if(!email||!password)return res.status(400).json({error:'Email and password are required'});
+    let r=await pool.query('select * from platform_admin_users where lower(email)=lower($1) and active=true',[email]);
+    if(!r.rowCount){
+      const configuredEmail=String(process.env.PLATFORM_ADMIN_EMAIL||'').trim().toLowerCase();
+      const configuredPassword=String(process.env.PLATFORM_ADMIN_PASSWORD||'');
+      if(!configuredEmail||!configuredPassword||email!==configuredEmail||password!==configuredPassword)return res.status(401).json({error:'Invalid control centre login'});
+      const hash=hashManagerPassword(password);
+      await pool.query('insert into platform_admin_users(id,email,name,password_hash,active) values(gen_random_uuid(),$1,$2,$3,true) on conflict(email) do nothing',[email,String(process.env.PLATFORM_ADMIN_NAME||'Platform Owner'),hash]);
+      r=await pool.query('select * from platform_admin_users where lower(email)=lower($1) and active=true',[email]);
+    }
+    const admin=r.rows[0];
+    if(!admin||!verifyManagerPassword(password,admin.password_hash))return res.status(401).json({error:'Invalid control centre login'});
+    const token=crypto.randomBytes(32).toString('hex');
+    await pool.query('insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval \'30 days\')',[admin.id,hashSessionToken(token)]);
+    await pool.query('update platform_admin_users set last_login_at=now() where id=$1',[admin.id]);
+    res.json({token,admin:{id:admin.id,name:admin.name,email:admin.email}});
+  }catch(e){res.status(500).json({error:e.message||'Unable to sign in to control centre'});}
+});
+app.get('/api/control/me',requireControl,(req,res)=>res.json({id:req.controlAdmin.id,name:req.controlAdmin.name,email:req.controlAdmin.email}));
+app.post('/api/control/logout',requireControl,async(req,res)=>{
+  const raw=String(req.headers.authorization||'');const token=raw.startsWith('Bearer ')?raw.slice(7).trim():'';
+  if(token)await pool.query('delete from platform_admin_sessions where token_hash=$1',[hashSessionToken(token)]);
+  res.json({ok:true});
+});
+app.get('/api/control/businesses',requireControl,async(req,res)=>{
+  try{
+    const r=await pool.query(`select b.id,b.name,b.slug,b.package_type,b.mpesa_phone,b.paystack_subaccount_code,b.created_at,
+      coalesce(c.customer_connected,false) as customer_connected,coalesce(c.rider_connected,false) as rider_connected,
+      c.website_url,c.customer_dashboard_url,c.manager_dashboard_url,c.rider_dashboard_url,
+      rb.logo_url,rb.primary_color,rb.secondary_color,rb.accent_color,rb.font_family,rb.imported_at,
+      coalesce(f.rider_module_enabled,false) as rider_module_enabled,
+      (select count(*) from orders o where o.business_id=b.id)::int as order_count
+      from businesses b left join business_connections c on c.business_id=b.id left join business_features f on f.business_id=b.id left join restaurant_branding rb on rb.business_id=b.id
+      order by b.created_at desc`);
+    res.json({businesses:r.rows});
+  }catch(e){res.status(500).json({error:e.message||'Unable to load businesses'});}
+});
+function cleanControlUrl(value){
+  const v=String(value||'').trim();
+  if(!v)return null;
+  try{const u=new URL(v);if(!['http:','https:'].includes(u.protocol))throw new Error();return u.toString();}catch{throw new Error('Website URL must be a valid http or https URL');}
+}
+async function saveBusinessConnection(businessId,{websiteUrl,customerConnected,riderConnected}){
+  const web=cleanControlUrl(websiteUrl);
+  const customer=Boolean(customerConnected),rider=Boolean(riderConnected);
+  const customerUrl=`${FRONTEND_URL.replace(/\/$/,'')}/menu.html?businessId=${encodeURIComponent(businessId)}`;
+  const managerUrl=`${FRONTEND_URL.replace(/\/$/,'')}/manager.html?businessId=${encodeURIComponent(businessId)}`;
+  const riderUrl=`${FRONTEND_URL.replace(/\/$/,'')}/rider.html?businessId=${encodeURIComponent(businessId)}`;
+  await pool.query(`insert into business_connections(business_id,website_url,customer_dashboard_url,manager_dashboard_url,rider_dashboard_url,customer_connected,rider_connected,updated_at)
+    values($1,$2,$3,$4,$5,$6,$7,now())
+    on conflict(business_id) do update set website_url=excluded.website_url,customer_dashboard_url=excluded.customer_dashboard_url,manager_dashboard_url=excluded.manager_dashboard_url,rider_dashboard_url=excluded.rider_dashboard_url,customer_connected=excluded.customer_connected,rider_connected=excluded.rider_connected,updated_at=now()`,
+    [businessId,web,customerUrl,managerUrl,riderUrl,customer,rider]);
+  await pool.query(`insert into business_features(business_id,rider_module_enabled) values($1,$2) on conflict(business_id) do update set rider_module_enabled=$2,updated_at=now()`,[businessId,rider]);
+  return {websiteUrl:web,customerDashboardUrl:customerUrl,managerDashboardUrl:managerUrl,riderDashboardUrl:riderUrl,customerConnected:customer,riderConnected:rider};
+}
+app.post('/api/control/businesses',requireControl,async(req,res)=>{
+  const client=await pool.connect();
+  try{
+    const name=String(req.body.name||'').trim(),slug=String(req.body.slug||'').trim().toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-+|-+$/g,'');
+    const packageType=String(req.body.packageType||'DIGITAL_ORDERING').toUpperCase();
+    if(!name||!slug)return res.status(400).json({error:'Restaurant name and slug are required'});
+    if(!['DIGITAL_ORDERING','ADVANCED'].includes(packageType))return res.status(400).json({error:'Invalid package'});
+    await client.query('begin');
+    const r=await client.query('insert into businesses(id,name,slug,package_type,mpesa_phone,paystack_subaccount_code) values(gen_random_uuid(),$1,$2,$3,$4,$5) returning *',[name,slug,packageType,String(req.body.mpesaPhone||'').trim()||null,String(req.body.paystackSubaccountCode||'').trim()||null]);
+    const business=r.rows[0];
+    await client.query('insert into delivery_pricing_rules(business_id) values($1) on conflict(business_id) do nothing',[business.id]);
+    await client.query('insert into business_features(business_id,rider_module_enabled) values($1,$2) on conflict(business_id) do update set rider_module_enabled=$2,updated_at=now()',[business.id,Boolean(req.body.riderConnected)]);
+    await client.query('insert into business_connections(business_id) values($1) on conflict(business_id) do nothing',[business.id]);
+    await client.query('commit');
+    const connection=await saveBusinessConnection(business.id,req.body);
+    res.status(201).json({business:{...business,...connection},connection});
+  }catch(e){try{await client.query('rollback')}catch{}res.status(400).json({error:e.code==='23505'?'That restaurant slug already exists':e.message||'Unable to create restaurant'});}finally{client.release();}
+});
+app.patch('/api/control/businesses/:id',requireControl,async(req,res)=>{
+  try{
+    const id=String(req.params.id),name=String(req.body.name||'').trim(),slug=String(req.body.slug||'').trim().toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-+|-+$/g,'');
+    const packageType=String(req.body.packageType||'DIGITAL_ORDERING').toUpperCase();
+    if(!name||!slug||!['DIGITAL_ORDERING','ADVANCED'].includes(packageType))return res.status(400).json({error:'Invalid restaurant configuration'});
+    const r=await pool.query('update businesses set name=$1,slug=$2,package_type=$3,mpesa_phone=$4,paystack_subaccount_code=$5 where id=$6 returning *',[name,slug,packageType,String(req.body.mpesaPhone||'').trim()||null,String(req.body.paystackSubaccountCode||'').trim()||null,id]);
+    if(!r.rowCount)return res.status(404).json({error:'Restaurant not found'});
+    const connection=await saveBusinessConnection(id,req.body);
+    res.json({business:{...r.rows[0],...connection},connection});
+  }catch(e){res.status(400).json({error:e.code==='23505'?'That restaurant slug already exists':e.message||'Unable to update restaurant'});}
+});
+app.get('/api/control/businesses/:id/status',requireControl,async(req,res)=>{
+  try{
+    const id=String(req.params.id);
+    const [b,f,branches,connections,manager,riders]=await Promise.all([
+      pool.query('select id,name,slug,package_type,mpesa_phone,paystack_subaccount_code from businesses where id=$1',[id]),
+      pool.query('select rider_module_enabled from business_features where business_id=$1',[id]),
+      pool.query('select count(*)::int as count from business_branches where business_id=$1 and active=true',[id]),
+      pool.query('select * from business_connections where business_id=$1',[id]),
+      pool.query('select count(*)::int as count from manager_users where business_id=$1 and active=true',[id]),
+      pool.query('select count(*)::int as count from riders where business_id=$1',[id])
+    ]);
+    if(!b.rowCount)return res.status(404).json({error:'Restaurant not found'});
+    res.json({business:b.rows[0],riderModule:Boolean(f.rows[0]?.rider_module_enabled),branches:branches.rows[0].count,connections:connections.rows[0]||null,managerUsers:manager.rows[0].count,riders:riders.rows[0].count});
+  }catch(e){res.status(500).json({error:e.message||'Unable to load restaurant status'});}
+});
+registerBrandingEngine(app,pool,{requireControl,requireManager,broadcastRealtime});
+registerReceiptEngine(app,pool,{requireManager});
 registerDeliveryEngine(app,pool,requireManager);
-registerMenuEngine(app,pool,requireManager);
+registerMenuEngine(app,pool,requireManager,broadcastRealtime);
 
 app.listen(port, () => console.log(`Ordering API listening on ${port}`));
 +(vals.length+1));vals.push(val)};

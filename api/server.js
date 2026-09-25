@@ -609,6 +609,7 @@ app.post('/api/rider-invites', requireRiderModule, requireManager, async(req,res
     const raw=crypto.randomBytes(32).toString('hex');
     await client.query(`insert into rider_invites(id,rider_id,business_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,$3,now()+interval '48 hours')`,[rider.id,businessId,hashSessionToken(raw)]);
     await client.query('commit');
+    broadcastRider({businessId,riderId:rider.id,action:'INVITED',data:{rider}});
     const signupUrl=`${FRONTEND_URL.replace(/\/$/,'')}/rider-signup.html?invite=${encodeURIComponent(raw)}`;
     res.status(201).json({ok:true,rider,signupUrl,expiresInHours:48});
   }catch(error){
@@ -713,6 +714,7 @@ app.get('/api/riders/me', requireRiderModule, requireRiderAuth, async(req,res)=>
 app.post('/api/riders/:id/presence', requireRiderModule, requireRiderAuth, async(req,res)=>{
   const online=Boolean(req.body.online);
   await pool.query(`insert into rider_presence(rider_id,online) values($1,$2) on conflict(rider_id) do update set online=$2,updated_at=now()`,[req.rider.id,online]);
+  broadcastRider({businessId:req.rider.business_id,riderId:req.rider.id,action:online?'ONLINE':'OFFLINE',data:{online}});
   res.json({online});
 });
 app.get('/api/riders/:id/dashboard', requireRiderModule, requireRiderAuth, async(req,res)=>{
@@ -732,6 +734,8 @@ app.post('/api/riders/:id/deliveries/:tripId/accept', requireRiderModule, requir
   if(result.rows[0].completed_at) return res.status(409).json({error:'Delivery already completed'});
   await pool.query(`insert into delivery_events(id,trip_id,status) values(gen_random_uuid(),$1,'ACCEPTED')`,[req.params.tripId]);
   await pool.query(`update orders set delivery_status='ACCEPTED' where id=$1`,[result.rows[0].order_id]);
+  broadcastRider({businessId:result.rows[0].business_id,riderId:req.rider.id,orderId:result.rows[0].order_id,action:'DELIVERY_ACCEPTED',data:{tripId:req.params.tripId,status:'ACCEPTED'}});
+  broadcastRealtime({businessId:result.rows[0].business_id,orderId:result.rows[0].order_id,event:'delivery.updated',data:{orderId:result.rows[0].order_id,status:'ACCEPTED',riderId:req.rider.id}});
   res.json({ok:true,status:'ACCEPTED'});
 });
 async function createRiderRecipientAndPayout(rider, amount, tripId) {
@@ -771,10 +775,12 @@ async function updateDeliveryStatus(req,res,nextStatus){
         console.error('Rider payout queued/failed:',payoutError.message);
       }
       broadcastOrder((await pool.query('select * from orders where id=$1',[trip.order_id])).rows[0],{reason:'delivery.completed',notification:'Delivery completed'});
+      broadcastRider({businessId:trip.business_id,riderId:req.rider.id,orderId:trip.order_id,action:'DELIVERY_COMPLETED',data:{tripId:trip.id,status:nextStatus,earning:earning.rows[0]}});
       return res.json({ok:true,status:nextStatus,earning:earning.rows[0]});
     }
     await pool.query('update orders set delivery_status=$1 where id=$2',[nextStatus,trip.order_id]);
-    broadcastRealtime({businessId:trip.business_id,orderId:trip.order_id,event:'delivery.updated',data:{orderId:trip.order_id,status:nextStatus}});
+    broadcastRider({businessId:trip.business_id,riderId:req.rider.id,orderId:trip.order_id,action:'DELIVERY_STATUS',data:{tripId:trip.id,status:nextStatus}});
+    broadcastRealtime({businessId:trip.business_id,orderId:trip.order_id,event:'delivery.updated',data:{orderId:trip.order_id,status:nextStatus,riderId:req.rider.id}});
     res.json({ok:true,status:nextStatus});
   }catch(error){res.status(500).json({error:error.message||'Unable to update delivery'});}
 }
@@ -811,6 +817,7 @@ app.post('/api/orders/:id/assign-rider',requireRiderModule,requireManagerOrder,a
     await client.query(`update orders set status='OUT_FOR_DELIVERY',out_for_delivery_at=coalesce(out_for_delivery_at,now()),delivery_status='ASSIGNED',delivery_fee_status='HELD',rider_earning=delivery_fee where id=$1`,[order.id]);
     await client.query('commit');
     broadcastOrder((await pool.query('select * from orders where id=$1',[order.id])).rows[0],{reason:'restaurant.dispatched',notification:'New delivery assigned'});
+    broadcastRider({businessId:order.business_id,riderId:riderId,orderId:order.id,action:'DELIVERY_ASSIGNED',data:{tripId:trip.rows[0].id,status:'ASSIGNED'}});
     res.json({ok:true,tripId:trip.rows[0].id});
   }catch(error){try{await client.query('rollback')}catch{}res.status(500).json({error:error.message||'Unable to assign rider'});}finally{client.release();}
 });

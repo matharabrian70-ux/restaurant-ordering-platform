@@ -995,7 +995,7 @@ app.post('/api/control/logout',requireControl,async(req,res)=>{
 });
 app.get('/api/control/businesses',requireControl,async(req,res)=>{
   try{
-    const r=await pool.query(`select b.id,b.name,b.slug,b.package_type,b.mpesa_phone,b.created_at,
+    const r=await pool.query(`select b.id,b.name,b.slug,b.package_type,b.mpesa_phone,b.paystack_subaccount_code,b.created_at,
       coalesce(c.customer_connected,false) as customer_connected,coalesce(c.rider_connected,false) as rider_connected,
       c.website_url,c.customer_dashboard_url,c.manager_dashboard_url,c.rider_dashboard_url,
       coalesce(f.rider_module_enabled,false) as rider_module_enabled,
@@ -1031,7 +1031,7 @@ app.post('/api/control/businesses',requireControl,async(req,res)=>{
     if(!name||!slug)return res.status(400).json({error:'Restaurant name and slug are required'});
     if(!['DIGITAL_ORDERING','ADVANCED'].includes(packageType))return res.status(400).json({error:'Invalid package'});
     await client.query('begin');
-    const r=await client.query('insert into businesses(id,name,slug,package_type,mpesa_phone) values(gen_random_uuid(),$1,$2,$3,$4) returning *',[name,slug,packageType,String(req.body.mpesaPhone||'').trim()||null]);
+    const r=await client.query('insert into businesses(id,name,slug,package_type,mpesa_phone,paystack_subaccount_code) values(gen_random_uuid(),$1,$2,$3,$4,$5) returning *',[name,slug,packageType,String(req.body.mpesaPhone||'').trim()||null]);
     const business=r.rows[0];
     await client.query('insert into delivery_pricing_rules(business_id) values($1) on conflict(business_id) do nothing',[business.id]);
     await client.query('insert into business_features(business_id,rider_module_enabled) values($1,$2) on conflict(business_id) do update set rider_module_enabled=$2,updated_at=now()',[business.id,Boolean(req.body.riderConnected)]);
@@ -1046,7 +1046,7 @@ app.patch('/api/control/businesses/:id',requireControl,async(req,res)=>{
     const id=String(req.params.id),name=String(req.body.name||'').trim(),slug=String(req.body.slug||'').trim().toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-+|-+$/g,'');
     const packageType=String(req.body.packageType||'DIGITAL_ORDERING').toUpperCase();
     if(!name||!slug||!['DIGITAL_ORDERING','ADVANCED'].includes(packageType))return res.status(400).json({error:'Invalid restaurant configuration'});
-    const r=await pool.query('update businesses set name=$1,slug=$2,package_type=$3,mpesa_phone=$4 where id=$5 returning *',[name,slug,packageType,String(req.body.mpesaPhone||'').trim()||null,id]);
+    const r=await pool.query('update businesses set name=$1,slug=$2,package_type=$3,mpesa_phone=$4,paystack_subaccount_code=$5 where id=$6 returning *',[name,slug,packageType,String(req.body.mpesaPhone||'').trim()||null,String(req.body.paystackSubaccountCode||'').trim()||null,id]);
     if(!r.rowCount)return res.status(404).json({error:'Restaurant not found'});
     const connection=await saveBusinessConnection(id,req.body);
     res.json({business:{...r.rows[0],...connection},connection});

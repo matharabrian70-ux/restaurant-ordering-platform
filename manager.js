@@ -104,8 +104,58 @@ function branches(){return '<div class="manager-grid two"><section class="manage
 async function branch(e){e.preventDefault();const g=id=>document.getElementById(id).value;try{await api('/api/businesses/'+B+'/branches',{method:'POST',body:JSON.stringify({name:g('bn'),address:g('ba'),latitude:Number(g('blat')),longitude:Number(g('blng')),serviceRadiusKm:Number(g('br')),pickupInstructions:g('bi'),active:true,acceptingOrders:true})});T='branches';await load()}catch(x){alert(x.message)}}
 function delivery(){const p=D.pricing;return '<section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">DELIVERY PRICING</span><h2>'+(p.editable?'Restaurant master pricing':'Automatic platform pricing')+'</h2><p>'+(p.editable?'Bounded master rules.':'Advanced pricing is platform-managed and balances customer cost with rider earnings.')+'</p></div><span class="mode-badge">'+p.mode+'</span></div>'+(p.editable?'<form onsubmit="saveDelivery(event)" class="form-grid four">'+[['base_fee_kes','Base fee'],['per_km_kes','Per km'],['per_minute_kes','Per minute'],['minimum_fee_kes','Minimum'],['maximum_fee_kes','Maximum'],['peak_multiplier','Peak multiplier']].map(x=>'<label>'+x[1]+'<input id="dp-'+x[0]+'" type="number" step=".01" value="'+p.rules[x[0]]+'"></label>').join('')+'<button class="btn">SAVE PRICING</button></form>':'<div class="auto-pricing"><b>AUTOMATIC</b><span>'+money(p.rules.minimum_fee_kes)+' – '+money(p.rules.maximum_fee_kes)+' customer range</span><span>Route distance + traffic duration + fuel movement + rider payment floor</span></div>')+'</section>'}
 async function saveDelivery(e){e.preventDefault();const k=['base_fee_kes','per_km_kes','per_minute_kes','minimum_fee_kes','maximum_fee_kes','peak_multiplier'],b={};k.forEach(x=>b[x]=Number(document.getElementById('dp-'+x).value));try{await api('/api/businesses/'+B+'/delivery-pricing',{method:'PATCH',body:JSON.stringify(b)});T='delivery';await load()}catch(x){alert(x.message)}}
-function riders(){return '<div class="manager-grid two"><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">RIDER TEAM</span><h2>Availability & fair rotation</h2><p>Available riders are shown as compact cards. Riders who have waited longest since their last completed delivery get higher priority.</p></div></div><div class="rider-picker large">'+sortRiders(D.riders).map((r,i)=>'<article class="rider-square '+(r.available?'is-available':'is-unavailable')+'"><div class="rider-avatar">'+(r.profile_image_url?'<img src="'+esc(r.profile_image_url)+'" alt="">':esc((r.name||'?')[0]))+'</div><div class="rider-square-main"><b>'+esc(r.name)+'</b><span>'+esc(r.vehicle_type||'Vehicle')+' · '+esc(r.number_plate||'')+'</span><small>'+(r.last_completed_at?'Last delivery '+new Date(r.last_completed_at).toLocaleDateString('en-KE'):'No completed delivery')+' · '+Number(r.trip_count||0)+' completed</small></div><div class="availability"><i></i>'+(r.available?'AVAILABLE':'UNAVAILABLE')+'</div>'+(r.available&&i===0?'<em>HIGHEST PRIORITY</em>':'')+'</article>').join('')+'</div></section><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">TEAM SETUP</span><h2>Add rider</h2></div></div><form onsubmit="addRider(event)"><label>Name<input id="rn" required></label><label>Phone<input id="rp" required placeholder="07xx xxx xxx"></label><label>Email<input id="re" type="email"></label><div class="form-grid"><label>Vehicle<input id="rv" value="Motorbike"></label><label>Plate<input id="rplate" required></label></div><label>M-Pesa payout phone<input id="rpay"></label><label>Login password<input id="rpass" type="password" required></label><label>Profile photo URL<input id="rphoto"></label><button class="btn wide">CREATE RIDER</button></form></section></div>'}
-async function addRider(e){e.preventDefault();const g=id=>document.getElementById(id).value;try{await api('/api/riders',{method:'POST',body:JSON.stringify({businessId:B,name:g('rn'),phone:g('rp'),email:g('re'),vehicleType:g('rv'),numberPlate:g('rplate'),payoutPhone:g('rpay'),password:g('rpass'),profileImageUrl:g('rphoto')})});T='riders';await load()}catch(x){alert(x.message)}}
+function riderStatusLabel(status){
+  return ({INVITED:'INVITED',PENDING_APPROVAL:'AWAITING APPROVAL',ACTIVE:'ACTIVE',SUSPENDED:'SUSPENDED'})[status]||status||'UNKNOWN';
+}
+function riderStatusClass(status){return String(status||'').toLowerCase().replace(/_/g,'-');}
+function riders(){
+  const list=sortRiders(D.riders||[]);
+  const pending=list.filter(r=>r.rider_status==='PENDING_APPROVAL').length;
+  const invited=list.filter(r=>r.rider_status==='INVITED').length;
+  const active=list.filter(r=>r.rider_status==='ACTIVE').length;
+  return '<section class="riders-page"><div class="riders-hero"><div><span class="manager-kicker"><i></i> ADVANCED DELIVERY MODULE</span><h2>Riders.</h2><p>Invite riders, review completed profiles and control who can access delivery operations.</p></div><div class="rider-hero-actions"><span class="live-badge"><i></i> '+active+' ACTIVE</span><button class="btn" onclick="document.getElementById(\'rider-invite-panel\')?.scrollIntoView({behavior:\'smooth\'})">＋ INVITE RIDER</button></div></div>'+
+  '<div class="rider-admin-summary"><article><span>ACTIVE RIDERS</span><strong>'+active+'</strong><small>Approved and available for operations</small></article><article class="'+(pending?'attention':'')+'"><span>PENDING APPROVAL</span><strong>'+pending+'</strong><small>Profiles completed by riders</small></article><article><span>INVITED</span><strong>'+invited+'</strong><small>Registration links still active</small></article><article><span>AVAILABLE NOW</span><strong>'+list.filter(r=>r.available).length+'</strong><small>Online and not on a trip</small></article></div>'+
+  '<div class="manager-grid two"><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">RIDER TEAM</span><h2>Rider accounts</h2><p>Only ACTIVE riders can sign in and receive delivery assignments.</p></div></div><div class="rider-admin-list">'+(list.length?list.map(riderAdminCard).join(''):'<div class="empty-state">No riders have been invited yet.</div>')+'</div></section>'+
+  '<section class="manager-panel" id="rider-invite-panel"><div class="panel-title"><div><span class="eyebrow">NEW RIDER</span><h2>Send an invitation</h2><p>The rider completes their own profile, uploads a photo and creates their password. You approve the account afterwards.</p></div></div><form onsubmit="inviteRider(event)" class="rider-invite-form"><div class="form-grid"><label>Full name<input id="rin-name" required placeholder="Rider full name"></label><label>Phone<input id="rin-phone" required placeholder="07xx xxx xxx"></label></div><div class="form-grid"><label>Email <span class="optional">OPTIONAL</span><input id="rin-email" type="email" placeholder="rider@example.com"></label><label>Vehicle<input id="rin-vehicle" value="Motorbike" required></label></div><label>Plate number <span class="optional">CAN BE ADDED LATER</span><input id="rin-plate" placeholder="KDA 123X"></label><button class="btn wide" id="invite-rider-btn">CREATE INVITATION</button><p class="form-note">A secure registration link will be generated. Copy it and send it directly to the rider.</p></form><div id="rider-invite-result"></div></section></div></section>';
+}
+function riderAdminCard(r){
+  const status=r.rider_status|| (r.active?'ACTIVE':'SUSPENDED');
+  const action=status==='PENDING_APPROVAL'?'<button class="btn btn-small" onclick="approveRider(\''+r.id+'\',this)">APPROVE RIDER</button>':status==='ACTIVE'?'<button class="btn btn-small secondary" onclick="suspendRider(\''+r.id+'\',this)">SUSPEND</button>':'';
+  const availability=status==='ACTIVE'?(r.available?'AVAILABLE':'OFFLINE / BUSY'):riderStatusLabel(status);
+  return '<article class="rider-admin-card"><div class="rider-admin-avatar">'+(r.profile_image_url?'<img src="'+esc(r.profile_image_url)+'" alt="">':esc((r.name||'?')[0]))+'</div><div class="rider-admin-main"><div class="rider-admin-top"><div><b>'+esc(r.name)+'</b><span>'+esc(r.phone||'')+(r.email?' · '+esc(r.email):'')+'</span></div><span class="rider-status '+riderStatusClass(status)+'"><i></i>'+esc(riderStatusLabel(status))+'</span></div><div class="rider-admin-meta"><span>'+esc(r.vehicle_type||'Vehicle')+'</span><span>'+esc(r.number_plate||'Plate not set')+'</span><span>'+Number(r.trip_count||0)+' completed</span></div><div class="rider-admin-actions">'+action+(status==='INVITED'?'<span class="pending-note">Registration link awaiting completion</span>':'')+(status==='PENDING_APPROVAL'?'<span class="pending-note">Review profile before activating access</span>':'')+'</div></div></article>';
+}
+async function inviteRider(e){
+  e.preventDefault();
+  const b=document.getElementById('invite-rider-btn'),out=document.getElementById('rider-invite-result');
+  const g=id=>document.getElementById(id)?.value.trim()||'';
+  b.disabled=true;b.textContent='CREATING INVITATION…';out.innerHTML='';
+  try{
+    const data=await api('/api/rider-invites',{method:'POST',body:JSON.stringify({businessId:B,name:g('rin-name'),phone:g('rin-phone'),email:g('rin-email'),vehicleType:g('rin-vehicle'),numberPlate:g('rin-plate')})});
+    out.innerHTML='<div class="rider-invite-success"><span class="eyebrow">INVITATION READY</span><h3>'+esc(data.rider.name)+' has been invited.</h3><p>Send this secure link to the rider. It expires in 48 hours.</p><div class="invite-link-row"><input value="'+esc(data.signupUrl)+'" readonly><button type="button" class="btn btn-small" onclick="copyRiderInvite(this)">COPY LINK</button></div></div>';
+    out.dataset.url=data.signupUrl;
+    document.getElementById('rin-name').value='';document.getElementById('rin-phone').value='';document.getElementById('rin-email').value='';document.getElementById('rin-plate').value='';
+    await load();
+    setTimeout(()=>{document.getElementById('rider-invite-panel')?.scrollIntoView({behavior:'smooth'});},80);
+  }catch(x){out.innerHTML='<div class="login-error">'+esc(x.message)+'</div>';}
+  finally{b.disabled=false;b.textContent='CREATE INVITATION';}
+}
+async function copyRiderInvite(button){
+  const input=button?.parentElement?.querySelector('input'),url=input?.value;
+  if(!url)return;
+  try{await navigator.clipboard.writeText(url);button.textContent='COPIED ✓';setTimeout(()=>button.textContent='COPY LINK',1500);}
+  catch{input.select();document.execCommand('copy');button.textContent='COPIED ✓';setTimeout(()=>button.textContent='COPY LINK',1500);}
+}
+async function approveRider(id,button){
+  button.disabled=true;button.textContent='APPROVING…';
+  try{await api('/api/riders/'+id+'/approve',{method:'POST',body:JSON.stringify({})});await load();}
+  catch(x){button.disabled=false;button.textContent='APPROVE RIDER';alert(x.message);}
+}
+async function suspendRider(id,button){
+  if(!confirm('Suspend this rider? They will be signed out and cannot receive deliveries until reactivated.'))return;
+  button.disabled=true;button.textContent='SUSPENDING…';
+  try{await api('/api/riders/'+id+'/suspend',{method:'POST',body:JSON.stringify({})});await load();}
+  catch(x){button.disabled=false;button.textContent='SUSPEND';alert(x.message);}
+}
 
 function station(){
   const stations=D.stations||[];

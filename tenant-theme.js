@@ -1,40 +1,184 @@
-(function(){
-  const BUSINESS_ID_VALUE=typeof BUSINESS_ID!=='undefined'?BUSINESS_ID:(new URLSearchParams(location.search).get('businessId')||'11111111-1111-4111-8111-111111111111');
-  const API=typeof API_BASE_URL!=='undefined'?API_BASE_URL:'https://restaurant-ordering-api-ow3p.onrender.com';
-  const DEFAULT={display_name:'Restaurant',logo_url:'',favicon_url:'',primary_color:'#176b32',secondary_color:'#172019',accent_color:'#d56a2d',background_color:'#f5f5f0',text_color:'#172019',font_family:'Inter,system-ui,-apple-system,"Segoe UI",sans-serif'};
-  let brand={...DEFAULT};
-  const cacheKey='tenant-branding:'+BUSINESS_ID_VALUE;
-  function safe(v,f=''){return v==null||v===''?f:String(v);}
-  function apply(next){
-    brand={...DEFAULT,...(next||{})};
-    const root=document.documentElement;
-    root.style.setProperty('--tenant-primary',brand.primary_color);
-    root.style.setProperty('--tenant-secondary',brand.secondary_color);
-    root.style.setProperty('--tenant-accent',brand.accent_color||brand.primary_color);
-    root.style.setProperty('--tenant-paper',brand.background_color);
-    root.style.setProperty('--tenant-text',brand.text_color);
-    root.style.setProperty('--tenant-font',brand.font_family);
-    root.style.setProperty('--accent','var(--tenant-primary)');
-    root.style.setProperty('--ink','var(--tenant-secondary)');
-    root.style.setProperty('--paper','var(--tenant-paper)');
-    root.style.setProperty('--text','var(--tenant-text)');
-    root.style.setProperty('--font','var(--tenant-font)');
-    document.body?.setAttribute('data-tenant-id',BUSINESS_ID_VALUE);
-    document.body?.setAttribute('data-tenant-name',brand.display_name||'Restaurant');
-    const name=brand.display_name||'Restaurant';
-    document.querySelectorAll('.brand').forEach(el=>{el.replaceChildren();if(brand.logo_url){const img=document.createElement('img');img.src=brand.logo_url;img.alt='';el.appendChild(img);}const span=document.createElement('span');span.textContent=name;el.appendChild(span);});document.querySelectorAll('[data-tenant-name-target]').forEach(el=>el.textContent=name);
-    document.querySelectorAll('[data-tenant-logo]').forEach(el=>{if(brand.logo_url){el.src=brand.logo_url;el.hidden=false;}else{el.hidden=true;}});
-    document.querySelectorAll('[data-tenant-name]').forEach(el=>el.textContent=name);document.querySelectorAll('.rider-auth-brand').forEach(el=>{el.replaceChildren();if(brand.logo_url){const img=document.createElement('img');img.src=brand.logo_url;img.alt='';img.className='tenant-auth-logo';el.appendChild(img);}const span=document.createElement('span');span.textContent=name.toUpperCase()+' · RIDER OPERATIONS';el.appendChild(span);});document.querySelectorAll('footer').forEach(el=>{const original=el.dataset.tenantFooter||el.textContent;el.dataset.tenantFooter=original;const cleaned=original.replace(/Savanna Bites\s*•\s*/ig,'').replace(/^SAVANNA BITES\s*•\s*/i,'');el.textContent=name+' • '+cleaned;});
-    if(brand.favicon_url){let icon=document.querySelector('link[data-tenant-favicon]');if(!icon){icon=document.createElement('link');icon.rel='icon';icon.dataset.tenantFavicon='true';document.head.appendChild(icon);}icon.href=brand.favicon_url;}
-    const path=location.pathname.toLowerCase();
-    const page=path.includes('manager')?'Manager Dashboard':path.includes('rider')?'Rider Dashboard':path.includes('checkout')?'Checkout':path.includes('order')?'Order Tracking':path.includes('menu')?'Menu':path.includes('station')?'Order Station':'Restaurant';
-    document.title=name+' — '+page;
-    window.RESTAURANT_BRANDING=brand;
-    window.dispatchEvent(new CustomEvent('tenant:ready',{detail:brand}));
+/* Central tenant branding layer.
+ * Pages should not own restaurant colors/identity. They consume CSS variables
+ * and data-tenant-* attributes applied here.
+ */
+(function () {
+  'use strict';
+
+  const DEFAULT_THEME = Object.freeze({
+    id: '11111111-1111-4111-8111-111111111111',
+    name: 'Savanna Bites',
+    slug: 'savanna-bites',
+    logoUrl: '',
+    colors: {
+      ink: '#172019',
+      muted: '#6f776f',
+      paper: '#f5f3ed',
+      card: '#ffffff',
+      line: '#deddd5',
+      accent: '#c96b3b',
+      accentContrast: '#ffffff'
+    }
+  });
+
+  // One central tenant registry. A future tenant can be added here without
+  // editing individual pages. API-provided branding can override these values.
+  const TENANT_THEMES = Object.freeze({
+    '11111111-1111-4111-8111-111111111111': DEFAULT_THEME,
+    'savanna-bites': DEFAULT_THEME
+  });
+
+  const safeString = (value, fallback = '') =>
+    typeof value === 'string' && value.trim() ? value.trim() : fallback;
+
+  function getRequestedTenant() {
+    const params = new URLSearchParams(window.location.search);
+    return safeString(
+      window.TENANT_ID ||
+      params.get('tenant') ||
+      params.get('businessId') ||
+      document.body?.dataset?.tenant ||
+      '',
+      DEFAULT_THEME.id
+    );
   }
-  async function load(){
-    try{const cached=sessionStorage.getItem(cacheKey);if(cached)apply(JSON.parse(cached));}catch{}
-    try{const res=await fetch(API+'/api/businesses/'+encodeURIComponent(BUSINESS_ID_VALUE)+'/branding',{cache:'no-store'});if(!res.ok)throw new Error('branding '+res.status);const data=await res.json();apply(data.branding||DEFAULT);try{sessionStorage.setItem(cacheKey,JSON.stringify(data.branding||DEFAULT));}catch{}}catch{if(!window.RESTAURANT_BRANDING)apply(DEFAULT);}
+
+  function cloneTheme(theme) {
+    return {
+      ...DEFAULT_THEME,
+      ...theme,
+      colors: { ...DEFAULT_THEME.colors, ...(theme?.colors || {}) }
+    };
   }
-  window.TenantTheme={id:BUSINESS_ID_VALUE,name:()=>brand.display_name||'Restaurant',logo:()=>brand.logo_url||'',get:()=>({...brand}),ready:null};window.TenantTheme.ready=load();
+
+  function normaliseApiTheme(data) {
+    const business = data?.business || data?.restaurant || data?.tenant || {};
+    const theme = data?.theme || business?.theme || {};
+    const colors = theme.colors || {};\n    const businessPrimary = safeString(business.primary_color || business.primaryColor, '');
+
+    return {
+      id: safeString(business.id || data?.businessId, ''),
+      name: safeString(business.name || data?.businessName || data?.restaurantName, ''),
+      slug: safeString(business.slug, ''),
+      logoUrl: safeString(business.logo_url || business.logoUrl || theme.logoUrl, ''),
+      colors: {
+        ink: safeString(colors.ink || colors.primary, ''),
+        muted: safeString(colors.muted, ''),
+        paper: safeString(colors.paper || colors.background, ''),
+        card: safeString(colors.card || colors.surface, ''),
+        line: safeString(colors.line || colors.border, ''),
+        accent: safeString(colors.accent || colors.primary || businessPrimary, ''),
+        accentContrast: safeString(colors.accentContrast || colors.primaryText, '')
+      }
+    };
+  }
+
+  function applyTheme(input) {
+    const theme = cloneTheme(input);
+    const root = document.documentElement;
+
+    Object.entries({
+      '--tenant-ink': theme.colors.ink,
+      '--tenant-muted': theme.colors.muted,
+      '--tenant-paper': theme.colors.paper,
+      '--tenant-card': theme.colors.card,
+      '--tenant-line': theme.colors.line,
+      '--tenant-accent': theme.colors.accent,
+      '--tenant-accent-contrast': theme.colors.accentContrast
+    }).forEach(([name, value]) => root.style.setProperty(name, value));
+
+    root.dataset.tenantId = theme.id || '';
+    root.dataset.tenantSlug = theme.slug || '';
+
+    document.querySelectorAll('[data-tenant-brand]').forEach((element) => {
+      element.textContent = theme.name;
+    });
+
+    document.querySelectorAll('[data-tenant-name]').forEach((element) => {
+      element.textContent = theme.name;
+    });
+
+    document.querySelectorAll('[data-tenant-logo]').forEach((element) => {
+      if (theme.logoUrl) {
+        element.src = theme.logoUrl;
+        element.alt = theme.name;
+        element.hidden = false;
+      } else {
+        element.hidden = true;
+      }
+    });
+
+    const title = document.querySelector('title');
+    if (title && theme.name) {
+      title.textContent = title.textContent.replace(/Savanna Bites/gi, theme.name);
+    }
+
+    const themeColor = document.querySelector('meta[name="theme-color"]');
+    if (themeColor) themeColor.setAttribute('content', theme.colors.ink);
+
+    window.TENANT_THEME = theme;
+    window.TENANT_BUSINESS_ID = theme.id || DEFAULT_THEME.id;
+
+    document.dispatchEvent(new CustomEvent('tenanttheme:ready', {
+      detail: theme
+    }));
+
+    return theme;
+  }
+
+  async function loadTenantTheme() {
+    const requested = getRequestedTenant();
+    const configured = TENANT_THEMES[requested] || DEFAULT_THEME;
+
+    // Always paint a complete safe theme first. A failed request must never
+    // prevent a page from rendering.
+    applyTheme(configured);
+
+    try {
+      const businessId = encodeURIComponent(requested);
+      const response = await fetch(
+        'https://restaurant-ordering-api-ow3p.onrender.com/api/menu/public?businessId=' + businessId,
+        { headers: { Accept: 'application/json' } }
+      );
+
+      if (!response.ok) return window.TENANT_THEME;
+
+      const data = await response.json();
+      const apiTheme = normaliseApiTheme(data);
+
+      const merged = cloneTheme({
+        ...configured,
+        ...apiTheme,
+        id: apiTheme.id || configured.id,
+        name: apiTheme.name || configured.name,
+        slug: apiTheme.slug || configured.slug,
+        logoUrl: apiTheme.logoUrl || configured.logoUrl,
+        colors: {
+          ...configured.colors,
+          ...Object.fromEntries(
+            Object.entries(apiTheme.colors).filter(([, value]) => Boolean(value))
+          )
+        }
+      });
+
+      return applyTheme(merged);
+    } catch (error) {
+      // Branding is non-critical. Keep the already-applied fallback theme.
+      console.warn('Tenant theme could not be loaded; using fallback theme.', error);
+      return window.TENANT_THEME;
+    }
+  }
+
+  window.TENANT_THEME_DEFAULT = DEFAULT_THEME;
+  window.TENANT_THEMES = TENANT_THEMES;
+  window.applyTenantTheme = applyTheme;
+  window.loadTenantTheme = loadTenantTheme;
+
+  // Synchronous fallback + non-blocking API enrichment.
+  applyTheme(DEFAULT_THEME);
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', loadTenantTheme, { once: true });
+  } else {
+    loadTenantTheme();
+  }
 })();

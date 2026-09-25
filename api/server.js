@@ -872,7 +872,7 @@ app.get('/api/platform/overview',requirePlatformAdmin,async(req,res)=>{
 });
 app.get('/api/platform/businesses',requirePlatformAdmin,async(req,res)=>{
   try{
-    const r=await pool.query(`select b.id,b.name,b.slug,b.status,b.plan_key,b.domain,b.logo_url,b.primary_color,b.pickup_address,b.created_at,
+    const r=await pool.query(`select b.id,b.name,b.slug,b.status,b.plan_key,b.domain,b.website_url,b.logo_url,b.primary_color,b.pickup_address,b.created_at,
       coalesce(p.name,b.plan_key,'STARTER') as plan_name,
       count(o.id)::int as order_count,
       coalesce(sum(o.total) filter(where o.payment_status='PAID' and o.status<>'CANCELLED'),0)::numeric as revenue
@@ -890,12 +890,13 @@ app.post('/api/platform/businesses',requirePlatformAdmin,async(req,res)=>{
     const planKey=String(req.body.planKey||'STARTER').trim().toUpperCase();
     const domain=String(req.body.domain||'').trim()||null;
     const primaryColor=String(req.body.primaryColor||'').trim()||null;
+    const websiteUrl=String(req.body.websiteUrl||'').trim()||null;
     if(!name||!slug||!address)return res.status(400).json({error:'Restaurant name, slug and pickup address are required'});
     const pkg=await client.query('select key,features from platform_packages where key=$1 and active=true',[planKey]);
     if(!pkg.rowCount)return res.status(400).json({error:'Unknown or inactive package'});
     await client.query('begin');
     const business=await client.query(`insert into businesses(id,name,slug,status,plan_key,domain,primary_color,pickup_address,updated_at)
-      values(gen_random_uuid(),$1,$2,'ACTIVE',$3,$4,$5,$6,now()) returning *`,[name,slug,planKey,domain,primaryColor,address]);
+      values(gen_random_uuid(),$1,$2,'ACTIVE',$3,$4,$5,$6,$7,now()) returning *`,[name,slug,planKey,domain,websiteUrl,primaryColor,address]);
     const b=business.rows[0];
     await client.query('insert into business_features(business_id,rider_module_enabled) values($1,$2)',[b.id,Boolean(pkg.rows[0].features?.riderModule)]);
     await client.query('insert into delivery_pricing_rules(business_id) values($1) on conflict(business_id) do nothing',[b.id]);
@@ -912,12 +913,35 @@ app.patch('/api/platform/businesses/:id',requirePlatformAdmin,async(req,res)=>{
     if(!current.rowCount)return res.status(404).json({error:'Restaurant not found'});
     const sets=[],vals=[];
     const add=(col,val)=>{sets.push(col+'=
+    if(req.body.name!==undefined){const v=String(req.body.name||'').trim();if(v)add('name',v);}
+    if(req.body.domain!==undefined)add('domain',String(req.body.domain||'').trim()||null);
+    if(req.body.websiteUrl!==undefined)add('website_url',String(req.body.websiteUrl||'').trim()||null);
+    if(req.body.logoUrl!==undefined)add('logo_url',String(req.body.logoUrl||'').trim()||null);
+    if(req.body.primaryColor!==undefined)add('primary_color',String(req.body.primaryColor||'').trim()||null);
+    if(req.body.status!==undefined){const v=String(req.body.status).toUpperCase();if(!['ACTIVE','SUSPENDED'].includes(v))return res.status(400).json({error:'Invalid tenant status'});add('status',v);}
+    let plan=null;
+    if(req.body.planKey!==undefined){
+      const key=String(req.body.planKey||'').toUpperCase();
+      const p=await pool.query('select key,features from platform_packages where key=$1 and active=true',[key]);
+      if(!p.rowCount)return res.status(400).json({error:'Unknown or inactive package'});
+      add('plan_key',key);plan=p.rows[0];
+    }
+    if(!sets.length)return res.status(400).json({error:'No changes supplied'});
+    vals.push(req.params.id);
+    const updated=await pool.query(`update businesses set ${sets.join(',')},updated_at=now() where id=${vals.length} returning *`,vals);
+    if(plan)await pool.query('insert into business_features(business_id,rider_module_enabled) values($1,$2) on conflict(business_id) do update set rider_module_enabled=excluded.rider_module_enabled,updated_at=now()',[req.params.id,Boolean(plan.features?.riderModule)]);
+    res.json(updated.rows[0]);
+  }catch(e){res.status(400).json({error:e.message||'Unable to update restaurant'});}
+});
+
+registerDeliveryEngine(app,pool,requireManager);
 registerMenuEngine(app,pool,requireManager);
 
 app.listen(port, () => console.log(`Ordering API listening on ${port}`));
 +(vals.length+1));vals.push(val)};
     if(req.body.name!==undefined){const v=String(req.body.name||'').trim();if(v)add('name',v);}
     if(req.body.domain!==undefined)add('domain',String(req.body.domain||'').trim()||null);
+    if(req.body.websiteUrl!==undefined)add('website_url',String(req.body.websiteUrl||'').trim()||null);
     if(req.body.logoUrl!==undefined)add('logo_url',String(req.body.logoUrl||'').trim()||null);
     if(req.body.primaryColor!==undefined)add('primary_color',String(req.body.primaryColor||'').trim()||null);
     if(req.body.status!==undefined){const v=String(req.body.status).toUpperCase();if(!['ACTIVE','SUSPENDED'].includes(v))return res.status(400).json({error:'Invalid tenant status'});add('status',v);}

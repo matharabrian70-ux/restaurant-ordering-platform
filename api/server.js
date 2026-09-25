@@ -649,7 +649,7 @@ app.post('/api/riders/logout', requireRiderModule, requireRiderAuth, async(req,r
   res.json({ok:true});
 });
 app.get('/api/riders/me', requireRiderModule, requireRiderAuth, async(req,res)=>{
-  const r=req.rider; res.json({id:r.id,name:r.name,phone:r.phone,email:r.email,vehicle_type:r.vehicle_type,number_plate:r.number_plate,payout_phone:r.payout_phone,active:r.active});
+  const r=req.rider; res.json({id:r.id,name:r.name,phone:r.phone,email:r.email,vehicle_type:r.vehicle_type,number_plate:r.number_plate,payout_phone:r.payout_phone,profile_image_url:r.profile_image_url,rider_status:r.rider_status,active:r.active});
 });
 app.post('/api/riders/:id/presence', requireRiderModule, requireRiderAuth, async(req,res)=>{
   const online=Boolean(req.body.online);

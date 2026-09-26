@@ -54,7 +54,8 @@
   function normaliseApiTheme(data) {
     const business = data?.business || data?.restaurant || data?.tenant || {};
     const theme = data?.theme || business?.theme || {};
-    const colors = theme.colors || {};\n    const businessPrimary = safeString(business.primary_color || business.primaryColor, '');
+    const colors = theme.colors || {};
+    const businessPrimary = safeString(business.primary_color || business.primaryColor, '');
 
     return {
       id: safeString(business.id || data?.businessId, ''),

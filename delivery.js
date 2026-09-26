@@ -1,6 +1,6 @@
 const RIDER_TOKEN_KEY='rider_session_token';
 const RIDER_BUSINESS_ID=BUSINESS_ID;
-let rider=null,lastTripId=null,pollTimer=null,riderEvents=null;
+let rider=null,lastTripId=null,pollTimer=null,riderEvents=null,riderLiveSyncBusy=false;
 
 function riderHeaders(){const token=localStorage.getItem(RIDER_TOKEN_KEY);return token?{'Authorization':'Bearer '+token}:{};}
 async function riderApi(path,options={}){return apiRequest(path,{...options,headers:{...riderHeaders(),...(options.headers||{})}});}
@@ -70,6 +70,14 @@ async function setTripStatus(tripId,status){
   if(!route)return;
   try{await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/deliveries/'+encodeURIComponent(tripId)+'/'+route,{method:'POST',body:JSON.stringify({})});await loadRiderDashboard();}catch(err){alert(err.message||'Could not update delivery.');}
 }
+function showRiderSystemNotice(message){
+  document.getElementById('rider-system-notice')?.remove();
+  const el=document.createElement('div');
+  el.id='rider-system-notice';
+  el.className='rider-system-notice';
+  el.innerHTML='<div class="rider-system-notice-card"><span class="eyebrow">ACCOUNT NOTICE</span><strong>'+esc(message)+'</strong><small>You will be signed out shortly.</small></div>';
+  document.body.appendChild(el);
+}
 function maybeNotify(job){
   if(!job||job.id===lastTripId)return;
   lastTripId=job.id;
@@ -115,7 +123,13 @@ async function bootRider(){
     document.getElementById('rider-login').classList.add('hidden');document.getElementById('rider-app').classList.remove('hidden');
     document.getElementById('rider-header').innerHTML='<div class="rider-identity-card"><div class="rider-presence-indicator"><span id="rider-presence-dot" class="presence-dot is-offline"></span><span id="rider-presence-text">OFFLINE</span></div><div class="rider-profile-line">'+(rider.profile_image_url?'<img src="'+esc(rider.profile_image_url)+'" alt="">':'<span class="rider-profile-fallback">'+esc((rider.name||'?')[0])+'</span>')+'<div><p class="eyebrow">RIDER OPERATIONS</p><h1>'+esc(rider.name)+'</h1><p class="muted">'+esc(rider.vehicle_type)+' · '+esc(rider.number_plate||'Plate not set')+' · '+esc(rider.payout_phone||rider.phone)+'</p></div></div><div class="rider-availability"><span class="availability-label">DELIVERY AVAILABILITY</span><button id="online-button" class="availability-button is-offline" type="button" aria-pressed="false" onclick="toggleOnline()" title="Press to change your delivery availability">GO ONLINE</button><p>Go online when you are ready to receive delivery assignments.</p></div></div>';
     await loadRiderDashboard();startRiderRealtime();
-    clearInterval(pollTimer);pollTimer=setInterval(()=>loadRiderDashboard().catch(()=>{}),30000);
+    clearInterval(pollTimer);
+    pollTimer=setInterval(async()=>{
+      if(riderLiveSyncBusy||!rider)return;
+      riderLiveSyncBusy=true;
+      try{await loadRiderDashboard();}catch{}
+      finally{riderLiveSyncBusy=false;}
+    },2000);
   }catch(err){clearRiderSession();document.getElementById('rider-login-error').classList.remove('hidden');document.getElementById('rider-login-error').textContent=err.message||'Rider session expired.';}
 }
 function startRiderRealtime(){
@@ -129,7 +143,13 @@ function startRiderRealtime(){
     ['rider.updated','order.updated','delivery.updated'].forEach(name=>riderEvents.addEventListener(name,e=>{
       try{
         const d=JSON.parse(e.data||'{}');
-        if(d.action==='SUSPENDED'){clearRiderSession();location.reload();return;}
+        if(d.action==='SUSPENDED'){
+          showRiderSystemNotice('Your rider account has been temporarily suspended by Savanna Bites. Please contact the restaurant manager if you need assistance.');
+          if(riderEvents){riderEvents.close();riderEvents=null;}
+          clearInterval(pollTimer);
+          setTimeout(()=>{clearRiderSession();location.reload();},2800);
+          return;
+        }
         refresh();
       }catch{refresh();}
     }));

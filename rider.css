@@ -114,3 +114,36 @@
   .rider-identity-card{padding:22px 18px;border-radius:14px}
   .rider-identity-card .rider-profile-line h1{font-size:25px}
 }
+
+.rider-identity-card{position:relative}
+.rider-presence-indicator{
+  position:absolute;
+  top:18px;
+  left:22px;
+  display:flex;
+  align-items:center;
+  gap:7px;
+  font-size:9px;
+  font-weight:950;
+  letter-spacing:.11em;
+  color:var(--muted);
+}
+.presence-dot{
+  width:8px;
+  height:8px;
+  border-radius:50%;
+  display:inline-block;
+  background:#8b908b;
+  box-shadow:0 0 0 3px #8b908b18;
+}
+.presence-dot.is-online{
+  background:#16803a;
+  box-shadow:0 0 0 3px #16803a18;
+}
+.presence-dot.is-offline{
+  background:#8b908b;
+  box-shadow:0 0 0 3px #8b908b18;
+}
+@media(max-width:600px){
+  .rider-presence-indicator{top:14px;left:16px}
+}

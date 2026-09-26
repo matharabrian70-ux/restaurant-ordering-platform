@@ -911,7 +911,7 @@ app.post('/api/rider-invites/:token/complete', requireRiderModule, async(req,res
 app.post('/api/riders/:id/invite', requireRiderModule, requireManager, async(req,res)=>{
   try{
     const riderResult=await pool.query(`select id,business_id,name,rider_status from riders where id=$1 and business_id=$2`,[req.params.id,req.manager.business_id]);
-    if(!riderResult.rowCount)return res.status(404).json({error:'Rider not found'});
+    if(!riderResult.rowCount){await client.query('rollback');return res.status(404).json({error:'Rider not found'});}
     if(riderResult.rows[0].rider_status!=='INVITED')return res.status(409).json({error:'Only invited riders can receive a new registration link'});
     const raw=crypto.randomBytes(32).toString('hex');
     await pool.query('update rider_invites set used_at=coalesce(used_at,now()) where rider_id=$1 and used_at is null',[req.params.id]);
@@ -1070,7 +1070,7 @@ app.post('/api/orders/:id/assign-rider',requireRiderModule,requireManagerOrder,a
     if(!orderResult.rowCount){await client.query('rollback');return res.status(404).json({error:'Order not found'});}
     const order=orderResult.rows[0];
     if(order.status!=='ACCEPTED'){await client.query('rollback');return res.status(409).json({error:'Only accepted orders can be sent for delivery'});}
-    const riderResult=await client.query(`select r.*,coalesce(p.online,false) as online,exists(select 1 from rider_trips t join orders o on o.id=t.order_id where t.rider_id=r.id and t.completed_at is null) as busy from riders r left join rider_presence p on p.rider_id=r.id where r.id=$1 and r.business_id=$2 and r.active=true for update`,[riderId,order.business_id]);
+    const riderResult=await client.query(`select r.*,coalesce(p.online,false) as online,exists(select 1 from rider_trips t join orders o on o.id=t.order_id where t.rider_id=r.id and t.completed_at is null) as busy from riders r left join rider_presence p on p.rider_id=r.id where r.id=$1 and r.business_id=$2 and r.active=true for update of r`,[riderId,order.business_id]);
     if(!riderResult.rowCount)return res.status(404).json({error:'Rider not found'});
     if(!riderResult.rows[0].online||riderResult.rows[0].busy){await client.query('rollback');return res.status(409).json({error:'Rider must be online and available'});}
     const existingTrip=await client.query(`select 1 from rider_trips where order_id=$1 and completed_at is null limit 1`,[order.id]);
@@ -1197,7 +1197,7 @@ app.post('/api/station/orders/:id/assign-rider',requireStation,async(req,res)=>{
     const orderResult=await client.query('select * from orders where id=$1 and business_id=$2 for update',[req.params.id,req.station.business_id]);
     if(!orderResult.rowCount){await client.query('rollback');return res.status(404).json({error:'Order not found'});}
     const order=orderResult.rows[0];if(order.status!=='ACCEPTED'){await client.query('rollback');return res.status(409).json({error:'Only accepted orders can be dispatched'});}
-    const riderResult=await client.query(`select r.*,coalesce(p.online,false) as online,exists(select 1 from rider_trips t where t.rider_id=r.id and t.completed_at is null) as busy from riders r left join rider_presence p on p.rider_id=r.id where r.id=$1 and r.business_id=$2 and r.active=true for update`,[riderId,req.station.business_id]);
+    const riderResult=await client.query(`select r.*,coalesce(p.online,false) as online,exists(select 1 from rider_trips t where t.rider_id=r.id and t.completed_at is null) as busy from riders r left join rider_presence p on p.rider_id=r.id where r.id=$1 and r.business_id=$2 and r.active=true for update of r`,[riderId,req.station.business_id]);
     if(!riderResult.rowCount){await client.query('rollback');return res.status(404).json({error:'Rider not found'});}
     const connectionResult=await client.query('select coalesce(rider_connected,false) as rider_connected from business_connections where business_id=$1',[req.station.business_id]);
     const riderConnected=Boolean(connectionResult.rows[0]?.rider_connected);

@@ -73,3 +73,5 @@
   box-shadow:none;
   transform:none;
 }
+
+.order-received-action{width:100%;margin-top:10px;border:0!important;border-radius:999px!important;background:#4d9b5d!important;color:#fff!important;min-height:50px;font-weight:950!important;letter-spacing:.06em;box-shadow:0 10px 24px rgba(77,155,93,.18);transition:transform .16s ease,box-shadow .16s ease}.order-received-action:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 14px 28px rgba(77,155,93,.24)}.order-received-action:disabled{opacity:.65;cursor:wait}

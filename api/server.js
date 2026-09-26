@@ -983,6 +983,34 @@ app.get('/api/riders/:id/deliveries/:tripId/route', requireRiderModule, requireR
 app.get('/api/riders/me', requireRiderModule, requireRiderAuth, async(req,res)=>{
   const r=req.rider; res.json({id:r.id,name:r.name,phone:r.phone,email:r.email,vehicle_type:r.vehicle_type,number_plate:r.number_plate,payout_phone:r.payout_phone,profile_image_url:r.profile_image_url,rider_status:r.rider_status,active:r.active});
 });
+app.put('/api/riders/:id/profile', requireRiderModule, requireRiderAuth, async(req,res)=>{
+  try{
+    const {name,email,phone,payout_phone,vehicle_type,number_plate,profile_image_url,current_password,new_password}=req.body||{};
+    const cleanName=String(name||'').trim();
+    if(!cleanName)return res.status(400).json({error:'Full name is required'});
+    const normalizedPhone=normalizeKenyanPhone(phone);
+    const normalizedPayout=normalizeKenyanPhone(payout_phone||phone);
+    const cleanEmail=String(email||'').trim().toLowerCase()||null;
+    const cleanVehicle=String(vehicle_type||'Motorbike').trim()||'Motorbike';
+    const cleanPlate=String(number_plate||'').trim()||null;
+    const cleanImage=String(profile_image_url||'').trim()||null;
+    if(cleanImage && cleanImage.length>1200)return res.status(400).json({error:'Profile picture URL is too long'});
+    if(new_password){
+      if(String(new_password).length<8)return res.status(400).json({error:'New password must be at least 8 characters'});
+      const auth=await pool.query('select password_hash from rider_auth where rider_id=$1',[req.rider.id]);
+      if(!auth.rowCount || !verifyPassword(String(current_password||''),auth.rows[0].password_hash))return res.status(401).json({error:'Current password is incorrect'});
+    }
+    const updated=await pool.query(\`update riders set name=$1,email=$2,phone=$3,payout_phone=$4,vehicle_type=$5,number_plate=$6,profile_image_url=$7 where id=$8 and business_id=$9 returning id,name,phone,email,vehicle_type,number_plate,payout_phone,profile_image_url,rider_status,active\`,[cleanName,cleanEmail,normalizedPhone,normalizedPayout,cleanVehicle,cleanPlate,cleanImage,req.rider.id,req.rider.business_id]);
+    if(!updated.rowCount)return res.status(404).json({error:'Rider account not found'});
+    if(new_password){const passwordHash=hashPassword(String(new_password)).hash;await pool.query('update rider_auth set password_hash=$1 where rider_id=$2',[passwordHash,req.rider.id]);}
+    broadcastRider({businessId:req.rider.business_id,riderId:req.rider.id,action:'PROFILE_UPDATED',data:{rider:updated.rows[0]}});
+    res.json({ok:true,rider:updated.rows[0]});
+  }catch(error){
+    if(error.code==='23505')return res.status(409).json({error:'That phone number is already registered to another rider'});
+    res.status(400).json({error:error.message||'Unable to update rider profile'});
+  }
+});
+
 app.post('/api/riders/:id/presence', requireRiderModule, requireRiderAuth, async(req,res)=>{
   const online=Boolean(req.body.online);
   await pool.query(`insert into rider_presence(rider_id,online) values($1,$2) on conflict(rider_id) do update set online=$2,updated_at=now()`,[req.rider.id,online]);
@@ -1077,7 +1105,7 @@ async function updateDeliveryStatus(req,res,nextStatus){
     res.json({ok:true,status:nextStatus});
   }catch(error){res.status(500).json({error:error.message||'Unable to update delivery'});}
 }
-for(const [route,status] of [['arrived','ARRIVED_AT_RESTAURANT'],['picked-up','PICKED_UP'],['on-the-way','ON_THE_WAY']]){
+for(const [route,status] of [['arrived','ARRIVED_AT_RESTAURANT'],['picked-up','PICKED_UP'],['on-the-way','ON_THE_WAY'],['delivered','DELIVERED']]){
   app.post(`/api/riders/:id/deliveries/:tripId/${route}`,requireRiderModule,requireRiderAuth,(req,res)=>updateDeliveryStatus(req,res,status));
 }
 app.get('/api/riders/:id/earnings',requireRiderModule,requireRiderAuth,async(req,res)=>{

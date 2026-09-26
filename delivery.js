@@ -37,12 +37,27 @@ function stopRiderMapTracking(){
   riderMapWatchId=null;
 }
 function destroyRiderMap(){
+  setRiderMapFullscreen(false);
   stopRiderMapTracking();
   if(riderMap){try{riderMap.remove();}catch{}}
   riderMap=null;riderMapTripId=null;riderMapRouteLayer=null;riderMapRiderMarker=null;riderMapReady=false;
 }
 function riderMapStatus(text,live=false){
   const el=document.getElementById('rider-live-map-status');if(el){el.textContent=text;el.classList.toggle('is-live',live);}
+}
+function setRiderMapFullscreen(fullscreen){
+  const panel=document.getElementById('rider-live-route-panel');if(!panel)return;
+  panel.classList.toggle('is-fullscreen',fullscreen);
+  document.body.classList.toggle('rider-map-fullscreen-open',fullscreen);
+  const button=document.getElementById('rider-map-fullscreen-button');
+  if(button)button.textContent=fullscreen?'EXIT FULL SCREEN':'FULL SCREEN';
+  if(riderMap)setTimeout(()=>riderMap.invalidateSize(),60);
+}
+function toggleRiderMapFullscreen(){setRiderMapFullscreen(!document.getElementById('rider-live-route-panel')?.classList.contains('is-fullscreen'));}
+
+function bindRiderMapFullscreen(){
+  const map=document.getElementById('rider-live-map');
+  if(map&&!map.dataset.fullscreenBound){map.dataset.fullscreenBound='1';map.addEventListener('dblclick',()=>toggleRiderMapFullscreen());}
 }
 function startRiderLocationTracking(L){
   if(!navigator.geolocation){riderMapStatus('LOCATION UNAVAILABLE');return;}
@@ -80,6 +95,7 @@ async function renderLiveRouteMap(job){
       map.fitBounds(riderMapRouteLayer.getBounds(),{padding:[30,30]});
     }
     riderMapReady=true;
+    bindRiderMapFullscreen();
     riderMapStatus('LIVE ROUTE · '+(Number(data.distanceMeters||0)/1000).toFixed(1)+' KM · '+Math.round(Number(data.durationSeconds||0)/60)+' MIN',false);
     startRiderLocationTracking(L);
   }catch(err){
@@ -123,6 +139,26 @@ function showAcceptedRoutePopup(job){
   setTimeout(()=>{if(document.getElementById('rider-assignment-popup'))closeAssignmentPopup();},12000);
 }
 
+function renderRiderProfileModal(){
+  const r=rider||{};closeRiderProfile();
+  const avatar=r.profile_image_url?'<img id="rider-profile-preview" src="'+esc(r.profile_image_url)+'" alt="Rider profile photo">':'<span id="rider-profile-preview" class="rider-profile-preview-fallback">'+esc((r.name||'?')[0])+'</span>';
+  const html='<div id="rider-profile-overlay" class="rider-profile-overlay" onclick="if(event.target===this)closeRiderProfile()"><section class="rider-profile-modal" role="dialog" aria-modal="true" aria-label="Rider profile"><button type="button" class="rider-profile-close" onclick="closeRiderProfile()" aria-label="Close profile">×</button><div class="rider-profile-hero"><div class="rider-profile-avatar">'+avatar+'</div><div><span class="eyebrow">RIDER PROFILE</span><h2>'+esc(r.name||'Rider')+'</h2><p class="muted">Manage your personal, contact and payment details.</p></div></div><div id="rider-profile-message" class="rider-profile-message hidden"></div><form id="rider-profile-form" class="rider-profile-form" onsubmit="saveRiderProfile(event)"><div class="rider-profile-section"><span class="eyebrow">PERSONAL DETAILS</span><label>Full name<input name="name" value="'+esc(r.name)+'" required></label><label>Profile picture URL<input name="profile_image_url" type="url" value="'+esc(r.profile_image_url||'')+'" placeholder="https://..."><small>Leave blank to use your initials.</small></label></div><div class="rider-profile-section"><span class="eyebrow">CONTACT DETAILS</span><label>Phone & SMS number<input name="phone" type="tel" inputmode="tel" value="'+esc(r.phone||'')+'" required><small>This is your rider login and registered notification/SMS number.</small></label><label>Email address<input name="email" type="email" value="'+esc(r.email||'')+'" placeholder="you@example.com"></label></div><div class="rider-profile-section"><span class="eyebrow">PAYMENT DETAILS</span><label>Payout / M-Pesa number<input name="payout_phone" type="tel" inputmode="tel" value="'+esc(r.payout_phone||r.phone||'')+'" required><small>Used for rider delivery earnings when automatic payouts are enabled.</small></label></div><div class="rider-profile-section"><span class="eyebrow">VEHICLE DETAILS</span><label>Vehicle type<input name="vehicle_type" value="'+esc(r.vehicle_type||'Motorbike')+'"></label><label>Number plate<input name="number_plate" value="'+esc(r.number_plate||'')+'" placeholder="KXX 123X"></label></div><div class="rider-profile-section"><span class="eyebrow">SECURITY</span><label>Current password<input name="current_password" type="password" autocomplete="current-password" placeholder="Required only to change password"></label><label>New password<input name="new_password" type="password" autocomplete="new-password" placeholder="Leave blank to keep current password"></label></div><div class="rider-profile-actions"><button type="button" class="rider-profile-secondary" onclick="closeRiderProfile()">CANCEL</button><button type="submit" class="rider-profile-save" id="rider-profile-save">SAVE CHANGES</button></div></form><button type="button" class="rider-profile-logout" onclick="logoutRider()">SIGN OUT OF RIDER ACCOUNT</button></section></div>';
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+function closeRiderProfile(){document.getElementById('rider-profile-overlay')?.remove();}
+function showRiderProfileMessage(message,error=false){const el=document.getElementById('rider-profile-message');if(!el)return;el.textContent=message;el.className='rider-profile-message '+(error?'error':'success');}
+async function saveRiderProfile(e){
+  e.preventDefault();const form=e.currentTarget,button=document.getElementById('rider-profile-save'),values=Object.fromEntries(new FormData(form).entries());
+  button.disabled=true;button.textContent='SAVING…';
+  try{const data=await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/profile',{method:'PUT',body:JSON.stringify(values)});rider=data.rider;updateRiderProfileButton();showRiderProfileMessage('Profile updated successfully.');await loadRiderDashboard();setTimeout(closeRiderProfile,700);}
+  catch(err){showRiderProfileMessage(err.message||'Could not update profile.',true);}
+  finally{button.disabled=false;button.textContent='SAVE CHANGES';}
+}
+function updateRiderProfileButton(){
+  const button=document.getElementById('rider-profile-nav');if(!button||!rider)return;
+  const image=rider.profile_image_url?'<img src="'+esc(rider.profile_image_url)+'" alt="">':'<span class="rider-nav-avatar-fallback">'+esc((rider.name||'?')[0])+'</span>';
+  button.innerHTML=image+'<span>PROFILE</span>';button.classList.remove('hidden');
+}
 async function loginRider(e){
   e?.preventDefault();
   const phone=document.getElementById('rider-phone').value.trim(),password=document.getElementById('rider-password').value;
@@ -185,7 +221,7 @@ function updateOnlineButton(online){
 async function dashboardData(){return riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/dashboard');}
 async function acceptTrip(tripId){try{await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/deliveries/'+encodeURIComponent(tripId)+'/accept',{method:'POST',body:JSON.stringify({})});await loadRiderDashboard();}catch(err){alert(err.message||'Could not accept delivery.');}}
 async function setTripStatus(tripId,status){
-  const route={ARRIVED_AT_RESTAURANT:'arrived',PICKED_UP:'picked-up',ON_THE_WAY:'on-the-way'}[status];
+  const route={ARRIVED_AT_RESTAURANT:'arrived',PICKED_UP:'picked-up',ON_THE_WAY:'on-the-way',DELIVERED:'delivered'}[status];
   if(!route)return;
   try{await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/deliveries/'+encodeURIComponent(tripId)+'/'+route,{method:'POST',body:JSON.stringify({})});await loadRiderDashboard();}catch(err){alert(err.message||'Could not update delivery.');}
 }
@@ -220,7 +256,7 @@ function activeCard(a){
   else if(current==='PICKED_UP') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'ON_THE_WAY\')">ON THE WAY</button>';
   else if(current==='ON_THE_WAY') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'DELIVERED\')">MARK DELIVERED</button>';
   const mapAction=current!=='ASSIGNED'?'<a class="rider-map-action" href="'+mapsUrl(a.pickup_address,a.delivery_address)+'" target="_blank" rel="noopener">VIEW ROUTE IN GOOGLE MAPS</a>':'';
-  return '<article class="rider-card"><h3>'+esc(a.order_number)+' · '+esc(a.customer_name)+'</h3><div class="rider-meta"><span>'+esc(a.pickup_address||'Restaurant')+'</span><span>→</span><span>'+esc(a.delivery_address||a.delivery_note||'Customer location')+'</span></div>'+statusSteps(current)+'<p><strong>Customer:</strong> '+esc(a.customer_name)+' · '+esc(a.phone||'')+'</p><p><strong>Order:</strong> '+esc(a.order_number)+' · <strong>Delivery fee:</strong> '+riderMoney(a.delivery_fee)+'</p><p><strong>Distance:</strong> '+(Number(a.route_distance_meters||0)/1000).toFixed(1)+' km</p><div class="rider-actions">'+action+'</div></article>'+(current!=='ASSIGNED'?'<section id="rider-live-route-panel" class="rider-live-route-panel"><div class="rider-live-route-head"><div><span class="eyebrow">LIVE ROUTE</span><h3>Delivery navigation</h3><p>Follow the same two-wheeler route used by the delivery system.</p></div><span id="rider-live-map-status" class="rider-live-map-status">LOADING…</span></div><div id="rider-live-map" class="rider-live-map"></div><div class="rider-live-route-note">Your blue location marker follows your device GPS. The route remains on this screen, so you do not need to enter the destination manually in Google Maps.</div></section>':'');
+  return '<article class="rider-card"><h3>'+esc(a.order_number)+' · '+esc(a.customer_name)+'</h3><div class="rider-meta"><span>'+esc(a.pickup_address||'Restaurant')+'</span><span>→</span><span>'+esc(a.delivery_address||a.delivery_note||'Customer location')+'</span></div>'+statusSteps(current)+'<p><strong>Customer:</strong> '+esc(a.customer_name)+' · '+esc(a.phone||'')+'</p><p><strong>Order:</strong> '+esc(a.order_number)+' · <strong>Delivery fee:</strong> '+riderMoney(a.delivery_fee)+'</p><p><strong>Distance:</strong> '+(Number(a.route_distance_meters||0)/1000).toFixed(1)+' km</p><div class="rider-actions">'+action+'</div></article>'+(current!=='ASSIGNED'?'<section id="rider-live-route-panel" class="rider-live-route-panel"><div class="rider-live-route-head"><div><span class="eyebrow">LIVE ROUTE</span><h3>Delivery navigation</h3><p>Follow the same two-wheeler route used by the delivery system.</p></div><div class="rider-live-route-tools"><span id="rider-live-map-status" class="rider-live-map-status">LOADING…</span><button type="button" id="rider-map-fullscreen-button" class="rider-map-fullscreen-button" onclick="toggleRiderMapFullscreen()">FULL SCREEN</button></div></div><div class="rider-live-map-wrap"><div id="rider-live-map" class="rider-live-map"></div><button type="button" class="rider-map-floating-fullscreen" onclick="toggleRiderMapFullscreen()" aria-label="Open map full screen">⛶</button></div><div class="rider-live-route-note">Tap <strong>FULL SCREEN</strong> or ⛶ for an easier map view. Scroll to move around the map and pinch or use + / − to zoom.</div></section>':'');
 }
 function renderAvailable(list){
   if(!list.length)return '<p class="muted">No new assignments.</p>';
@@ -333,7 +369,7 @@ async function loadRiderDashboard(){
 async function bootRider(){
   try{
     rider=await riderApi('/api/riders/me');
-    document.getElementById('rider-login').classList.add('hidden');document.getElementById('rider-app').classList.remove('hidden');
+    document.getElementById('rider-login').classList.add('hidden');document.getElementById('rider-app').classList.remove('hidden');updateRiderProfileButton();
     document.getElementById('rider-header').innerHTML='<div class="rider-identity-card"><div class="rider-presence-indicator"><span id="rider-presence-dot" class="presence-dot is-offline"></span><span id="rider-presence-text">OFFLINE</span></div><div class="rider-profile-line">'+(rider.profile_image_url?'<img src="'+esc(rider.profile_image_url)+'" alt="">':'<span class="rider-profile-fallback">'+esc((rider.name||'?')[0])+'</span>')+'<div><p class="eyebrow">RIDER OPERATIONS</p><h1>'+esc(rider.name)+'</h1><p class="muted">'+esc(rider.vehicle_type)+' · '+esc(rider.number_plate||'Plate not set')+' · '+esc(rider.payout_phone||rider.phone)+'</p></div></div><div class="rider-availability"><span class="availability-label">DELIVERY AVAILABILITY</span><button id="online-button" class="availability-button is-offline" type="button" aria-pressed="false" onclick="toggleOnline()" title="Press to change your delivery availability">GO ONLINE</button><p>Go online when you are ready to receive delivery assignments.</p></div></div>';
     await loadRiderDashboard();startRiderRealtime();
     clearInterval(pollTimer);

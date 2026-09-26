@@ -109,12 +109,11 @@ async function renderLiveRouteMap(job){
     riderMapTripId=null;
   }
 }
-function demoRoutePoints(){
-  return [
-    [-1.286389,36.817223],[-1.284900,36.819100],[-1.283300,36.821400],[-1.281600,36.824000],
-    [-1.279800,36.826900],[-1.277500,36.829500],[-1.275200,36.832000],[-1.273100,36.834400],
-    [-1.270900,36.836700],[-1.268700,36.838900],[-1.266500,36.841000]
-  ];
+function interpolateGeoPoint(a,b,t){return [a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];}
+function bearingBetween(a,b){
+  const y=Math.sin((b[1]-a[1])*Math.PI/180)*Math.cos(b[0]*Math.PI/180);
+  const x=Math.cos(a[0]*Math.PI/180)*Math.sin(b[0]*Math.PI/180)-Math.sin(a[0]*Math.PI/180)*Math.cos(b[0]*Math.PI/180)*Math.cos((b[1]-a[1])*Math.PI/180);
+  return (Math.atan2(y,x)*180/Math.PI+360)%360;
 }
 let riderDemoTimer=null;
 async function startDemoTracking(){
@@ -122,38 +121,47 @@ async function startDemoTracking(){
   if(!panel)return;
   const L=await loadLeaflet();
   if(riderDemoTimer)clearInterval(riderDemoTimer);
-  destroyRiderMap();
-  panel.classList.add('hidden');
+  destroyRiderMap();panel.classList.add('hidden');
   const overlay=document.createElement('div');overlay.id='rider-demo-map-overlay';overlay.className='rider-demo-map-overlay';
-  overlay.innerHTML='<div class="rider-demo-map-head"><div><span class="eyebrow">DEMO TRACKING</span><strong>Live rider simulation</strong><small>Example Nairobi route · no real order is affected</small></div><button type="button" onclick="stopDemoTracking()" aria-label="Close demo">×</button></div><div id="rider-demo-map" class="rider-demo-map"></div><button type="button" class="rider-demo-exit" onclick="stopDemoTracking()">EXIT DEMO</button>';
+  overlay.innerHTML='<div class="rider-demo-map-head"><div><span class="eyebrow">DEMO TRACKING</span><strong>Road-following rider simulation</strong><small>Real routed example · no real order is affected</small></div><button type="button" onclick="stopDemoTracking()" aria-label="Close demo">×</button></div><div class="rider-demo-status" id="rider-demo-status">BUILDING ROAD ROUTE…</div><div id="rider-demo-map" class="rider-demo-map"></div><button type="button" class="rider-demo-exit" onclick="stopDemoTracking()">EXIT DEMO</button>';
   document.body.appendChild(overlay);
-  const points=demoRoutePoints();
-  const map=L.map('rider-demo-map',{zoomControl:true,attributionControl:true});
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
-  L.polyline(points,{weight:6,opacity:.9}).addTo(map);
-  L.marker(points[0],{title:'Demo restaurant'}).addTo(map).bindPopup('<strong>Demo restaurant</strong><br>Nairobi pickup');
-  L.marker(points[points.length-1],{title:'Demo customer'}).addTo(map).bindPopup('<strong>Demo customer</strong><br>Nairobi delivery');
-  const riderMarker=L.marker(points[0],{title:'Simulated rider'}).addTo(map);
-  map.fitBounds(L.latLngBounds(points),{padding:[30,30]});
-  let i=0;
-  riderMapStatus('DEMO');
-  riderDemoTimer=setInterval(()=>{
-    i=(i+1)%points.length;
-    riderMarker.setLatLng(points[i]);
-    if(i===points.length-1)map.setView(points[i],15,{animate:true});
-  },900);
+  try{
+    const data=await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/demo-route');
+    const points=decodeGooglePolyline(data.encodedPolyline||'');
+    if(points.length<2)throw new Error('The demo route did not contain enough road points.');
+    const map=L.map('rider-demo-map',{zoomControl:true,attributionControl:true});
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
+    const route=L.polyline(points,{weight:6,opacity:.85}).addTo(map);
+    const traveled=L.polyline([points[0]],{weight:7,opacity:.95}).addTo(map);
+    L.marker(points[0],{title:'Demo pickup'}).addTo(map).bindPopup('<strong>Demo pickup</strong><br>'+esc(data.pickup));
+    L.marker(points[points.length-1],{title:'Demo delivery'}).addTo(map).bindPopup('<strong>Demo delivery</strong><br>'+esc(data.destination));
+    const riderIcon=L.divIcon({className:'rider-demo-rider-icon',html:'<span>➤</span>',iconSize:[34,34],iconAnchor:[17,17]});
+    const marker=L.marker(points[0],{title:'Simulated rider',icon:riderIcon}).addTo(map);
+    map.fitBounds(route.getBounds(),{padding:[30,30]});
+    let segment=0,progress=0,last=points[0],ticks=0,total=points.length-1;
+    riderDemoTimer=setInterval(()=>{
+      const a=points[segment],b=points[Math.min(segment+1,total)];
+      progress+=.06;
+      if(progress>=1){progress=0;segment++;if(segment>=total){segment=0;traveled.setLatLngs([points[0]]);last=points[0];}}
+      const p=interpolateGeoPoint(points[segment],points[Math.min(segment+1,total)],progress);
+      marker.setLatLng(p);traveled.addLatLng(p);
+      const el=marker.getElement()?.querySelector('span');if(el)el.style.transform='rotate('+bearingBetween(last,p)+'deg)';
+      last=p;ticks++;
+      const status=document.getElementById('rider-demo-status');
+      if(status)status.textContent='LIVE SIMULATION · FOLLOWING ROAD ROUTE · '+Math.round(((segment+progress)/total)*100)+'%';
+      map.panTo(p,{animate:true,duration:.15,noMoveStart:true});
+    },180);
+  }catch(err){
+    const status=document.getElementById('rider-demo-status');if(status)status.textContent=err.message||'Unable to build demo road route';
+  }
 }
 function stopDemoTracking(){
   if(riderDemoTimer)clearInterval(riderDemoTimer);
-  riderDemoTimer=null;
-  document.getElementById('rider-demo-map-overlay')?.remove();
-  const panel=document.getElementById('rider-live-route-panel');
-  const active=window.__riderDashboardData?.active;
-  if(panel&&active&&active.delivery_status!=='ASSIGNED'){
-    panel.classList.remove('hidden');
-    renderLiveRouteMap(active);
-  }
+  riderDemoTimer=null;document.getElementById('rider-demo-map-overlay')?.remove();
+  const panel=document.getElementById('rider-live-route-panel'),active=window.__riderDashboardData?.active;
+  if(panel&&active&&active.delivery_status!=='ASSIGNED'){panel.classList.remove('hidden');renderLiveRouteMap(active);}
 }
+
 function mapsUrl(origin,destination){return 'https://www.google.com/maps/dir/?api=1&origin='+encodeURIComponent(origin||'')+'&destination='+encodeURIComponent(destination||'')+'&travelmode=two-wheeler&dir_action=navigate';}
 function unlockRiderAudio(){try{const C=window.AudioContext||window.webkitAudioContext;if(!C)return;if(!riderAudioContext)riderAudioContext=new C();if(riderAudioContext.state==='suspended')riderAudioContext.resume().catch(()=>{});}catch{}}
 function playAssignmentSound(){try{unlockRiderAudio();if(!riderAudioContext)return;const now=riderAudioContext.currentTime;[0,0.16].forEach((offset,i)=>{const osc=riderAudioContext.createOscillator(),gain=riderAudioContext.createGain();osc.type='sine';osc.frequency.value=i?880:660;gain.gain.setValueAtTime(0.0001,now+offset);gain.gain.exponentialRampToValueAtTime(0.16,now+offset+0.02);gain.gain.exponentialRampToValueAtTime(0.0001,now+offset+0.13);osc.connect(gain);gain.connect(riderAudioContext.destination);osc.start(now+offset);osc.stop(now+offset+0.15);});}catch{}}

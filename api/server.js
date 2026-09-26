@@ -69,6 +69,14 @@ async function requireRiderModule(req, res, next) {
   if (RIDER_MODULE_ENABLED) return next();
   let businessId = String(req.query.businessId || req.body?.businessId || '');
   try {
+    // Manager actions are always scoped from the authenticated manager session.
+    // This prevents approval/suspend/reactivate from depending on a fragile
+    // frontend businessId value.
+    const manager = await getManagerFromSession(req);
+    if (manager?.business_id) {
+      businessId = String(manager.business_id);
+    }
+
     // Resolve the tenant from the rider/order when the request does not carry businessId.
     if (!businessId && req.params?.id) {
       const rider = await pool.query('select business_id from riders where id=$1', [req.params.id]);

@@ -1,12 +1,92 @@
 const RIDER_TOKEN_KEY='rider_session_token';
 const RIDER_BUSINESS_ID=BUSINESS_ID;
-let rider=null,lastTripId=null,pollTimer=null,riderEvents=null,riderLiveSyncBusy=false,availabilityActionVersion=0,riderDashboardInitialized=false,riderAudioContext=null;
+let rider=null,lastTripId=null,pollTimer=null,riderEvents=null,riderLiveSyncBusy=false,availabilityActionVersion=0,riderDashboardInitialized=false,riderAudioContext=null,riderMap=null,riderMapTripId=null,riderMapWatchId=null,riderMapRouteLayer=null,riderMapRiderMarker=null,riderMapReady=false;
 
 function riderHeaders(){const token=localStorage.getItem(RIDER_TOKEN_KEY);return token?{'Authorization':'Bearer '+token}:{};}
 async function riderApi(path,options={}){return apiRequest(path,{...options,headers:{...riderHeaders(),...(options.headers||{})}});}
 function clearRiderSession(){localStorage.removeItem(RIDER_TOKEN_KEY);rider=null;}
 function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
 function riderMoney(v){return 'KSh '+Number(v||0).toLocaleString();}
+async function loadLeaflet(){
+  if(window.L)return window.L;
+  if(!document.getElementById('leaflet-css')){
+    const css=document.createElement('link');css.id='leaflet-css';css.rel='stylesheet';css.href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';document.head.appendChild(css);
+  }
+  await new Promise((resolve,reject)=>{
+    const existing=document.getElementById('leaflet-js');
+    if(existing){existing.addEventListener('load',resolve,{once:true});if(window.L)resolve();return;}
+    const script=document.createElement('script');script.id='leaflet-js';script.src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';script.onload=resolve;script.onerror=reject;document.head.appendChild(script);
+  });
+  return window.L;
+}
+function decodeGooglePolyline(encoded){
+  const points=[];let index=0,lat=0,lng=0;
+  while(index<encoded.length){
+    let shift=0,result=0,b;
+    do{b=encoded.charCodeAt(index++)-63;result|=(b&31)<<shift;shift+=5;}while(b>=32);
+    lat+=result&1?~(result>>1):result>>1;
+    shift=0;result=0;
+    do{b=encoded.charCodeAt(index++)-63;result|=(b&31)<<shift;shift+=5;}while(b>=32);
+    lng+=result&1?~(result>>1):result>>1;
+    points.push([lat/1e5,lng/1e5]);
+  }
+  return points;
+}
+function stopRiderMapTracking(){
+  if(riderMapWatchId!==null&&navigator.geolocation){navigator.geolocation.clearWatch(riderMapWatchId);}
+  riderMapWatchId=null;
+}
+function destroyRiderMap(){
+  stopRiderMapTracking();
+  if(riderMap){try{riderMap.remove();}catch{}}
+  riderMap=null;riderMapTripId=null;riderMapRouteLayer=null;riderMapRiderMarker=null;riderMapReady=false;
+}
+function riderMapStatus(text,live=false){
+  const el=document.getElementById('rider-live-map-status');if(el){el.textContent=text;el.classList.toggle('is-live',live);}
+}
+function startRiderLocationTracking(L){
+  if(!navigator.geolocation){riderMapStatus('LOCATION UNAVAILABLE');return;}
+  stopRiderMapTracking();
+  riderMapStatus('REQUESTING LIVE LOCATION…');
+  riderMapWatchId=navigator.geolocation.watchPosition(pos=>{
+    if(!riderMap)return;
+    const point=[pos.coords.latitude,pos.coords.longitude];
+    if(!riderMapRiderMarker){
+      riderMapRiderMarker=L.marker(point,{title:'Your live location'}).addTo(riderMap);
+      riderMapRiderMarker.bindPopup('<strong>You are here</strong><br>Live rider location');
+    }else riderMapRiderMarker.setLatLng(point);
+    riderMapStatus('LIVE LOCATION',true);
+  },()=>riderMapStatus('ROUTE READY · LOCATION PERMISSION NEEDED'),{enableHighAccuracy:true,maximumAge:3000,timeout:10000});
+}
+async function renderLiveRouteMap(job){
+  const panel=document.getElementById('rider-live-route-panel');
+  if(!panel||!job||!job.trip_id||job.delivery_status==='ASSIGNED'){destroyRiderMap();return;}
+  if(riderMapTripId===job.trip_id&&riderMapReady)return;
+  destroyRiderMap();
+  panel.classList.remove('hidden');
+  riderMapTripId=job.trip_id;
+  riderMapStatus('BUILDING LIVE ROUTE…');
+  try{
+    const L=await loadLeaflet();
+    const data=await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/deliveries/'+encodeURIComponent(job.trip_id)+'/route');
+    const points=decodeGooglePolyline(data.encodedPolyline||'');
+    const map=L.map('rider-live-map',{zoomControl:true,attributionControl:true});
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
+    riderMap=map;
+    riderMapRouteLayer=points.length?L.polyline(points,{weight:6,opacity:.9}).addTo(map):null;
+    if(points.length){
+      L.marker(points[0],{title:'Restaurant pickup'}).addTo(map).bindPopup('<strong>Pickup</strong><br>'+esc(data.pickup?.address||'Restaurant'));
+      L.marker(points[points.length-1],{title:'Customer destination'}).addTo(map).bindPopup('<strong>Delivery</strong><br>'+esc(data.destination?.address||'Customer'));
+      map.fitBounds(riderMapRouteLayer.getBounds(),{padding:[30,30]});
+    }
+    riderMapReady=true;
+    riderMapStatus('LIVE ROUTE · '+(Number(data.distanceMeters||0)/1000).toFixed(1)+' KM · '+Math.round(Number(data.durationSeconds||0)/60)+' MIN',false);
+    startRiderLocationTracking(L);
+  }catch(err){
+    riderMapStatus(err.message||'Unable to load live route');
+    riderMapTripId=null;
+  }
+}
 function mapsUrl(origin,destination){return 'https://www.google.com/maps/dir/?api=1&origin='+encodeURIComponent(origin||'')+'&destination='+encodeURIComponent(destination||'')+'&travelmode=two-wheeler&dir_action=navigate';}
 function unlockRiderAudio(){try{const C=window.AudioContext||window.webkitAudioContext;if(!C)return;if(!riderAudioContext)riderAudioContext=new C();if(riderAudioContext.state==='suspended')riderAudioContext.resume().catch(()=>{});}catch{}}
 function playAssignmentSound(){try{unlockRiderAudio();if(!riderAudioContext)return;const now=riderAudioContext.currentTime;[0,0.16].forEach((offset,i)=>{const osc=riderAudioContext.createOscillator(),gain=riderAudioContext.createGain();osc.type='sine';osc.frequency.value=i?880:660;gain.gain.setValueAtTime(0.0001,now+offset);gain.gain.exponentialRampToValueAtTime(0.16,now+offset+0.02);gain.gain.exponentialRampToValueAtTime(0.0001,now+offset+0.13);osc.connect(gain);gain.connect(riderAudioContext.destination);osc.start(now+offset);osc.stop(now+offset+0.15);});}catch{}}
@@ -140,7 +220,7 @@ function activeCard(a){
   else if(current==='PICKED_UP') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'ON_THE_WAY\')">ON THE WAY</button>';
   else if(current==='ON_THE_WAY') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'DELIVERED\')">MARK DELIVERED</button>';
   const mapAction=current!=='ASSIGNED'?'<a class="rider-map-action" href="'+mapsUrl(a.pickup_address,a.delivery_address)+'" target="_blank" rel="noopener">VIEW ROUTE IN GOOGLE MAPS</a>':'';
-  return '<article class="rider-card"><h3>'+esc(a.order_number)+' · '+esc(a.customer_name)+'</h3><div class="rider-meta"><span>'+esc(a.pickup_address||'Restaurant')+'</span><span>→</span><span>'+esc(a.delivery_address||a.delivery_note||'Customer location')+'</span></div>'+statusSteps(current)+'<p><strong>Customer:</strong> '+esc(a.customer_name)+' · '+esc(a.phone||'')+'</p><p><strong>Order:</strong> '+esc(a.order_number)+' · <strong>Delivery fee:</strong> '+riderMoney(a.delivery_fee)+'</p><p><strong>Distance:</strong> '+(Number(a.route_distance_meters||0)/1000).toFixed(1)+' km</p><div class="rider-actions">'+action+mapAction+'</div></article>';
+  return '<article class="rider-card"><h3>'+esc(a.order_number)+' · '+esc(a.customer_name)+'</h3><div class="rider-meta"><span>'+esc(a.pickup_address||'Restaurant')+'</span><span>→</span><span>'+esc(a.delivery_address||a.delivery_note||'Customer location')+'</span></div>'+statusSteps(current)+'<p><strong>Customer:</strong> '+esc(a.customer_name)+' · '+esc(a.phone||'')+'</p><p><strong>Order:</strong> '+esc(a.order_number)+' · <strong>Delivery fee:</strong> '+riderMoney(a.delivery_fee)+'</p><p><strong>Distance:</strong> '+(Number(a.route_distance_meters||0)/1000).toFixed(1)+' km</p><div class="rider-actions">'+action+'</div></article>'+(current!==\'ASSIGNED\'?'<section id="rider-live-route-panel" class="rider-live-route-panel"><div class="rider-live-route-head"><div><span class="eyebrow">LIVE ROUTE</span><h3>Delivery navigation</h3><p>Follow the same two-wheeler route used by the delivery system.</p></div><span id="rider-live-map-status" class="rider-live-map-status">LOADING…</span></div><div id="rider-live-map" class="rider-live-map"></div><div class="rider-live-route-note">Your blue location marker follows your device GPS. The route remains on this screen, so you do not need to enter the destination manually in Google Maps.</div></section>':'');
 }
 function renderAvailable(list){
   if(!list.length)return '<p class="muted">No new assignments.</p>';
@@ -243,6 +323,7 @@ async function loadRiderDashboard(){
   renderRiderStats(data);
   document.getElementById('available-deliveries').innerHTML=renderAvailable(data.available);
   document.getElementById('active-delivery').innerHTML=activeCard(data.active);
+  if(data.active&&data.active.delivery_status!=='ASSIGNED') renderLiveRouteMap(data.active); else destroyRiderMap();
   if(!riderDashboardInitialized){riderDashboardInitialized=true;}
 }
 async function bootRider(){

@@ -108,14 +108,101 @@ function renderAvailable(list){
   if(!list.length)return '<p class="muted">No new assignments.</p>';
   return list.map(a=>'<article class="rider-card"><h3>'+esc(a.order_number)+' · '+esc(a.restaurant_name)+'</h3><div class="rider-meta"><span>Customer: '+esc(a.customer_name)+'</span><span>'+esc(a.delivery_address||'Location pending')+'</span></div><p>'+Number(a.route_distance_meters||0)/1000+' km · '+riderMoney(a.delivery_fee)+' delivery fee</p></article>').join('');
 }
+function localDateKey(value){
+  const d=new Date(value);
+  if(Number.isNaN(d.getTime()))return '';
+  const y=d.getFullYear(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');
+  return y+'-'+m+'-'+day;
+}
+function formatDateTime(value){
+  const d=new Date(value);
+  if(Number.isNaN(d.getTime()))return 'Time unavailable';
+  return d.toLocaleString([], {weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+}
+function weekDates(){
+  const now=new Date();
+  const monday=new Date(now);
+  const day=monday.getDay();
+  monday.setHours(0,0,0,0);
+  monday.setDate(monday.getDate()+(day===0?-6:1-day));
+  return Array.from({length:7},(_,i)=>{const d=new Date(monday);d.setDate(monday.getDate()+i);return d;});
+}
+function dayEarnings(list,key){
+  return list.filter(x=>localDateKey(x.completed_at)===key).reduce((sum,x)=>sum+Number(x.earning||0),0);
+}
+function renderRiderStats(data){
+  const completed=data.completed||[];
+  const todayKey=localDateKey(new Date());
+  const todayList=completed.filter(x=>localDateKey(x.completed_at)===todayKey);
+  const weekDays=weekDates();
+  const weekList=weekDays.map(d=>{
+    const key=localDateKey(d);
+    return {date:d,key,earnings:dayEarnings(completed,key),deliveries:completed.filter(x=>localDateKey(x.completed_at)===key)};
+  });
+  document.getElementById('rider-stats').innerHTML=
+    '<button type="button" class="rider-stat-card" onclick="openRiderDay(\''+todayKey+'\')">'+
+      '<span class="muted">Today</span><strong>'+riderMoney(data.todayEarnings)+'</strong><small>'+todayList.length+' deliveries · View details</small>'+
+    '</button>'+
+    '<button type="button" class="rider-stat-card" onclick="openRiderWeek()">'+
+      '<span class="muted">This week</span><strong>'+riderMoney(data.weekEarnings)+'</strong><small>'+weekList.reduce((n,x)=>n+x.deliveries.length,0)+' deliveries · View week</small>'+
+    '</button>'+
+    '<button type="button" class="rider-stat-card" onclick="openRiderCompleted()">'+
+      '<span class="muted">Completed</span><strong>'+completed.length+'</strong><small>Recent trips · View all</small>'+
+    '</button>';
+}
 function renderHistory(list){
   if(!list.length)return '<p class="muted">No completed deliveries yet.</p>';
-  return list.slice(0,20).map(a=>'<div class="summary-row"><span><strong>'+esc(a.order_number)+'</strong><small style="display:block">'+esc(a.delivery_address||'')+' · '+(Number(a.distance_meters||0)/1000).toFixed(1)+' km</small></span><strong>'+riderMoney(a.earning)+'</strong></div>').join('');
+  return list.slice(0,20).map(a=>'<button type="button" class="rider-history-row" onclick="openDeliveryDetail(\''+esc(a.order_number)+'\')"><span><strong>'+esc(a.order_number)+'</strong><small>'+formatDateTime(a.completed_at)+' · '+(Number(a.distance_meters||0)/1000).toFixed(1)+' km</small></span><strong>'+riderMoney(a.earning)+'</strong></button>').join('');
+}
+function closeRiderOverlay(){document.getElementById('rider-detail-overlay')?.remove();}
+function openDeliveryDetail(orderNumber){
+  const data=(window.__riderDashboardData?.completed||[]).find(x=>String(x.order_number)===String(orderNumber));
+  if(!data)return;
+  closeRiderOverlay();
+  const duration=data.trip_minutes!=null?Math.max(0,Math.round(Number(data.trip_minutes)))+' min':'Not recorded';
+  const distance=(Number(data.distance_meters||0)/1000).toFixed(1)+' km';
+  const html='<div id="rider-detail-overlay" class="rider-detail-overlay" onclick="if(event.target===this)closeRiderOverlay()">'+
+    '<section class="rider-detail-modal" role="dialog" aria-modal="true" aria-label="Delivery details">'+
+      '<button class="rider-detail-close" type="button" onclick="closeRiderOverlay()" aria-label="Close">×</button>'+
+      '<p class="eyebrow">DELIVERY COMPLETED</p><h2>'+esc(data.order_number)+'</h2>'+
+      '<p class="muted">Non-sensitive delivery summary</p>'+
+      '<div class="rider-detail-grid">'+
+        '<div><span>Earned</span><strong>'+riderMoney(data.earning)+'</strong></div>'+
+        '<div><span>Distance</span><strong>'+distance+'</strong></div>'+
+        '<div><span>Delivery time</span><strong>'+duration+'</strong></div>'+
+        '<div><span>Completed</span><strong>'+formatDateTime(data.completed_at)+'</strong></div>'+
+      '</div>'+
+      '<div class="rider-detail-lines"><div><span>Assigned</span><strong>'+formatDateTime(data.assigned_at)+'</strong></div><div><span>Delivery fee</span><strong>'+riderMoney(data.delivery_fee)+'</strong></div><div><span>Status</span><strong>COMPLETED</strong></div></div>'+
+      '<p class="muted rider-detail-safe">Customer contact information and other sensitive customer details are not shown here.</p>'+
+    '</section></div>';
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+function openRiderDay(key){
+  const list=(window.__riderDashboardData?.completed||[]).filter(x=>localDateKey(x.completed_at)===key);
+  const d=new Date(key+'T12:00:00');
+  const title=d.toLocaleDateString([], {weekday:'long',day:'numeric',month:'long'});
+  openRiderListOverlay(title,'Daily earnings',list);
+}
+function openRiderWeek(){
+  const list=window.__riderDashboardData?.completed||[];
+  const days=weekDates().map(d=>({date:d,key:localDateKey(d),deliveries:list.filter(x=>localDateKey(x.completed_at)===localDateKey(d)),earnings:dayEarnings(list,localDateKey(d))}));
+  const rows=days.map(x=>'<button type="button" class="rider-week-row" onclick="openRiderDay(\''+x.key+'\')"><span><strong>'+x.date.toLocaleDateString([], {weekday:'long'})+'</strong><small>'+x.date.toLocaleDateString([], {day:'numeric',month:'short'})+' · '+x.deliveries.length+' deliveries</small></span><strong>'+riderMoney(x.earnings)+'</strong></button>').join('');
+  closeRiderOverlay();
+  document.body.insertAdjacentHTML('beforeend','<div id="rider-detail-overlay" class="rider-detail-overlay" onclick="if(event.target===this)closeRiderOverlay()"><section class="rider-detail-modal rider-week-modal"><button class="rider-detail-close" type="button" onclick="closeRiderOverlay()">×</button><p class="eyebrow">THIS WEEK</p><h2>Weekly earnings</h2><p class="muted">Monday to Sunday. Select a day to view its deliveries.</p><div class="rider-week-list">'+rows+'</div></section></div>');
+}
+function openRiderCompleted(){
+  openRiderListOverlay('Completed deliveries','Recent delivery history',window.__riderDashboardData?.completed||[]);
+}
+function openRiderListOverlay(title,subtitle,list){
+  closeRiderOverlay();
+  const rows=list.length?list.map(a=>'<button type="button" class="rider-history-row" onclick="openDeliveryDetail(\''+esc(a.order_number)+'\')"><span><strong>'+esc(a.order_number)+'</strong><small>'+formatDateTime(a.completed_at)+' · '+(Number(a.distance_meters||0)/1000).toFixed(1)+' km</small></span><strong>'+riderMoney(a.earning)+'</strong></button>').join(''):'<div class="rider-empty-day">No completed deliveries for this day.</div>';
+  document.body.insertAdjacentHTML('beforeend','<div id="rider-detail-overlay" class="rider-detail-overlay" onclick="if(event.target===this)closeRiderOverlay()"><section class="rider-detail-modal"><button class="rider-detail-close" type="button" onclick="closeRiderOverlay()">×</button><p class="eyebrow">DELIVERY HISTORY</p><h2>'+esc(title)+'</h2><p class="muted">'+esc(subtitle)+'</p><div class="rider-history-list">'+rows+'</div></section></div>');
 }
 async function loadRiderDashboard(){
   const data=await dashboardData();maybeNotify(data.active);
   updateOnlineButton(Boolean(data.online));
-  document.getElementById('rider-stats').innerHTML='<div class="rider-stat"><span class="muted">Today</span><strong>'+riderMoney(data.todayEarnings)+'</strong><small>Earnings</small></div><div class="rider-stat"><span class="muted">This week</span><strong>'+riderMoney(data.weekEarnings)+'</strong><small>Earnings</small></div><div class="rider-stat"><span class="muted">Completed</span><strong>'+data.completed.length+'</strong><small>Recent trips</small></div>';
+  window.__riderDashboardData=data;
+  renderRiderStats(data);
   document.getElementById('available-deliveries').innerHTML=renderAvailable(data.available);
   document.getElementById('active-delivery').innerHTML=activeCard(data.active);
   document.getElementById('earnings-summary').innerHTML='<div class="summary-row"><span>Today</span><strong>'+riderMoney(data.todayEarnings)+'</strong></div><div class="summary-row"><span>7 days</span><strong>'+riderMoney(data.weekEarnings)+'</strong></div><p class="muted">Delivery fee is recorded as rider earnings and released on successful delivery.</p>';

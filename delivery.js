@@ -91,6 +91,7 @@ function renderHistory(list){
 }
 async function loadRiderDashboard(){
   const data=await dashboardData();maybeNotify(data.active);
+  updateOnlineButton(Boolean(data.online));
   document.getElementById('rider-stats').innerHTML='<div class="rider-stat"><span class="muted">Today</span><strong>'+riderMoney(data.todayEarnings)+'</strong><small>Earnings</small></div><div class="rider-stat"><span class="muted">This week</span><strong>'+riderMoney(data.weekEarnings)+'</strong><small>Earnings</small></div><div class="rider-stat"><span class="muted">Completed</span><strong>'+data.completed.length+'</strong><small>Recent trips</small></div>';
   document.getElementById('available-deliveries').innerHTML=renderAvailable(data.available);
   document.getElementById('active-delivery').innerHTML=activeCard(data.active);

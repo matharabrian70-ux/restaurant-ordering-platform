@@ -46,6 +46,7 @@ async function requireRiderModule(req, res, next) {
   if (RIDER_MODULE_ENABLED) return next();
   let businessId = String(req.query.businessId || req.body?.businessId || '');
   try {
+    // Resolve the tenant from the rider/order when the request does not carry businessId.
     if (!businessId && req.params?.id) {
       const rider = await pool.query('select business_id from riders where id=$1', [req.params.id]);
       businessId = rider.rows[0]?.business_id ? String(rider.rows[0].business_id) : '';
@@ -55,21 +56,57 @@ async function requireRiderModule(req, res, next) {
       businessId = order.rows[0]?.business_id ? String(order.rows[0].business_id) : '';
     }
     if (!businessId && req.params?.token) {
-      const invite = await pool.query('select business_id from rider_invites where token_hash=$1 limit 1', [hashSessionToken(String(req.params.token))]);
+      const invite = await pool.query(
+        'select business_id from rider_invites where token_hash=$1 limit 1',
+        [hashSessionToken(String(req.params.token))]
+      );
       businessId = invite.rows[0]?.business_id ? String(invite.rows[0].business_id) : '';
     }
-    if (!businessId) return res.status(404).json({ error: 'Rider module is not enabled for this business' });
-    const feature = await pool.query('select rider_module_enabled from business_features where business_id=$1', [businessId]);
-    const packageFeature = await pool.query(`
-      select coalesce((p.features->>'riderModule')::boolean, false) as rider_module_enabled
-      from businesses b
-      left join platform_packages p on p.key=b.plan_key
-      where b.id=$1
-      limit 1
-    `, [businessId]);
-    const businessFeatureEnabled = Boolean(feature.rowCount && feature.rows[0].rider_module_enabled);
-    const packageFeatureEnabled = Boolean(packageFeature.rowCount && packageFeature.rows[0].rider_module_enabled);
-    if (!businessFeatureEnabled && !packageFeatureEnabled) return res.status(404).json({ error: 'Rider module is not enabled for this business' });
+    if (!businessId) {
+      return res.status(404).json({ error: 'Rider module is not enabled for this business' });
+    }
+
+    // The package plan is the authoritative platform-level entitlement.
+    // Keep the explicit business feature flag as an override, but do not make
+    // rider approval depend on the platform_packages row existing in production.
+    const business = await pool.query(
+      'select plan_key from businesses where id=$1 limit 1',
+      [businessId]
+    );
+    if (!business.rowCount) {
+      return res.status(404).json({ error: 'Business not found' });
+    }
+
+    const planKey = String(business.rows[0].plan_key || '').toUpperCase();
+    const planAllowsRiders = planKey === 'GROWTH' || planKey === 'PRO';
+
+    let businessFeatureEnabled = false;
+    try {
+      const feature = await pool.query(
+        'select rider_module_enabled from business_features where business_id=$1',
+        [businessId]
+      );
+      businessFeatureEnabled = Boolean(feature.rowCount && feature.rows[0].rider_module_enabled);
+    } catch {}
+
+    let packageFeatureEnabled = false;
+    try {
+      const packageFeature = await pool.query(`
+        select coalesce((p.features->>'riderModule')::boolean, false) as rider_module_enabled
+        from businesses b
+        left join platform_packages p on p.key=b.plan_key
+        where b.id=$1
+        limit 1
+      `, [businessId]);
+      packageFeatureEnabled = Boolean(
+        packageFeature.rowCount && packageFeature.rows[0].rider_module_enabled
+      );
+    } catch {}
+
+    if (!businessFeatureEnabled && !packageFeatureEnabled && !planAllowsRiders) {
+      return res.status(404).json({ error: 'Rider module is not enabled for this business' });
+    }
+
     next();
   } catch {
     res.status(500).json({ error: 'Unable to check rider module status' });

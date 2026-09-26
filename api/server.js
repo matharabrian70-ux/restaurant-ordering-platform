@@ -1000,7 +1000,7 @@ app.put('/api/riders/:id/profile', requireRiderModule, requireRiderAuth, async(r
       const auth=await pool.query('select password_hash from rider_auth where rider_id=$1',[req.rider.id]);
       if(!auth.rowCount || !verifyPassword(String(current_password||''),auth.rows[0].password_hash))return res.status(401).json({error:'Current password is incorrect'});
     }
-    const updated=await pool.query(\`update riders set name=$1,email=$2,phone=$3,payout_phone=$4,vehicle_type=$5,number_plate=$6,profile_image_url=$7 where id=$8 and business_id=$9 returning id,name,phone,email,vehicle_type,number_plate,payout_phone,profile_image_url,rider_status,active\`,[cleanName,cleanEmail,normalizedPhone,normalizedPayout,cleanVehicle,cleanPlate,cleanImage,req.rider.id,req.rider.business_id]);
+    const updated=await pool.query(`update riders set name=$1,email=$2,phone=$3,payout_phone=$4,vehicle_type=$5,number_plate=$6,profile_image_url=$7 where id=$8 and business_id=$9 returning id,name,phone,email,vehicle_type,number_plate,payout_phone,profile_image_url,rider_status,active`,[cleanName,cleanEmail,normalizedPhone,normalizedPayout,cleanVehicle,cleanPlate,cleanImage,req.rider.id,req.rider.business_id]);
     if(!updated.rowCount)return res.status(404).json({error:'Rider account not found'});
     if(new_password){const passwordHash=hashPassword(String(new_password)).hash;await pool.query('update rider_auth set password_hash=$1 where rider_id=$2',[passwordHash,req.rider.id]);}
     broadcastRider({businessId:req.rider.business_id,riderId:req.rider.id,action:'PROFILE_UPDATED',data:{rider:updated.rows[0]}});

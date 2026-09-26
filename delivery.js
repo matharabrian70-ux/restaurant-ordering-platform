@@ -118,7 +118,7 @@ function demoRoutePoints(){
   ];
 }
 let riderDemoTimer=null;
-async function startDemoTracking(){
+function startDemoTracking(){
   const panel=document.getElementById('rider-live-route-panel');
   if(!panel)return;
   const L=await loadLeaflet();
@@ -210,9 +210,20 @@ function handleProfilePicture(event){
   const file=event.target.files?.[0];
   if(!file)return;
   if(!file.type.startsWith('image/')){showRiderProfileMessage('Please choose an image file.',true);return;}
-  if(file.size>5*1024*1024){showRiderProfileMessage('Please choose an image smaller than 5 MB.',true);return;}
+  if(file.size>8*1024*1024){showRiderProfileMessage('Please choose an image smaller than 8 MB.',true);return;}
   const reader=new FileReader();
-  reader.onload=()=>setProfilePreview(String(reader.result||''));
+  reader.onload=()=>{
+    const img=new Image();
+    img.onload=()=>{
+      const max=900,scale=Math.min(1,max/Math.max(img.width,img.height));
+      const canvas=document.createElement('canvas');
+      canvas.width=Math.max(1,Math.round(img.width*scale));canvas.height=Math.max(1,Math.round(img.height*scale));
+      const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0,canvas.width,canvas.height);
+      setProfilePreview(canvas.toDataURL('image/jpeg',.82));
+    };
+    img.onerror=()=>showRiderProfileMessage('That image could not be read. Please choose another photo.',true);
+    img.src=String(reader.result||'');
+  };
   reader.readAsDataURL(file);
 }
 function setProfilePreview(src){

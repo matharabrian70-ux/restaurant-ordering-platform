@@ -42,3 +42,75 @@
 .rider-auth-card .btn:hover,.rider-signup-card .btn:hover{background:#125628!important;border-color:#125628!important;transform:translateY(-1px)}
 .rider-auth-card .btn:disabled,.rider-signup-card .btn:disabled{opacity:.62;transform:none;cursor:wait}
 .rider-auth-card .btn:focus-visible,.rider-signup-card .btn:focus-visible{outline:3px solid #176b3240;outline-offset:2px}
+
+
+/* Rider dashboard identity and availability header */
+.rider-identity-card{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:32px;
+  background:#fff;
+  border:1px solid var(--line);
+  border-radius:18px;
+  padding:28px 30px;
+  box-shadow:0 16px 45px #1720190d;
+}
+.rider-identity-card .rider-profile-line{min-width:0}
+.rider-identity-card .rider-profile-line img,
+.rider-identity-card .rider-profile-fallback{width:64px;height:64px}
+.rider-identity-card .rider-profile-line h1{margin:3px 0 6px;font-size:30px;letter-spacing:-.045em}
+.rider-identity-card .rider-profile-line .muted{margin:0;font-size:13px}
+.rider-availability{
+  min-width:260px;
+  text-align:right;
+  display:flex;
+  flex-direction:column;
+  align-items:flex-end;
+  gap:7px;
+}
+.availability-label{
+  font-size:10px;
+  font-weight:950;
+  letter-spacing:.13em;
+  color:var(--muted);
+}
+.availability-button{
+  width:min(280px,100%);
+  min-height:66px;
+  border:0;
+  border-radius:12px;
+  padding:15px 28px;
+  color:#fff;
+  font:inherit;
+  font-size:18px;
+  font-weight:950;
+  letter-spacing:.08em;
+  cursor:pointer;
+  transition:transform .16s ease,box-shadow .16s ease,background .16s ease,opacity .16s ease;
+}
+.availability-button.is-offline{
+  background:#16803a;
+  box-shadow:0 12px 28px #16803a2b;
+}
+.availability-button.is-offline:hover{
+  background:#116b30;
+  transform:translateY(-1px);
+  box-shadow:0 15px 32px #16803a38;
+}
+.availability-button.is-online{
+  background:#707570;
+  box-shadow:none;
+}
+.availability-button:disabled{opacity:.65;cursor:wait;transform:none}
+.rider-availability p{margin:0;color:var(--muted);font-size:11px;line-height:1.45;max-width:280px}
+@media(max-width:900px){
+  .rider-identity-card{align-items:stretch;flex-direction:column}
+  .rider-availability{min-width:0;width:100%;align-items:stretch;text-align:left}
+  .availability-button{width:100%}
+  .rider-availability p{max-width:none}
+}
+@media(max-width:600px){
+  .rider-identity-card{padding:22px 18px;border-radius:14px}
+  .rider-identity-card .rider-profile-line h1{font-size:25px}
+}

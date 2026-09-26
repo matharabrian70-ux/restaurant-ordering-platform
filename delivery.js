@@ -1,6 +1,6 @@
 const RIDER_TOKEN_KEY='rider_session_token';
 const RIDER_BUSINESS_ID=BUSINESS_ID;
-let rider=null,lastTripId=null,pollTimer=null,riderEvents=null,riderLiveSyncBusy=false,availabilityActionVersion=0,riderDashboardInitialized=false,riderAudioContext=null,riderMap=null,riderMapTripId=null,riderMapWatchId=null,riderMapRouteLayer=null,riderMapRiderMarker=null,riderMapReady=false;
+let rider=null,lastTripId=null,pollTimer=null,riderEvents=null,riderLiveSyncBusy=false,availabilityActionVersion=0,riderDashboardInitialized=false,riderAudioContext=null,riderMap=null,riderMapTripId=null,riderMapWatchId=null,riderMapRouteLayer=null,riderMapRiderMarker=null,riderMapReady=false,lastActiveRenderKey='';
 
 function riderHeaders(){const token=localStorage.getItem(RIDER_TOKEN_KEY);return token?{'Authorization':'Bearer '+token}:{};}
 async function riderApi(path,options={}){return apiRequest(path,{...options,headers:{...riderHeaders(),...(options.headers||{})}});}
@@ -322,8 +322,12 @@ async function loadRiderDashboard(){
   window.__riderDashboardData=data;
   renderRiderStats(data);
   document.getElementById('available-deliveries').innerHTML=renderAvailable(data.available);
-  document.getElementById('active-delivery').innerHTML=activeCard(data.active);
-  if(data.active&&data.active.delivery_status!=='ASSIGNED') renderLiveRouteMap(data.active); else destroyRiderMap();
+  const activeKey=data.active?(String(data.active.trip_id)+'|'+String(data.active.delivery_status||'ASSIGNED')):'none';
+  if(activeKey!==lastActiveRenderKey){
+    lastActiveRenderKey=activeKey;
+    document.getElementById('active-delivery').innerHTML=activeCard(data.active);
+    if(data.active&&data.active.delivery_status!=='ASSIGNED') renderLiveRouteMap(data.active); else destroyRiderMap();
+  }
   if(!riderDashboardInitialized){riderDashboardInitialized=true;}
 }
 async function bootRider(){

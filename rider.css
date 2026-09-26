@@ -197,3 +197,27 @@
 .rider-system-notice-card .eyebrow{display:block;margin-bottom:9px}
 .rider-system-notice-card strong{display:block;font-size:18px;line-height:1.45}
 .rider-system-notice-card small{display:block;margin-top:12px;color:var(--muted);font-size:11px}
+
+.rider-signup-card #signup-btn{
+  width:100%;
+  min-height:52px;
+  margin-top:18px;
+  border:0;
+  border-radius:999px;
+  background:#176b32;
+  color:#fff;
+  font:inherit;
+  font-size:12px;
+  font-weight:950;
+  letter-spacing:.1em;
+  cursor:pointer;
+  box-shadow:0 12px 26px #176b3228;
+  transition:transform .16s ease,background .16s ease,box-shadow .16s ease,opacity .16s ease;
+}
+.rider-signup-card #signup-btn:hover{
+  background:#125628;
+  transform:translateY(-1px);
+  box-shadow:0 15px 30px #176b3233;
+}
+.rider-signup-card #signup-btn:active{transform:translateY(0)}
+.rider-signup-card #signup-btn:disabled{opacity:.68;cursor:wait;transform:none}

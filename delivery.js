@@ -144,7 +144,17 @@ function startDemoTracking(){
     if(i===points.length-1)map.setView(points[i],15,{animate:true});
   },900);
 }
-function stopDemoTracking(){if(riderDemoTimer)clearInterval(riderDemoTimer);riderDemoTimer=null;document.getElementById('rider-demo-map-overlay')?.remove();}
+function stopDemoTracking(){
+  if(riderDemoTimer)clearInterval(riderDemoTimer);
+  riderDemoTimer=null;
+  document.getElementById('rider-demo-map-overlay')?.remove();
+  const panel=document.getElementById('rider-live-route-panel');
+  const active=window.__riderDashboardData?.active;
+  if(panel&&active&&active.delivery_status!=='ASSIGNED'){
+    panel.classList.remove('hidden');
+    renderLiveRouteMap(active);
+  }
+}
 function mapsUrl(origin,destination){return 'https://www.google.com/maps/dir/?api=1&origin='+encodeURIComponent(origin||'')+'&destination='+encodeURIComponent(destination||'')+'&travelmode=two-wheeler&dir_action=navigate';}
 function unlockRiderAudio(){try{const C=window.AudioContext||window.webkitAudioContext;if(!C)return;if(!riderAudioContext)riderAudioContext=new C();if(riderAudioContext.state==='suspended')riderAudioContext.resume().catch(()=>{});}catch{}}
 function playAssignmentSound(){try{unlockRiderAudio();if(!riderAudioContext)return;const now=riderAudioContext.currentTime;[0,0.16].forEach((offset,i)=>{const osc=riderAudioContext.createOscillator(),gain=riderAudioContext.createGain();osc.type='sine';osc.frequency.value=i?880:660;gain.gain.setValueAtTime(0.0001,now+offset);gain.gain.exponentialRampToValueAtTime(0.16,now+offset+0.02);gain.gain.exponentialRampToValueAtTime(0.0001,now+offset+0.13);osc.connect(gain);gain.connect(riderAudioContext.destination);osc.start(now+offset);osc.stop(now+offset+0.15);});}catch{}}

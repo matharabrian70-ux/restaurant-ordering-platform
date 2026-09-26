@@ -980,6 +980,18 @@ app.get('/api/riders/:id/deliveries/:tripId/route', requireRiderModule, requireR
     });
   }catch(error){res.status(400).json({error:error.message||'Unable to build delivery route'});}
 });
+app.get('/api/riders/:id/demo-route', requireRiderModule, requireRiderAuth, async(req,res)=>{
+  try{
+    const route=await computeGoogleRoute('Kenyatta International Convention Centre, Nairobi, Kenya','Westgate Shopping Mall, Nairobi, Kenya');
+    res.json({
+      encodedPolyline:route.encodedPolyline,
+      distanceMeters:route.distanceMeters,
+      durationSeconds:route.durationSeconds,
+      pickup:'Kenyatta International Convention Centre, Nairobi',
+      destination:'Westgate Shopping Mall, Nairobi'
+    });
+  }catch(error){res.status(400).json({error:error.message||'Unable to build demo road route'});}
+});
 app.get('/api/riders/me', requireRiderModule, requireRiderAuth, async(req,res)=>{
   const r=req.rider; res.json({id:r.id,name:r.name,phone:r.phone,email:r.email,vehicle_type:r.vehicle_type,number_plate:r.number_plate,payout_phone:r.payout_phone,profile_image_url:r.profile_image_url,rider_status:r.rider_status,active:r.active});
 });

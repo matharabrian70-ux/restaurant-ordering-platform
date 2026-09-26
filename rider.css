@@ -536,3 +536,7 @@ body.rider-map-fullscreen-open{overflow:hidden}
   .rider-actions{display:grid;grid-template-columns:1fr}
   .rider-actions button,.rider-actions .rider-map-action{width:100%;box-sizing:border-box}
 }
+
+.rider-demo-status{position:absolute;left:16px;right:16px;top:86px;z-index:600;display:inline-flex;justify-content:center;padding:9px 12px;border-radius:999px;background:#fff;border:1px solid #dce4dc;box-shadow:0 6px 18px rgba(23,32,25,.12);font-size:9px;font-weight:950;letter-spacing:.07em;color:#176b32;pointer-events:none}
+.rider-demo-rider-icon{background:transparent!important;border:0!important}
+.rider-demo-rider-icon span{display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:#176b32;color:#fff;border:3px solid #fff;box-shadow:0 5px 14px rgba(23,32,25,.25);font-size:19px;line-height:1;transform-origin:center}

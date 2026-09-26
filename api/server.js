@@ -77,6 +77,26 @@ async function requireRiderModule(req, res, next) {
       businessId = String(manager.business_id);
     }
 
+    // Authenticated rider requests often do not carry a businessId.
+    // Resolve the tenant directly from the rider session before checking the module.
+    if (!businessId) {
+      const raw = String(req.headers.authorization || '');
+      const token = raw.startsWith('Bearer ') ? raw.slice(7).trim() : '';
+      if (token) {
+        const riderSession = await pool.query(
+          `select r.business_id
+             from rider_sessions s
+             join riders r on r.id=s.rider_id
+            where s.token_hash=$1
+              and s.expires_at>now()
+              and r.active=true
+            limit 1`,
+          [hashSessionToken(token)]
+        );
+        businessId = riderSession.rows[0]?.business_id ? String(riderSession.rows[0].business_id) : '';
+      }
+    }
+
     // Resolve the tenant from the rider/order when the request does not carry businessId.
     if (!businessId && req.params?.id) {
       const rider = await pool.query('select business_id from riders where id=$1', [req.params.id]);

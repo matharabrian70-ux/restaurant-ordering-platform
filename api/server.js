@@ -592,7 +592,7 @@ async function completeOrderByConfirmation(orderId, actor, { requireDisconnected
            select id,rider_id from rider_trips where order_id=o.id order by assigned_at desc limit 1
          ) rt on true
         where o.id=$1
-        for update`,
+        for update of o`,
       [orderId]
     );
     if (!orderResult.rowCount) {
@@ -827,6 +827,7 @@ app.post('/api/riders/login', requireRiderModule, async(req,res)=>{
     await pool.query('insert into rider_sessions(id,rider_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval \'30 days\')',[result.rows[0].id,hashSessionToken(token)]);
     await pool.query('update rider_auth set last_login_at=now() where rider_id=$1',[result.rows[0].id]);
     await pool.query(`insert into rider_presence(rider_id,online) values($1,true) on conflict(rider_id) do update set online=true,updated_at=now()`,[result.rows[0].id]);
+    await pool.query(`insert into business_connections(business_id,rider_connected,updated_at) values($1,true,now()) on conflict(business_id) do update set rider_connected=true,updated_at=now()`,[businessId]);
     const r=result.rows[0];
     res.json({token,rider:{id:r.id,name:r.name,phone:r.phone,email:r.email,vehicle_type:r.vehicle_type,number_plate:r.number_plate,payout_phone:r.payout_phone,profile_image_url:r.profile_image_url,rider_status:r.rider_status}});
   }catch(error){res.status(500).json({error:error.message||'Unable to sign in'});}
@@ -952,6 +953,8 @@ app.post('/api/riders/:id/suspend', requireRiderModule, requireManager, async(re
 app.post('/api/riders/logout', requireRiderModule, requireRiderAuth, async(req,res)=>{
   await pool.query('delete from rider_sessions where id=$1',[req.rider.session_id]);
   await pool.query(`insert into rider_presence(rider_id,online) values($1,false) on conflict(rider_id) do update set online=false,updated_at=now()`,[req.rider.id]);
+  const remainingSessions=await pool.query(`select count(*)::int as count from rider_sessions rs join riders r on r.id=rs.rider_id where r.business_id=$1 and rs.expires_at>now()`,[req.rider.business_id]);
+  if(Number(remainingSessions.rows[0]?.count||0)===0) await pool.query(`update business_connections set rider_connected=false,updated_at=now() where business_id=$1`,[req.rider.business_id]);
   res.json({ok:true});
 });
 app.get('/api/riders/me', requireRiderModule, requireRiderAuth, async(req,res)=>{
@@ -990,6 +993,7 @@ app.post('/api/riders/:id/deliveries/:tripId/accept', requireRiderModule, requir
   if(!['ACCEPTED','OUT_FOR_DELIVERY'].includes(String(trip.order_status||''))) return res.status(409).json({error:'This order is no longer awaiting rider acceptance'});
   const latest=await pool.query(`select status from delivery_events where trip_id=$1 order by created_at desc limit 1`,[trip.id]);
   const current=latest.rows[0]?.status||'ASSIGNED';
+  if(current==='ACCEPTED') return res.json({ok:true,status:'ACCEPTED',alreadyAccepted:true});
   if(current!=='ASSIGNED') return res.status(409).json({error:'Delivery has already been accepted or moved forward'});
   const updated=await pool.query(`update orders set status=case when status='ACCEPTED' then 'OUT_FOR_DELIVERY' else status end,out_for_delivery_at=coalesce(out_for_delivery_at,now()),delivery_status='ACCEPTED' where id=$1 and status in ('ACCEPTED','OUT_FOR_DELIVERY') returning *`,[trip.order_id]);
   if(!updated.rowCount) return res.status(409).json({error:'This order is no longer awaiting rider acceptance'});

@@ -863,14 +863,22 @@ app.post('/api/riders/:id/presence', requireRiderModule, requireRiderAuth, async
 });
 app.get('/api/riders/:id/dashboard', requireRiderModule, requireRiderAuth, async(req,res)=>{
   const id=req.rider.id;
-  const [available,active,completed,earnings,weekly]=await Promise.all([
+  const [available,active,completed,earnings,weekly,presence]=await Promise.all([
     pool.query(`select o.id,o.order_number,o.delivery_fee,o.status,o.delivery_address,o.pickup_address,o.route_distance_meters,o.route_duration_seconds,o.created_at,b.name as restaurant_name,c.name as customer_name from orders o join businesses b on b.id=o.business_id join customers c on c.id=o.customer_id where o.business_id=$1 and o.status='ACCEPTED' and not exists(select 1 from rider_trips t where t.order_id=o.id and t.completed_at is null) order by o.created_at asc`,[req.rider.business_id]),
     pool.query(`select o.*,c.name as customer_name,c.phone,c.email,t.id as trip_id,t.assigned_at,r.name as rider_name from rider_trips t join orders o on o.id=t.order_id join customers c on c.id=o.customer_id join riders r on r.id=t.rider_id where t.rider_id=$1 and t.completed_at is null order by t.assigned_at desc limit 1`,[id]),
     pool.query(`select o.order_number,o.delivery_address,o.delivery_fee,o.delivered_at,t.completed_at,t.assigned_at,extract(epoch from (t.completed_at-t.assigned_at))/60 as trip_minutes,coalesce(o.route_distance_meters,0) as distance_meters,coalesce(e.amount,0) as earning,e.status as earning_status from rider_trips t join orders o on o.id=t.order_id left join rider_earnings e on e.trip_id=t.id where t.rider_id=$1 and t.completed_at is not null order by t.completed_at desc limit 100`,[id]),
     pool.query(`select coalesce(sum(amount),0) as total from rider_earnings where rider_id=$1 and created_at::date=current_date and status in ('RELEASED','PAID')`,[id]),
-    pool.query(`select coalesce(sum(amount),0) as total from rider_earnings where rider_id=$1 and created_at>=current_date-interval '6 days' and status in ('HELD','RELEASED','PAID')`,[id])
+    pool.query(`select coalesce(sum(amount),0) as total from rider_earnings where rider_id=$1 and created_at>=current_date-interval '6 days' and status in ('HELD','RELEASED','PAID')`,[id]),
+    pool.query('select online from rider_presence where rider_id=$1',[id])
   ]);
-  res.json({available:available.rows,active:active.rows[0]||null,completed:completed.rows,todayEarnings:Number(earnings.rows[0].total),weekEarnings:Number(weekly.rows[0].total)});
+  res.json({
+    available:available.rows,
+    active:active.rows[0]||null,
+    completed:completed.rows,
+    todayEarnings:Number(earnings.rows[0].total),
+    weekEarnings:Number(weekly.rows[0].total),
+    online:Boolean(presence.rows[0]?.online)
+  });
 });
 app.post('/api/riders/:id/deliveries/:tripId/accept', requireRiderModule, requireRiderAuth, async(req,res)=>{
   const result=await pool.query(`select t.*,o.status,o.business_id from rider_trips t join orders o on o.id=t.order_id where t.id=$1 and t.rider_id=$2`,[req.params.tripId,req.rider.id]);

@@ -26,18 +26,41 @@ app.get('/api/features', async (req, res) => {
   if (RIDER_MODULE_ENABLED) return res.json({ riderModule: true });
   if (!businessId) return res.json({ riderModule: false });
   try {
-    const result = await pool.query(`
-      select
-        coalesce((bf.rider_module_enabled), false) as business_feature_enabled,
-        coalesce((p.features->>'riderModule')::boolean, false) as package_feature_enabled
-      from businesses b
-      left join business_features bf on bf.business_id=b.id
-      left join platform_packages p on p.key=b.plan_key
-      where b.id=$1
-      limit 1
-    `, [businessId]);
-    const row=result.rows[0];
-    return res.json({ riderModule: Boolean(row?.business_feature_enabled || row?.package_feature_enabled) });
+    const business = await pool.query(
+      'select plan_key from businesses where id=$1 limit 1',
+      [businessId]
+    );
+    if (!business.rowCount) return res.json({ riderModule: false });
+
+    const planKey = String(business.rows[0].plan_key || '').toUpperCase();
+    const planAllowsRiders = planKey === 'GROWTH' || planKey === 'PRO';
+
+    let businessFeatureEnabled = false;
+    try {
+      const feature = await pool.query(
+        'select rider_module_enabled from business_features where business_id=$1',
+        [businessId]
+      );
+      businessFeatureEnabled = Boolean(feature.rowCount && feature.rows[0].rider_module_enabled);
+    } catch {}
+
+    let packageFeatureEnabled = false;
+    try {
+      const packageFeature = await pool.query(`
+        select coalesce((p.features->>'riderModule')::boolean, false) as rider_module_enabled
+        from businesses b
+        left join platform_packages p on p.key=b.plan_key
+        where b.id=$1
+        limit 1
+      `, [businessId]);
+      packageFeatureEnabled = Boolean(
+        packageFeature.rowCount && packageFeature.rows[0].rider_module_enabled
+      );
+    } catch {}
+
+    return res.json({
+      riderModule: Boolean(planAllowsRiders || businessFeatureEnabled || packageFeatureEnabled)
+    });
   } catch {
     return res.json({ riderModule: false });
   }

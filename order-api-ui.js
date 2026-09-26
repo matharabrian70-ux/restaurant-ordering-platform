@@ -31,7 +31,6 @@ function connectCustomerEvents(orderId){
   const source=new EventSource(`${ORDER_API_BASE}/api/events?businessId=${encodeURIComponent(window.CUSTOMER_ORDER_BUSINESS_ID||'11111111-1111-4111-8111-111111111111')}&orderId=${encodeURIComponent(orderId)}`);
   window.customerOrderEvents=source;
   source.addEventListener('order.updated',()=>renderRemoteOrder(false));
-  source.addEventListener('delivery.updated',()=>renderRemoteOrder(false));
   source.addEventListener('refund.updated',()=>renderRemoteOrder(false));
   source.onerror=()=>{source.close();setTimeout(()=>connectCustomerEvents(orderId),3000);};
 }

@@ -45,12 +45,18 @@ async function setOnline(online){
 }
 function updateOnlineButton(online){
   const button=document.getElementById('online-button');
-  if(!button)return;
-  button.classList.toggle('is-online',online);
-  button.classList.toggle('is-offline',!online);
-  button.textContent=online?'ONLINE':'GO ONLINE';
-  button.setAttribute('aria-pressed',String(online));
-  button.title=online?'You are available for delivery assignments':'Press to tell the restaurant you are available for deliveries';
+  const dot=document.getElementById('rider-presence-dot');
+  const text=document.getElementById('rider-presence-text');
+  if(button){
+    button.classList.toggle('is-online',online);
+    button.classList.toggle('is-offline',!online);
+    button.textContent=online?'GO OFFLINE':'GO ONLINE';
+    button.setAttribute('aria-pressed',String(online));
+    button.title=online?'Press to stop receiving delivery assignments':'Press to tell the restaurant you are available for deliveries';
+  }
+  if(dot)dot.classList.toggle('is-online',online);
+  if(dot)dot.classList.toggle('is-offline',!online);
+  if(text)text.textContent=online?'ONLINE':'OFFLINE';
 }
 async function dashboardData(){return riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/dashboard');}
 async function acceptTrip(tripId){try{await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/deliveries/'+encodeURIComponent(tripId)+'/accept',{method:'POST',body:JSON.stringify({})});await loadRiderDashboard();}catch(err){alert(err.message||'Could not accept delivery.');}}
@@ -102,7 +108,7 @@ async function bootRider(){
   try{
     rider=await riderApi('/api/riders/me');
     document.getElementById('rider-login').classList.add('hidden');document.getElementById('rider-app').classList.remove('hidden');
-    document.getElementById('rider-header').innerHTML='<div class="rider-identity-card"><div class="rider-profile-line">'+(rider.profile_image_url?'<img src="'+esc(rider.profile_image_url)+'" alt="">':'<span class="rider-profile-fallback">'+esc((rider.name||'?')[0])+'</span>')+'<div><p class="eyebrow">RIDER OPERATIONS</p><h1>'+esc(rider.name)+'</h1><p class="muted">'+esc(rider.vehicle_type)+' · '+esc(rider.number_plate||'Plate not set')+' · '+esc(rider.payout_phone||rider.phone)+'</p></div></div><div class="rider-availability"><span class="availability-label">DELIVERY AVAILABILITY</span><button id="online-button" class="availability-button is-offline" type="button" aria-pressed="false" onclick="setOnline(!this.classList.contains('is-online'))" title="Press to change your delivery availability">GO ONLINE</button><p>Go online when you are ready to receive delivery assignments.</p></div></div>';
+    document.getElementById('rider-header').innerHTML='<div class="rider-identity-card"><div class="rider-presence-indicator"><span id="rider-presence-dot" class="presence-dot is-offline"></span><span id="rider-presence-text">OFFLINE</span></div><div class="rider-profile-line">'+(rider.profile_image_url?'<img src="'+esc(rider.profile_image_url)+'" alt="">':'<span class="rider-profile-fallback">'+esc((rider.name||'?')[0])+'</span>')+'<div><p class="eyebrow">RIDER OPERATIONS</p><h1>'+esc(rider.name)+'</h1><p class="muted">'+esc(rider.vehicle_type)+' · '+esc(rider.number_plate||'Plate not set')+' · '+esc(rider.payout_phone||rider.phone)+'</p></div></div><div class="rider-availability"><span class="availability-label">DELIVERY AVAILABILITY</span><button id="online-button" class="availability-button is-offline" type="button" aria-pressed="false" onclick="setOnline(!this.classList.contains('is-online'))" title="Press to change your delivery availability">GO ONLINE</button><p>Go online when you are ready to receive delivery assignments.</p></div></div>';
     await loadRiderDashboard();startRiderRealtime();
     clearInterval(pollTimer);pollTimer=setInterval(()=>loadRiderDashboard().catch(()=>{}),30000);
   }catch(err){clearRiderSession();document.getElementById('rider-login-error').classList.remove('hidden');document.getElementById('rider-login-error').textContent=err.message||'Rider session expired.';}

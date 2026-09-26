@@ -147,3 +147,31 @@
 @media(max-width:600px){
   .rider-presence-indicator{top:14px;left:16px}
 }
+
+.rider-signin-btn{
+  width:100%;
+  min-height:50px;
+  border-radius:999px!important;
+  border:0!important;
+  background:#176b32!important;
+  color:#fff!important;
+  box-shadow:0 12px 26px #176b3228!important;
+  font-size:13px;
+  font-weight:950;
+  letter-spacing:.12em;
+  transition:transform .16s ease,box-shadow .16s ease,background .16s ease;
+}
+.rider-signin-btn:hover{
+  background:#125628!important;
+  transform:translateY(-1px);
+  box-shadow:0 15px 30px #176b3233!important;
+}
+.rider-signin-btn:active{
+  transform:translateY(0);
+  box-shadow:0 8px 18px #176b3222!important;
+}
+.rider-signin-btn:disabled{
+  opacity:.68;
+  cursor:wait;
+  transform:none;
+}

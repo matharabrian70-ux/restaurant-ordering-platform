@@ -1,6 +1,6 @@
 const RIDER_TOKEN_KEY='rider_session_token';
 const RIDER_BUSINESS_ID=BUSINESS_ID;
-let rider=null,lastTripId=null,pollTimer=null,riderEvents=null,riderLiveSyncBusy=false;
+let rider=null,lastTripId=null,pollTimer=null,riderEvents=null,riderLiveSyncBusy=false,availabilityActionVersion=0;
 
 function riderHeaders(){const token=localStorage.getItem(RIDER_TOKEN_KEY);return token?{'Authorization':'Bearer '+token}:{};}
 async function riderApi(path,options={}){return apiRequest(path,{...options,headers:{...riderHeaders(),...(options.headers||{})}});}
@@ -36,14 +36,18 @@ function toggleOnline(){
   setOnline(!online);
 }
 async function setOnline(online){
-  const button=document.getElementById('online-button');
-  if(button){button.disabled=true;button.textContent=online?'GOING ONLINE…':'GOING OFFLINE…';}
+  const actionVersion=++availabilityActionVersion;
+  // Update the interface immediately. The rider should never have to wait
+  // for a network round-trip before being able to change availability again.
+  updateOnlineButton(online);
   try{
-    if(online) await requestNotifications();
+    if(online) requestNotifications().catch(()=>{});
     const data=await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/presence',{method:'POST',body:JSON.stringify({online})});
+    if(actionVersion!==availabilityActionVersion)return;
     updateOnlineButton(Boolean(data.online));
     await loadRiderDashboard();
   }catch(err){
+    if(actionVersion!==availabilityActionVersion)return;
     updateOnlineButton(!online);
     alert(err.message||'Could not update availability.');
   }

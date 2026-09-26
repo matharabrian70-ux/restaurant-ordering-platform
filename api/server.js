@@ -987,11 +987,11 @@ app.post('/api/riders/:id/deliveries/:tripId/accept', requireRiderModule, requir
   if(!result.rowCount) return res.status(404).json({error:'Delivery not found'});
   const trip=result.rows[0];
   if(trip.completed_at) return res.status(409).json({error:'Delivery already completed'});
-  if(trip.order_status!=='ACCEPTED') return res.status(409).json({error:'This order is no longer awaiting rider acceptance'});
+  if(!['ACCEPTED','OUT_FOR_DELIVERY'].includes(String(trip.order_status||''))) return res.status(409).json({error:'This order is no longer awaiting rider acceptance'});
   const latest=await pool.query(`select status from delivery_events where trip_id=$1 order by created_at desc limit 1`,[trip.id]);
   const current=latest.rows[0]?.status||'ASSIGNED';
   if(current!=='ASSIGNED') return res.status(409).json({error:'Delivery has already been accepted or moved forward'});
-  const updated=await pool.query(`update orders set status='OUT_FOR_DELIVERY',out_for_delivery_at=coalesce(out_for_delivery_at,now()),delivery_status='ACCEPTED' where id=$1 and status='ACCEPTED' returning *`,[trip.order_id]);
+  const updated=await pool.query(`update orders set status=case when status='ACCEPTED' then 'OUT_FOR_DELIVERY' else status end,out_for_delivery_at=coalesce(out_for_delivery_at,now()),delivery_status='ACCEPTED' where id=$1 and status in ('ACCEPTED','OUT_FOR_DELIVERY') returning *`,[trip.order_id]);
   if(!updated.rowCount) return res.status(409).json({error:'This order is no longer awaiting rider acceptance'});
   await pool.query(`insert into delivery_events(id,trip_id,status) values(gen_random_uuid(),$1,'ACCEPTED')`,[req.params.tripId]);
   broadcastOrder(updated.rows[0],{reason:'rider.accepted',notification:'Rider accepted the delivery'});

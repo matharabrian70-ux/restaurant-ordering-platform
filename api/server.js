@@ -994,7 +994,7 @@ app.put('/api/riders/:id/profile', requireRiderModule, requireRiderAuth, async(r
     const cleanVehicle=String(vehicle_type||'Motorbike').trim()||'Motorbike';
     const cleanPlate=String(number_plate||'').trim()||null;
     const cleanImage=String(profile_image_url||'').trim()||null;
-    if(cleanImage && cleanImage.length>1200)return res.status(400).json({error:'Profile picture URL is too long'});
+    if(cleanImage && cleanImage.length>1000000)return res.status(400).json({error:'Profile picture is too large'});
     if(new_password){
       if(String(new_password).length<8)return res.status(400).json({error:'New password must be at least 8 characters'});
       const auth=await pool.query('select password_hash from rider_auth where rider_id=$1',[req.rider.id]);

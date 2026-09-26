@@ -57,7 +57,6 @@ function setRiderMapFullscreen(fullscreen){
 }
 function toggleRiderMapFullscreen(){setRiderMapFullscreen(!document.getElementById('rider-live-route-panel')?.classList.contains('is-fullscreen'));}
 function exitRiderMapFullscreen(){setRiderMapFullscreen(false);}
-setRiderMapFullscreen(!document.getElementById('rider-live-route-panel')?.classList.contains('is-fullscreen'));}
 
 function bindRiderMapFullscreen(){
   const map=document.getElementById('rider-live-map');

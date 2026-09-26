@@ -1,6 +1,6 @@
 const ORDER_API_BASE = 'https://restaurant-ordering-api-ow3p.onrender.com';
 const REMOTE_STATUSES = ['NEW','ACCEPTED','OUT_FOR_DELIVERY','DELIVERED','CANCELLED'];
-const REMOTE_LABELS = { NEW:'Order received', ACCEPTED:'Accepted & preparing', OUT_FOR_DELIVERY:'Out for delivery', DELIVERED:'Delivered', CANCELLED:'Order cancelled' };
+const REMOTE_LABELS = { NEW:'Order received', ACCEPTED:'Accepted & preparing', OUT_FOR_DELIVERY:'On its way', DELIVERED:'Delivered', CANCELLED:'Order cancelled' };
 
 function paymentMessage(params,paymentStatus){
   if(params.get('payment')==='success') return 'Payment confirmed. Your order has been sent to the restaurant.';
@@ -31,6 +31,7 @@ function connectCustomerEvents(orderId){
   const source=new EventSource(`${ORDER_API_BASE}/api/events?businessId=${encodeURIComponent(window.CUSTOMER_ORDER_BUSINESS_ID||'11111111-1111-4111-8111-111111111111')}&orderId=${encodeURIComponent(orderId)}`);
   window.customerOrderEvents=source;
   source.addEventListener('order.updated',()=>renderRemoteOrder(false));
+  source.addEventListener('delivery.updated',()=>renderRemoteOrder(false));
   source.addEventListener('refund.updated',()=>renderRemoteOrder(false));
   source.onerror=()=>{source.close();setTimeout(()=>connectCustomerEvents(orderId),3000);};
 }

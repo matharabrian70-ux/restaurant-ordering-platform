@@ -219,7 +219,7 @@ async function copyRiderInvite(button){
 }
 async function approveRider(id,button){
   button.disabled=true;button.textContent='APPROVING…';
-  try{await api('/api/riders/'+id+'/approve',{method:'POST',body:JSON.stringify({})});await (Promise.resolve()).then(()=>load());}
+  try{await api('/api/riders/'+id+'/approve',{method:'POST',body:JSON.stringify({businessId:B})});await (Promise.resolve()).then(()=>load());}
   catch(x){button.disabled=false;button.textContent='APPROVE RIDER';alert(x.message);}
 }
 async function suspendRider(id,button){

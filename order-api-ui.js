@@ -1,6 +1,6 @@
 const ORDER_API_BASE = 'https://restaurant-ordering-api-ow3p.onrender.com';
 const REMOTE_STATUSES = ['NEW','ACCEPTED','OUT_FOR_DELIVERY','DELIVERED','CANCELLED'];
-const REMOTE_LABELS = { NEW:'Order received', ACCEPTED:'Accepted & preparing', OUT_FOR_DELIVERY:'Out for delivery', DELIVERED:'Delivered', CANCELLED:'Order cancelled' };
+const REMOTE_LABELS = { NEW:'Order received', ACCEPTED:'Accepted & preparing', OUT_FOR_DELIVERY:'On its way', DELIVERED:'Delivered', CANCELLED:'Order cancelled' };
 
 function paymentMessage(params,paymentStatus){
   if(params.get('payment')==='success') return 'Payment confirmed. Your order has been sent to the restaurant.';

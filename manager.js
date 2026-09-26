@@ -14,7 +14,8 @@ function startManagerRealtime(){
     managerEvents=new EventSource(API_BASE_URL+'/api/events?businessId='+encodeURIComponent(B));
     const refresh=()=>{clearTimeout(window.managerRealtimeRetry);(Promise.resolve()).then(()=>load());};
     managerEvents.addEventListener('order.updated',e=>{try{const d=JSON.parse(e.data||'{}');if(d.status==='NEW'&&d.paymentStatus==='PAID'){const key=String(d.orderId||'');if(!alertedOrders.has(key)){alertedOrders.set(key,Date.now());playOrderAlert();setTimeout(()=>alertedOrders.delete(key),15000)}}refresh();}catch{}});
-    ['rider.updated','delivery.updated','refund.updated','station.updated','menu.updated','promotion.updated','branch.updated'].forEach(name=>managerEvents.addEventListener(name,refresh));
+    managerEvents.addEventListener('rider.updated',()=>syncRiderListInPlace());
+    ['delivery.updated','refund.updated','station.updated','menu.updated','promotion.updated','branch.updated'].forEach(name=>managerEvents.addEventListener(name,refresh));
     managerEvents.onerror=()=>{if(managerEvents){managerEvents.close();managerEvents=null;}window.managerRealtimeRetry=setTimeout(connect,3000);};
   };
   connect();

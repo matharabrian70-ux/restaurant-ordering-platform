@@ -1225,6 +1225,14 @@ app.post('/api/station/orders/:id/assign-rider',requireStation,async(req,res)=>{
   }catch(e){try{await client.query('rollback')}catch{}res.status(500).json({error:e.message||'Unable to dispatch rider'});}
   finally{client.release();}
 });
+app.post('/api/station/orders/:id/confirm-delivery',requireStation,async(req,res)=>{
+  try{
+    if(!['OPERATIONS','COUNTER'].includes(req.station.mode)) return res.status(403).json({error:'This station mode cannot confirm delivery'});
+    const result=await completeOrderByConfirmation(req.params.id,'restaurant',{requireDisconnectedRiderDashboard:true});
+    if(result.error) return res.status(result.status).json({error:result.error});
+    res.json(result.order);
+  }catch(error){res.status(500).json({error:error.message||'Unable to confirm delivery'});}
+});
 app.get('/api/station/events',requireStation,(req,res)=>{
   res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache, no-transform');res.setHeader('Connection','keep-alive');res.flushHeaders?.();
   const client={res,businessId:String(req.station.business_id),stationId:String(req.station.station_id)};

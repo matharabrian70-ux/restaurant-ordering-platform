@@ -957,6 +957,29 @@ app.post('/api/riders/logout', requireRiderModule, requireRiderAuth, async(req,r
   if(Number(remainingSessions.rows[0]?.count||0)===0) await pool.query(`update business_connections set rider_connected=false,updated_at=now() where business_id=$1`,[req.rider.business_id]);
   res.json({ok:true});
 });
+app.get('/api/riders/:id/deliveries/:tripId/route', requireRiderModule, requireRiderAuth, async(req,res)=>{
+  try{
+    const r=await pool.query(`select t.id,o.order_number,o.pickup_address,o.delivery_address,o.delivery_lat,o.delivery_lng,
+      bb.latitude as pickup_latitude,bb.longitude as pickup_longitude
+      from rider_trips t
+      join orders o on o.id=t.order_id
+      left join business_branches bb on bb.id=o.branch_id
+      where t.id=$1 and t.rider_id=$2 and t.completed_at is null
+      limit 1`,[req.params.tripId,req.rider.id]);
+    if(!r.rowCount)return res.status(404).json({error:'Active delivery not found'});
+    const row=r.rows[0];
+    if(!row.pickup_address||!row.delivery_address)return res.status(400).json({error:'Pickup and delivery addresses are required for the live route'});
+    const route=await computeGoogleRoute(row.pickup_address,row.delivery_address);
+    res.json({
+      orderNumber:row.order_number,
+      encodedPolyline:route.encodedPolyline,
+      distanceMeters:route.distanceMeters,
+      durationSeconds:route.durationSeconds,
+      pickup:{address:row.pickup_address,lat:Number(row.pickup_latitude),lng:Number(row.pickup_longitude)},
+      destination:{address:row.delivery_address,lat:Number(row.delivery_lat),lng:Number(row.delivery_lng)}
+    });
+  }catch(error){res.status(400).json({error:error.message||'Unable to build delivery route'});}
+});
 app.get('/api/riders/me', requireRiderModule, requireRiderAuth, async(req,res)=>{
   const r=req.rider; res.json({id:r.id,name:r.name,phone:r.phone,email:r.email,vehicle_type:r.vehicle_type,number_plate:r.number_plate,payout_phone:r.payout_phone,profile_image_url:r.profile_image_url,rider_status:r.rider_status,active:r.active});
 });

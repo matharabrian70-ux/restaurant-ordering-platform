@@ -205,8 +205,7 @@ async function loadRiderDashboard(){
   renderRiderStats(data);
   document.getElementById('available-deliveries').innerHTML=renderAvailable(data.available);
   document.getElementById('active-delivery').innerHTML=activeCard(data.active);
-  document.getElementById('earnings-summary').innerHTML='<div class="summary-row"><span>Today</span><strong>'+riderMoney(data.todayEarnings)+'</strong></div><div class="summary-row"><span>7 days</span><strong>'+riderMoney(data.weekEarnings)+'</strong></div><p class="muted">Delivery fee is recorded as rider earnings and released on successful delivery.</p>';
-  document.getElementById('delivery-history').innerHTML=renderHistory(data.completed);
+
 }
 async function bootRider(){
   try{

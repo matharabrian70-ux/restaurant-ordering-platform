@@ -403,3 +403,5 @@
 .rider-route-button{width:100%;box-sizing:border-box}
 .rider-route-note{margin:9px 0 0;text-align:center;color:var(--muted);font-size:10px;line-height:1.45}
 @media(max-width:700px){.rider-assignment-popup{padding:10px}.rider-assignment-card{width:calc(100vw - 20px);padding:20px;border-radius:16px}.rider-assignment-grid{grid-template-columns:1fr 1fr}.rider-assignment-top h2{font-size:21px}.rider-assignment-order{align-items:flex-start;flex-direction:column}.rider-assignment-actions{display:block}.rider-assignment-accept{width:100%}}
+
+.rider-map-action{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;border-radius:999px;background:#fff;color:#176b32;border:1px solid #bcd7c2;text-decoration:none;font-size:10px;font-weight:950;letter-spacing:.06em;box-shadow:0 7px 16px rgba(23,32,25,.07);transition:transform .16s ease,box-shadow .16s ease,background .16s ease}.rider-map-action:hover{background:#f2f8f3;transform:translateY(-1px);box-shadow:0 10px 20px rgba(23,32,25,.1)}

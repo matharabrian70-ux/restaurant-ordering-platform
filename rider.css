@@ -405,3 +405,14 @@
 @media(max-width:700px){.rider-assignment-popup{padding:10px}.rider-assignment-card{width:calc(100vw - 20px);padding:20px;border-radius:16px}.rider-assignment-grid{grid-template-columns:1fr 1fr}.rider-assignment-top h2{font-size:21px}.rider-assignment-order{align-items:flex-start;flex-direction:column}.rider-assignment-actions{display:block}.rider-assignment-accept{width:100%}}
 
 .rider-map-action{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;border-radius:999px;background:#fff;color:#176b32;border:1px solid #bcd7c2;text-decoration:none;font-size:10px;font-weight:950;letter-spacing:.06em;box-shadow:0 7px 16px rgba(23,32,25,.07);transition:transform .16s ease,box-shadow .16s ease,background .16s ease}.rider-map-action:hover{background:#f2f8f3;transform:translateY(-1px);box-shadow:0 10px 20px rgba(23,32,25,.1)}
+
+.rider-live-route-panel{margin-top:18px;background:#fff;border:1px solid var(--line);border-radius:18px;overflow:hidden;box-shadow:0 10px 30px rgba(20,30,22,.06)}
+.rider-live-route-head{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;padding:20px 22px;border-bottom:1px solid var(--line)}
+.rider-live-route-head h3{margin:4px 0 4px;font-size:22px}
+.rider-live-route-head p{margin:0;color:var(--muted);font-size:13px}
+.rider-live-map-status{display:inline-flex;align-items:center;white-space:nowrap;padding:8px 11px;border:1px solid var(--line);border-radius:999px;font-size:10px;font-weight:900;letter-spacing:.08em}
+.rider-live-map-status.is-live{border-color:#b8dfc4;background:#edf9f0}
+.rider-live-map-status.is-live::before{content:"";width:7px;height:7px;border-radius:50%;background:#176b32;margin-right:7px}
+.rider-live-map{width:100%;height:430px;background:#e9ece7}
+.rider-live-route-note{padding:13px 18px;color:var(--muted);font-size:12px;border-top:1px solid var(--line)}
+@media(max-width:650px){.rider-live-route-head{flex-direction:column}.rider-live-map{height:360px}.rider-live-route-panel{border-radius:14px}}

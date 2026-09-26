@@ -1,13 +1,47 @@
 const RIDER_TOKEN_KEY='rider_session_token';
 const RIDER_BUSINESS_ID=BUSINESS_ID;
-let rider=null,lastTripId=null,pollTimer=null,riderEvents=null,riderLiveSyncBusy=false,availabilityActionVersion=0;
+let rider=null,lastTripId=null,pollTimer=null,riderEvents=null,riderLiveSyncBusy=false,availabilityActionVersion=0,riderDashboardInitialized=false,riderAudioContext=null;
 
 function riderHeaders(){const token=localStorage.getItem(RIDER_TOKEN_KEY);return token?{'Authorization':'Bearer '+token}:{};}
 async function riderApi(path,options={}){return apiRequest(path,{...options,headers:{...riderHeaders(),...(options.headers||{})}});}
 function clearRiderSession(){localStorage.removeItem(RIDER_TOKEN_KEY);rider=null;}
 function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
 function riderMoney(v){return 'KSh '+Number(v||0).toLocaleString();}
-function mapsUrl(origin,destination){return 'https://www.google.com/maps/dir/?api=1&origin='+encodeURIComponent(origin||'')+'&destination='+encodeURIComponent(destination||'')+'&travelmode=driving';}
+function mapsUrl(origin,destination){return 'https://www.google.com/maps/dir/?api=1&origin='+encodeURIComponent(origin||'')+'&destination='+encodeURIComponent(destination||'')+'&travelmode=two-wheeler&dir_action=navigate';}
+function unlockRiderAudio(){try{const C=window.AudioContext||window.webkitAudioContext;if(!C)return;if(!riderAudioContext)riderAudioContext=new C();if(riderAudioContext.state==='suspended')riderAudioContext.resume().catch(()=>{});}catch{}}
+function playAssignmentSound(){try{unlockRiderAudio();if(!riderAudioContext)return;const now=riderAudioContext.currentTime;[0,0.16].forEach((offset,i)=>{const osc=riderAudioContext.createOscillator(),gain=riderAudioContext.createGain();osc.type='sine';osc.frequency.value=i?880:660;gain.gain.setValueAtTime(0.0001,now+offset);gain.gain.exponentialRampToValueAtTime(0.16,now+offset+0.02);gain.gain.exponentialRampToValueAtTime(0.0001,now+offset+0.13);osc.connect(gain);gain.connect(riderAudioContext.destination);osc.start(now+offset);osc.stop(now+offset+0.15);});}catch{}}
+function showDeliveryAssignmentPopup(job){
+  document.getElementById('rider-assignment-popup')?.remove();
+  const el=document.createElement('div');el.id='rider-assignment-popup';el.className='rider-assignment-popup';
+  el.innerHTML='<section class="rider-assignment-card" role="dialog" aria-modal="true" aria-label="New delivery assignment">'+
+    '<div class="rider-assignment-top"><div><span class="eyebrow">NEW DELIVERY ASSIGNMENT</span><h2>New order ready</h2></div><span class="rider-assignment-live"><i></i> LIVE</span></div>'+
+    '<div class="rider-assignment-order"><strong>'+esc(job.order_number)+'</strong><span>'+esc(job.restaurant_name||'Restaurant')+'</span></div>'+
+    '<div class="rider-assignment-grid"><div><small>CUSTOMER</small><strong>'+esc(job.customer_name||'Customer')+'</strong></div><div><small>DELIVERY FEE</small><strong>'+riderMoney(job.delivery_fee)+'</strong></div><div><small>DISTANCE</small><strong>'+((Number(job.route_distance_meters||0)/1000).toFixed(1))+' km</strong></div><div><small>ETA</small><strong>'+((Number(job.route_duration_seconds||0)/60).toFixed(0))+' min</strong></div></div>'+
+    '<div class="rider-assignment-route"><div><span class="route-dot pickup"></span><div><small>PICK UP</small><strong>'+esc(job.pickup_address||job.restaurant_name||'Restaurant')+'</strong></div></div><div class="route-line"></div><div><span class="route-dot dropoff"></span><div><small>DELIVER TO</small><strong>'+esc(job.delivery_address||'Customer location')+'</strong></div></div></div>'+
+    '<div class="rider-assignment-actions"><button type="button" class="rider-assignment-accept" onclick="acceptAssignmentPopup(\''+esc(job.trip_id||'')+'\')">ACCEPT ORDER</button></div>'+
+    '</section>';
+  document.body.appendChild(el);playAssignmentSound();
+}
+function closeAssignmentPopup(){document.getElementById('rider-assignment-popup')?.remove();}
+async function acceptAssignmentPopup(tripId){
+  const button=document.querySelector('.rider-assignment-accept');if(button){button.disabled=true;button.textContent='ACCEPTING…';}
+  try{await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/deliveries/'+encodeURIComponent(tripId)+'/accept',{method:'POST',body:JSON.stringify({})});
+    const data=await dashboardData();window.__riderDashboardData=data;closeAssignmentPopup();renderRiderStats(data);document.getElementById('available-deliveries').innerHTML=renderAvailable(data.available);document.getElementById('active-delivery').innerHTML=activeCard(data.active);showAcceptedRoutePopup(data.active);
+  }catch(err){if(button){button.disabled=false;button.textContent='ACCEPT ORDER';}alert(err.message||'Could not accept delivery.');}
+}
+function showAcceptedRoutePopup(job){
+  if(!job)return;document.getElementById('rider-assignment-popup')?.remove();
+  const el=document.createElement('div');el.id='rider-assignment-popup';el.className='rider-assignment-popup';
+  el.innerHTML='<section class="rider-assignment-card accepted" role="dialog" aria-label="Delivery accepted">'+
+    '<div class="rider-assignment-top"><div><span class="eyebrow">DELIVERY ACCEPTED</span><h2>You are on this order.</h2></div><span class="rider-assignment-check">✓</span></div>'+
+    '<div class="rider-assignment-order"><strong>'+esc(job.order_number)+'</strong><span>'+esc(job.restaurant_name||'Restaurant')+'</span></div>'+
+    '<div class="rider-assignment-route"><div><span class="route-dot pickup"></span><div><small>PICK UP</small><strong>'+esc(job.pickup_address||job.restaurant_name||'Restaurant')+'</strong></div></div><div class="route-line"></div><div><span class="route-dot dropoff"></span><div><small>DELIVER TO</small><strong>'+esc(job.delivery_address||'Customer location')+'</strong></div></div></div>'+
+    '<a class="rider-route-button" href="'+mapsUrl(job.pickup_address,job.delivery_address)+'" target="_blank" rel="noopener">VIEW ROUTE IN GOOGLE MAPS</a>'+
+    '<p class="rider-route-note">Google Maps will open with two-wheeler directions from the restaurant to the customer.</p>'+
+    '</section>';
+  document.body.appendChild(el);
+  setTimeout(()=>{if(document.getElementById('rider-assignment-popup'))closeAssignmentPopup();},12000);
+}
 
 async function loginRider(e){
   e?.preventDefault();
@@ -36,6 +70,7 @@ function toggleOnline(){
   setOnline(!online);
 }
 async function setOnline(online){
+  unlockRiderAudio();
   const actionVersion=++availabilityActionVersion;
   // Update the interface immediately. The rider should never have to wait
   // for a network round-trip before being able to change availability again.
@@ -84,7 +119,9 @@ function showRiderSystemNotice(message){
 }
 function maybeNotify(job){
   if(!job||job.id===lastTripId)return;
+  const shouldPopup=riderDashboardInitialized;
   lastTripId=job.id;
+  if(shouldPopup){showDeliveryAssignmentPopup(job);}
   if('Notification' in window&&Notification.permission==='granted') new Notification('New delivery assignment',{body:job.order_number+' · '+job.customer_name});
 }
 async function requestNotifications(){if('Notification' in window&&Notification.permission==='default')try{await Notification.requestPermission();}catch{}}
@@ -205,7 +242,7 @@ async function loadRiderDashboard(){
   renderRiderStats(data);
   document.getElementById('available-deliveries').innerHTML=renderAvailable(data.available);
   document.getElementById('active-delivery').innerHTML=activeCard(data.active);
-
+  if(!riderDashboardInitialized){riderDashboardInitialized=true;}
 }
 async function bootRider(){
   try{

@@ -579,6 +579,93 @@ async function updateRefundFromWebhook(data) {
   finally { client.release(); }
 }
 
+async function completeOrderByConfirmation(orderId, actor, { requireDisconnectedRiderDashboard = false } = {}) {
+  const client = await pool.connect();
+  try {
+    await client.query('begin');
+    const orderResult = await client.query(
+      `select o.*, coalesce(bc.rider_connected,false) as rider_connected,
+              rt.id as trip_id, rt.rider_id
+         from orders o
+         left join business_connections bc on bc.business_id=o.business_id
+         left join lateral (
+           select id,rider_id from rider_trips where order_id=o.id order by assigned_at desc limit 1
+         ) rt on true
+        where o.id=$1
+        for update`,
+      [orderId]
+    );
+    if (!orderResult.rowCount) {
+      await client.query('rollback');
+      return { error: 'Order not found', status: 404 };
+    }
+    const order = orderResult.rows[0];
+    if (requireDisconnectedRiderDashboard && order.rider_connected) {
+      await client.query('rollback');
+      return { error: 'This restaurant uses the Rider Dashboard. The rider must complete the delivery from the rider portal.', status: 409 };
+    }
+    if (order.status !== 'OUT_FOR_DELIVERY') {
+      await client.query('rollback');
+      return { error: 'Only orders that are out for delivery can be marked delivered', status: 409 };
+    }
+
+    const updated = await client.query(
+      `update orders
+          set status='DELIVERED',
+              delivered_at=coalesce(delivered_at,now()),
+              delivery_status='DELIVERED',
+              delivery_fee_status='RELEASED',
+              delivery_fee_released_at=coalesce(delivery_fee_released_at,now())
+        where id=$1
+        returning *`,
+      [orderId]
+    );
+
+    if (order.trip_id) {
+      await client.query(
+        `insert into delivery_events(id,trip_id,status,note)
+         values(gen_random_uuid(),$1,'DELIVERED',$2)`,
+        [order.trip_id, actor === 'customer' ? 'Customer confirmed delivery' : 'Restaurant confirmed delivery after rider confirmation']
+      );
+      await client.query(
+        `update rider_trips set completed_at=coalesce(completed_at,now()),confirmed_by=$2 where id=$1`,
+        [order.trip_id, actor]
+      );
+      await client.query(
+        `insert into rider_earnings(id,rider_id,trip_id,amount,status,released_at)
+         select gen_random_uuid(),rider_id,$1,delivery_fee,'RELEASED',now()
+           from orders where id=$2
+         on conflict(trip_id) do update set status='RELEASED',released_at=now()`,
+        [order.trip_id, orderId]
+      );
+    }
+
+    await client.query('commit');
+
+    const finalOrder = (await pool.query('select * from orders where id=$1',[orderId])).rows[0];
+    broadcastOrder(finalOrder, {
+      reason: actor === 'customer' ? 'customer.delivery_confirmed' : 'restaurant.delivery_confirmed',
+      notification: 'Delivery completed'
+    });
+    if (order.trip_id && order.rider_id) {
+      broadcastRider({
+        businessId: order.business_id,
+        riderId: order.rider_id,
+        orderId,
+        action: 'DELIVERY_COMPLETED',
+        data: { tripId: order.trip_id, status: 'DELIVERED', confirmedBy: actor }
+      });
+    }
+
+    return { ok: true, order: finalOrder };
+  } catch (error) {
+    try { await client.query('rollback'); } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 app.get('/health', async (_req, res) => { try { await pool.query('select 1'); res.json({ ok: true, database: true }); } catch { res.status(503).json({ ok: false, database: false }); } });
 app.get('/api/customers', requireManager, async (req,res)=>{
   try{
@@ -602,6 +689,13 @@ app.get('/api/customers/:id/record', requireManager, async (req,res)=>{
     res.json({customer:customer.rows[0],summary,orders:orders.rows,addresses:addresses.rows,audit:audit.rows});
   }catch(error){res.status(500).json({error:error.message||'Unable to load customer record'});}
 });
+app.post('/api/orders/:id/confirm-delivery', async (req,res)=>{
+  try{
+    const result=await completeOrderByConfirmation(req.params.id,'customer');
+    if(result.error) return res.status(result.status).json({error:result.error});
+    res.json(result.order);
+  }catch(error){res.status(500).json({error:error.message||'Unable to confirm delivery'});}
+});
 app.get('/api/orders/:id', async (req, res) => { try { const result = await pool.query(`select o.*, c.name as customer_name, c.phone, c.email, r.name as rider_name, r.vehicle_type, r.number_plate, r.phone as rider_phone from orders o join customers c on c.id=o.customer_id left join riders r on r.id=(select rider_id from rider_trips t where t.order_id=o.id order by assigned_at desc limit 1) where o.id=$1`, [req.params.id]); if (!result.rowCount) return res.status(404).json({ error: 'Order not found' }); res.json(result.rows[0]); } catch { res.status(500).json({ error: 'Unable to load order' }); } });
 app.get('/api/orders/:id/refunds', async (req, res) => { try { const result = await pool.query(`select id,amount,currency,status,created_at,updated_at,customer_note,merchant_note from refunds where order_id=$1 order by created_at desc`, [req.params.id]); res.json(result.rows); } catch { res.status(500).json({ error: 'Unable to load refunds' }); } });
 app.get('/api/orders', requireManager, async (req, res) => { try { const { businessId, q = '' } = req.query; if (!businessId) return res.status(400).json({ error: 'businessId is required' }); const result = await pool.query(`select o.id,o.business_id,o.order_number,o.status,o.payment_status,o.payment_method,o.total,o.created_at,o.delivery_note,c.name,c.phone,c.email,coalesce((select r.name from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_name,coalesce((select r.vehicle_type from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_vehicle,coalesce((select r.number_plate from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_plate,
@@ -620,7 +714,14 @@ app.get('/api/riders/:id/profile', requireManager, async(req,res)=>{
 });
 
 app.get('/api/riders', requireManager, async (req, res) => { try { const { businessId } = req.query; if (!businessId) return res.status(400).json({ error: 'businessId is required' }); const result = await pool.query(`select r.id,r.name,r.phone,r.email,r.vehicle_type,r.number_plate,r.profile_image_url,r.active,r.rider_status,coalesce(p.online,false) as online,exists(select 1 from rider_trips t join orders o on o.id=t.order_id where t.rider_id=r.id and t.completed_at is null) as busy,(select count(*) from rider_trips t where t.rider_id=r.id and t.completed_at is not null) as trip_count,(select max(t.completed_at) from rider_trips t where t.rider_id=r.id and t.completed_at is not null) as last_completed_at from riders r left join rider_presence p on p.rider_id=r.id where r.business_id=$1 order by r.name`, [businessId]); res.json(result.rows.map(r => ({ ...r, available: r.active && r.online && !r.busy }))); } catch { res.status(500).json({ error: 'Unable to load riders' }); } });
-app.post('/api/orders/:id/status', requireManagerOrder, async (req, res) => { try { const nextStatus = String(req.body.status || '').toUpperCase(); if (!['ACCEPTED','DELIVERED'].includes(nextStatus)) return res.status(400).json({ error: 'Invalid status transition' }); const orderResult = await pool.query(`select * from orders where id=$1 for update`, [req.params.id]); if (!orderResult.rowCount) return res.status(404).json({ error: 'Order not found' }); const order = orderResult.rows[0]; if (nextStatus === 'ACCEPTED' && !(order.status === 'NEW' && order.payment_status === 'PAID')) return res.status(409).json({ error: 'Only paid NEW orders can be accepted' }); if (nextStatus === 'DELIVERED' && order.status !== 'OUT_FOR_DELIVERY') return res.status(409).json({ error: 'Only orders out for delivery can be delivered' }); const result = nextStatus === 'ACCEPTED' ? await pool.query(`update orders set status='ACCEPTED',accepted_at=coalesce(accepted_at,now()) where id=$1 returning *`, [req.params.id]) : await pool.query(`update orders set status='DELIVERED',delivered_at=coalesce(delivered_at,now()) where id=$1 returning *`, [req.params.id]); broadcastOrder(result.rows[0], { reason: nextStatus === 'ACCEPTED' ? 'restaurant.accepted' : 'restaurant.delivered' }); res.json(result.rows[0]); } catch { res.status(500).json({ error: 'Unable to update order status' }); } });
+app.post('/api/orders/:id/status', requireManagerOrder, async (req, res) => { try { const nextStatus = String(req.body.status || '').toUpperCase(); if (!['ACCEPTED','DELIVERED'].includes(nextStatus)) return res.status(400).json({ error: 'Invalid status transition' }); const orderResult = await pool.query(`select * from orders where id=$1 for update`, [req.params.id]); if (!orderResult.rowCount) return res.status(404).json({ error: 'Order not found' }); const order = orderResult.rows[0]; if (nextStatus === 'ACCEPTED' && !(order.status === 'NEW' && order.payment_status === 'PAID')) return res.status(409).json({ error: 'Only paid NEW orders can be accepted' }); if (nextStatus === 'DELIVERED') {
+      const result = await completeOrderByConfirmation(req.params.id, 'restaurant', { requireDisconnectedRiderDashboard: true });
+      if (result.error) return res.status(result.status).json({ error: result.error });
+      return res.json(result.order);
+    }
+    const result = await pool.query(`update orders set status='ACCEPTED',accepted_at=coalesce(accepted_at,now()) where id=$1 returning *`, [req.params.id]);
+    broadcastOrder(result.rows[0], { reason: 'restaurant.accepted' });
+    res.json(result.rows[0]); } catch { res.status(500).json({ error: 'Unable to update order status' }); } });
 app.post('/api/orders/:id/cancel', async (req, res) => { const client = await pool.connect(); try { let order; try { await client.query('begin'); const result = await client.query(`select * from orders where id=$1 for update`, [req.params.id]); if (!result.rowCount) { await client.query('rollback'); return res.status(404).json({ error: 'Order not found' }); } order = result.rows[0]; if (order.status !== 'NEW') { await client.query('rollback'); return res.status(409).json({ error: 'This order can no longer be cancelled because the restaurant has accepted it.' }); } await client.query(`update orders set status='CANCELLED' where id=$1`, [order.id]); const updated = await client.query(`select * from orders where id=$1`, [order.id]); await client.query('commit'); order = updated.rows[0]; broadcastOrder(order, { reason: 'customer.cancelled' }); } catch (error) { try { await client.query('rollback'); } catch {} throw error; } let refund = null; if (order.payment_status === 'PAID') refund = await initiateRefundForOrder(order.id, 'Customer cancelled before restaurant acceptance', 'Automatic cancellation refund'); const latest = await pool.query(`select * from orders where id=$1`, [order.id]); res.json({ order: latest.rows[0], refund }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to cancel order' }); } finally { client.release(); } });
 app.post('/api/delivery/quote', async (req,res)=>{
   try{
@@ -1098,15 +1199,29 @@ app.post('/api/station/orders/:id/assign-rider',requireStation,async(req,res)=>{
     const order=orderResult.rows[0];if(order.status!=='ACCEPTED'){await client.query('rollback');return res.status(409).json({error:'Only accepted orders can be dispatched'});}
     const riderResult=await client.query(`select r.*,coalesce(p.online,false) as online,exists(select 1 from rider_trips t where t.rider_id=r.id and t.completed_at is null) as busy from riders r left join rider_presence p on p.rider_id=r.id where r.id=$1 and r.business_id=$2 and r.active=true for update`,[riderId,req.station.business_id]);
     if(!riderResult.rowCount){await client.query('rollback');return res.status(404).json({error:'Rider not found'});}
-    if(!riderResult.rows[0].online||riderResult.rows[0].busy){await client.query('rollback');return res.status(409).json({error:'Rider must be online and available'});}
+    const connectionResult=await client.query('select coalesce(rider_connected,false) as rider_connected from business_connections where business_id=$1',[req.station.business_id]);
+    const riderConnected=Boolean(connectionResult.rows[0]?.rider_connected);
+    if(riderConnected && (!riderResult.rows[0].online||riderResult.rows[0].busy)){
+      await client.query('rollback');return res.status(409).json({error:'Rider must be online and available'});
+    }
     const existingTrip=await client.query(`select 1 from rider_trips where order_id=$1 and completed_at is null limit 1`,[order.id]);
     if(existingTrip.rowCount){await client.query('rollback');return res.status(409).json({error:'A rider is already assigned to this order and is awaiting acceptance'});}
     const trip=await client.query('insert into rider_trips(id,rider_id,order_id) values(gen_random_uuid(),$1,$2) returning id',[riderId,order.id]);
     await client.query('insert into delivery_events(id,trip_id,status) values(gen_random_uuid(),$1,\'ASSIGNED\')',[trip.rows[0].id]);
     await client.query(`update orders set delivery_status='ASSIGNED',delivery_fee_status='HELD',rider_earning=delivery_fee where id=$1`,[order.id]);
+    if(!riderConnected){
+      await client.query(`update orders set status='OUT_FOR_DELIVERY',out_for_delivery_at=coalesce(out_for_delivery_at,now()),delivery_status='ASSIGNED' where id=$1`,[order.id]);
+      await client.query(`insert into delivery_events(id,trip_id,status,note) values(gen_random_uuid(),$1,'ACCEPTED','External rider confirmed assignment')`,[trip.rows[0].id]);
+    }
     await client.query('commit');
-    broadcastOrder((await pool.query('select * from orders where id=$1',[order.id])).rows[0],{reason:'station.rider_assigned',notification:'Rider assigned — awaiting rider acceptance'});
-    res.json({ok:true,tripId:trip.rows[0].id});
+    const dispatchedOrder=(await pool.query('select * from orders where id=$1',[order.id])).rows[0];
+    broadcastOrder(dispatchedOrder,riderConnected
+      ? {reason:'station.rider_assigned',notification:'Rider assigned — awaiting rider acceptance'}
+      : {reason:'station.external_rider_assigned',notification:'Delivery is on its way'});
+    if(riderConnected){
+      broadcastRider({businessId:order.business_id,riderId:riderId,orderId:order.id,action:'DELIVERY_ASSIGNED',data:{tripId:trip.rows[0].id,status:'ASSIGNED'}});
+    }
+    res.json({ok:true,tripId:trip.rows[0].id,riderConnected});
   }catch(e){try{await client.query('rollback')}catch{}res.status(500).json({error:e.message||'Unable to dispatch rider'});}
   finally{client.release();}
 });

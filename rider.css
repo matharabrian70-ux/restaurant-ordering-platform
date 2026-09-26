@@ -99,8 +99,8 @@
   box-shadow:0 15px 32px #16803a38;
 }
 .availability-button.is-online{
-  background:#707570;
-  box-shadow:none;
+  background:#16803a;
+  box-shadow:0 12px 28px #16803a2b;
 }
 .availability-button:disabled{opacity:.65;cursor:wait;transform:none}
 .rider-availability p{margin:0;color:var(--muted);font-size:11px;line-height:1.45;max-width:280px}

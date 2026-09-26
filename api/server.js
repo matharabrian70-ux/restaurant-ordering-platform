@@ -1105,7 +1105,7 @@ async function updateDeliveryStatus(req,res,nextStatus){
     res.json({ok:true,status:nextStatus});
   }catch(error){res.status(500).json({error:error.message||'Unable to update delivery'});}
 }
-for(const [route,status] of [['arrived','ARRIVED_AT_RESTAURANT'],['picked-up','PICKED_UP'],['on-the-way','ON_THE_WAY']]){
+for(const [route,status] of [['arrived','ARRIVED_AT_RESTAURANT'],['picked-up','PICKED_UP'],['on-the-way','ON_THE_WAY'],['delivered','DELIVERED']]){
   app.post(`/api/riders/:id/deliveries/:tripId/${route}`,requireRiderModule,requireRiderAuth,(req,res)=>updateDeliveryStatus(req,res,status));
 }
 app.get('/api/riders/:id/earnings',requireRiderModule,requireRiderAuth,async(req,res)=>{

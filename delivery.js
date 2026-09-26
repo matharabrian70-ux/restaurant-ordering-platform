@@ -31,8 +31,26 @@ function toggleRiderPassword(){
 
 async function logoutRider(){try{await riderApi('/api/riders/logout',{method:'POST'});}catch{}clearRiderSession();location.reload();}
 async function setOnline(online){
-  try{const data=await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/presence',{method:'POST',body:JSON.stringify({online})});document.getElementById('online-state').textContent=data.online?'ONLINE':'OFFLINE';await loadRiderDashboard();}
-  catch(err){alert(err.message||'Could not update availability.');}
+  const button=document.getElementById('online-button');
+  if(button){button.disabled=true;button.textContent=online?'GOING ONLINE…':'GOING OFFLINE…';}
+  try{
+    if(online) await requestNotifications();
+    const data=await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/presence',{method:'POST',body:JSON.stringify({online})});
+    updateOnlineButton(Boolean(data.online));
+    await loadRiderDashboard();
+  }catch(err){
+    updateOnlineButton(!online);
+    alert(err.message||'Could not update availability.');
+  }
+}
+function updateOnlineButton(online){
+  const button=document.getElementById('online-button');
+  if(!button)return;
+  button.classList.toggle('is-online',online);
+  button.classList.toggle('is-offline',!online);
+  button.textContent=online?'ONLINE':'GO ONLINE';
+  button.setAttribute('aria-pressed',String(online));
+  button.title=online?'You are available for delivery assignments':'Press to tell the restaurant you are available for deliveries';
 }
 async function dashboardData(){return riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/dashboard');}
 async function acceptTrip(tripId){try{await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/deliveries/'+encodeURIComponent(tripId)+'/accept',{method:'POST',body:JSON.stringify({})});await loadRiderDashboard();}catch(err){alert(err.message||'Could not accept delivery.');}}
@@ -73,20 +91,18 @@ function renderHistory(list){
 }
 async function loadRiderDashboard(){
   const data=await dashboardData();maybeNotify(data.active);
-  document.getElementById('rider-stats').innerHTML='<div class="rider-stat"><span class="muted">Today</span><strong>'+riderMoney(data.todayEarnings)+'</strong><small>Earnings</small></div><div class="rider-stat"><span class="muted">This week</span><strong>'+riderMoney(data.weekEarnings)+'</strong><small>Earnings</small></div><div class="rider-stat"><span class="muted">Completed</span><strong>'+data.completed.length+'</strong><small>Recent trips</small></div><div class="rider-stat"><span class="muted">Online status</span><strong id="online-state">CHECKING</strong><small>Availability</small></div>';
+  document.getElementById('rider-stats').innerHTML='<div class="rider-stat"><span class="muted">Today</span><strong>'+riderMoney(data.todayEarnings)+'</strong><small>Earnings</small></div><div class="rider-stat"><span class="muted">This week</span><strong>'+riderMoney(data.weekEarnings)+'</strong><small>Earnings</small></div><div class="rider-stat"><span class="muted">Completed</span><strong>'+data.completed.length+'</strong><small>Recent trips</small></div>';
   document.getElementById('available-deliveries').innerHTML=renderAvailable(data.available);
   document.getElementById('active-delivery').innerHTML=activeCard(data.active);
   document.getElementById('earnings-summary').innerHTML='<div class="summary-row"><span>Today</span><strong>'+riderMoney(data.todayEarnings)+'</strong></div><div class="summary-row"><span>7 days</span><strong>'+riderMoney(data.weekEarnings)+'</strong></div><p class="muted">Delivery fee is recorded as rider earnings and released on successful delivery.</p>';
   document.getElementById('delivery-history').innerHTML=renderHistory(data.completed);
-  document.getElementById('online-state').textContent='SET ABOVE';
 }
 async function bootRider(){
   try{
     rider=await riderApi('/api/riders/me');
     document.getElementById('rider-login').classList.add('hidden');document.getElementById('rider-app').classList.remove('hidden');
-    document.getElementById('rider-header').innerHTML='<div class="rider-top"><div class="rider-profile-line">'+(rider.profile_image_url?'<img src="'+esc(rider.profile_image_url)+'" alt="">':'<span class="rider-profile-fallback">'+esc((rider.name||'?')[0])+'</span>')+'<div><p class="eyebrow">RIDER OPERATIONS</p><h1>'+esc(rider.name)+'</h1><p class="muted">'+esc(rider.vehicle_type)+' · '+esc(rider.number_plate)+' · '+esc(rider.payout_phone||rider.phone)+'</p></div></div><div><div class="online-toggle"><input id="online-check" type="checkbox"><label for="online-check"><strong id="online-state">OFFLINE</strong></label></div><div class="rider-actions"><button class="secondary" onclick="requestNotifications()">ENABLE NOTIFICATIONS</button><button class="secondary" onclick="logoutRider()">LOG OUT</button></div></div></div>';
-    document.getElementById('online-check').onchange=e=>setOnline(e.target.checked);
-    await requestNotifications();await loadRiderDashboard();startRiderRealtime();
+    document.getElementById('rider-header').innerHTML='<div class="rider-identity-card"><div class="rider-profile-line">'+(rider.profile_image_url?'<img src="'+esc(rider.profile_image_url)+'" alt="">':'<span class="rider-profile-fallback">'+esc((rider.name||'?')[0])+'</span>')+'<div><p class="eyebrow">RIDER OPERATIONS</p><h1>'+esc(rider.name)+'</h1><p class="muted">'+esc(rider.vehicle_type)+' · '+esc(rider.number_plate||'Plate not set')+' · '+esc(rider.payout_phone||rider.phone)+'</p></div></div><div class="rider-availability"><span class="availability-label">DELIVERY AVAILABILITY</span><button id="online-button" class="availability-button is-offline" type="button" aria-pressed="false" onclick="setOnline(true)" title="Press to tell the restaurant you are available for deliveries">GO ONLINE</button><p>Go online when you are ready to receive delivery assignments.</p></div></div>';
+    await loadRiderDashboard();startRiderRealtime();
     clearInterval(pollTimer);pollTimer=setInterval(()=>loadRiderDashboard().catch(()=>{}),30000);
   }catch(err){clearRiderSession();document.getElementById('rider-login-error').classList.remove('hidden');document.getElementById('rider-login-error').textContent=err.message||'Rider session expired.';}
 }

@@ -50,14 +50,21 @@ function setRiderMapFullscreen(fullscreen){
   panel.classList.toggle('is-fullscreen',fullscreen);
   document.body.classList.toggle('rider-map-fullscreen-open',fullscreen);
   const button=document.getElementById('rider-map-fullscreen-button');
-  if(button)button.textContent=fullscreen?'EXIT FULL SCREEN':'FULL SCREEN';
-  if(riderMap)setTimeout(()=>riderMap.invalidateSize(),60);
+  if(button)button.textContent=fullscreen?'×':'⛶';
+  const floating=document.getElementById('rider-map-floating-exit');
+  if(floating)floating.setAttribute('aria-label',fullscreen?'Exit full screen map':'Open full screen map');
+  if(riderMap)setTimeout(()=>riderMap.invalidateSize(),80);
 }
 function toggleRiderMapFullscreen(){setRiderMapFullscreen(!document.getElementById('rider-live-route-panel')?.classList.contains('is-fullscreen'));}
+function exitRiderMapFullscreen(){setRiderMapFullscreen(false);}
+setRiderMapFullscreen(!document.getElementById('rider-live-route-panel')?.classList.contains('is-fullscreen'));}
 
 function bindRiderMapFullscreen(){
   const map=document.getElementById('rider-live-map');
-  if(map&&!map.dataset.fullscreenBound){map.dataset.fullscreenBound='1';map.addEventListener('dblclick',()=>toggleRiderMapFullscreen());}
+  if(map&&!map.dataset.fullscreenBound){
+    map.dataset.fullscreenBound='1';
+    map.addEventListener('dblclick',()=>toggleRiderMapFullscreen());
+  }
 }
 function startRiderLocationTracking(L){
   if(!navigator.geolocation){riderMapStatus('LOCATION UNAVAILABLE');return;}
@@ -103,6 +110,41 @@ async function renderLiveRouteMap(job){
     riderMapTripId=null;
   }
 }
+function demoRoutePoints(){
+  return [
+    [-1.286389,36.817223],[-1.284900,36.819100],[-1.283300,36.821400],[-1.281600,36.824000],
+    [-1.279800,36.826900],[-1.277500,36.829500],[-1.275200,36.832000],[-1.273100,36.834400],
+    [-1.270900,36.836700],[-1.268700,36.838900],[-1.266500,36.841000]
+  ];
+}
+let riderDemoTimer=null;
+async function startDemoTracking(){
+  const panel=document.getElementById('rider-live-route-panel');
+  if(!panel)return;
+  const L=await loadLeaflet();
+  if(riderDemoTimer)clearInterval(riderDemoTimer);
+  destroyRiderMap();
+  panel.classList.add('hidden');
+  const overlay=document.createElement('div');overlay.id='rider-demo-map-overlay';overlay.className='rider-demo-map-overlay';
+  overlay.innerHTML='<div class="rider-demo-map-head"><div><span class="eyebrow">DEMO TRACKING</span><strong>Live rider simulation</strong><small>Example Nairobi route · no real order is affected</small></div><button type="button" onclick="stopDemoTracking()" aria-label="Close demo">×</button></div><div id="rider-demo-map" class="rider-demo-map"></div><button type="button" class="rider-demo-exit" onclick="stopDemoTracking()">EXIT DEMO</button>';
+  document.body.appendChild(overlay);
+  const points=demoRoutePoints();
+  const map=L.map('rider-demo-map',{zoomControl:true,attributionControl:true});
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(map);
+  L.polyline(points,{weight:6,opacity:.9}).addTo(map);
+  L.marker(points[0],{title:'Demo restaurant'}).addTo(map).bindPopup('<strong>Demo restaurant</strong><br>Nairobi pickup');
+  L.marker(points[points.length-1],{title:'Demo customer'}).addTo(map).bindPopup('<strong>Demo customer</strong><br>Nairobi delivery');
+  const riderMarker=L.marker(points[0],{title:'Simulated rider'}).addTo(map);
+  map.fitBounds(L.latLngBounds(points),{padding:[30,30]});
+  let i=0;
+  riderMapStatus('DEMO');
+  riderDemoTimer=setInterval(()=>{
+    i=(i+1)%points.length;
+    riderMarker.setLatLng(points[i]);
+    if(i===points.length-1)map.setView(points[i],15,{animate:true});
+  },900);
+}
+function stopDemoTracking(){if(riderDemoTimer)clearInterval(riderDemoTimer);riderDemoTimer=null;document.getElementById('rider-demo-map-overlay')?.remove();}
 function mapsUrl(origin,destination){return 'https://www.google.com/maps/dir/?api=1&origin='+encodeURIComponent(origin||'')+'&destination='+encodeURIComponent(destination||'')+'&travelmode=two-wheeler&dir_action=navigate';}
 function unlockRiderAudio(){try{const C=window.AudioContext||window.webkitAudioContext;if(!C)return;if(!riderAudioContext)riderAudioContext=new C();if(riderAudioContext.state==='suspended')riderAudioContext.resume().catch(()=>{});}catch{}}
 function playAssignmentSound(){try{unlockRiderAudio();if(!riderAudioContext)return;const now=riderAudioContext.currentTime;[0,0.16].forEach((offset,i)=>{const osc=riderAudioContext.createOscillator(),gain=riderAudioContext.createGain();osc.type='sine';osc.frequency.value=i?880:660;gain.gain.setValueAtTime(0.0001,now+offset);gain.gain.exponentialRampToValueAtTime(0.16,now+offset+0.02);gain.gain.exponentialRampToValueAtTime(0.0001,now+offset+0.13);osc.connect(gain);gain.connect(riderAudioContext.destination);osc.start(now+offset);osc.stop(now+offset+0.15);});}catch{}}
@@ -140,24 +182,76 @@ function showAcceptedRoutePopup(job){
 }
 
 function renderRiderProfileModal(){
-  const r=rider||{};closeRiderProfile();
-  const avatar=r.profile_image_url?'<img id="rider-profile-preview" src="'+esc(r.profile_image_url)+'" alt="Rider profile photo">':'<span id="rider-profile-preview" class="rider-profile-preview-fallback">'+esc((r.name||'?')[0])+'</span>';
-  const html='<div id="rider-profile-overlay" class="rider-profile-overlay" onclick="if(event.target===this)closeRiderProfile()"><section class="rider-profile-modal" role="dialog" aria-modal="true" aria-label="Rider profile"><button type="button" class="rider-profile-close" onclick="closeRiderProfile()" aria-label="Close profile">×</button><div class="rider-profile-hero"><div class="rider-profile-avatar">'+avatar+'</div><div><span class="eyebrow">RIDER PROFILE</span><h2>'+esc(r.name||'Rider')+'</h2><p class="muted">Manage your personal, contact and payment details.</p></div></div><div id="rider-profile-message" class="rider-profile-message hidden"></div><form id="rider-profile-form" class="rider-profile-form" onsubmit="saveRiderProfile(event)"><div class="rider-profile-section"><span class="eyebrow">PERSONAL DETAILS</span><label>Full name<input name="name" value="'+esc(r.name)+'" required></label><label>Profile picture URL<input name="profile_image_url" type="url" value="'+esc(r.profile_image_url||'')+'" placeholder="https://..."><small>Leave blank to use your initials.</small></label></div><div class="rider-profile-section"><span class="eyebrow">CONTACT DETAILS</span><label>Phone & SMS number<input name="phone" type="tel" inputmode="tel" value="'+esc(r.phone||'')+'" required><small>This is your rider login and registered notification/SMS number.</small></label><label>Email address<input name="email" type="email" value="'+esc(r.email||'')+'" placeholder="you@example.com"></label></div><div class="rider-profile-section"><span class="eyebrow">PAYMENT DETAILS</span><label>Payout / M-Pesa number<input name="payout_phone" type="tel" inputmode="tel" value="'+esc(r.payout_phone||r.phone||'')+'" required><small>Used for rider delivery earnings when automatic payouts are enabled.</small></label></div><div class="rider-profile-section"><span class="eyebrow">VEHICLE DETAILS</span><label>Vehicle type<input name="vehicle_type" value="'+esc(r.vehicle_type||'Motorbike')+'"></label><label>Number plate<input name="number_plate" value="'+esc(r.number_plate||'')+'" placeholder="KXX 123X"></label></div><div class="rider-profile-section"><span class="eyebrow">SECURITY</span><label>Current password<input name="current_password" type="password" autocomplete="current-password" placeholder="Required only to change password"></label><label>New password<input name="new_password" type="password" autocomplete="new-password" placeholder="Leave blank to keep current password"></label></div><div class="rider-profile-actions"><button type="button" class="rider-profile-secondary" onclick="closeRiderProfile()">CANCEL</button><button type="submit" class="rider-profile-save" id="rider-profile-save">SAVE CHANGES</button></div></form><button type="button" class="rider-profile-logout" onclick="logoutRider()">SIGN OUT OF RIDER ACCOUNT</button></section></div>';
+  const r=rider||{};
+  closeRiderProfile();
+  const avatar=r.profile_image_url
+    ? '<img id="rider-profile-preview-image" src="'+esc(r.profile_image_url)+'" alt="Rider profile photo">'
+    : '<span id="rider-profile-preview-fallback" class="rider-profile-preview-fallback">'+esc((r.name||'?')[0])+'</span>';
+  const html='<div id="rider-profile-overlay" class="rider-profile-overlay" onclick="if(event.target===this)closeRiderProfile()">'+
+    '<section class="rider-profile-modal" role="dialog" aria-modal="true" aria-label="Rider profile">'+
+    '<button type="button" class="rider-profile-close" onclick="closeRiderProfile()" aria-label="Close profile">×</button>'+
+    '<div class="rider-profile-hero"><button type="button" class="rider-profile-avatar-button" onclick="openProfilePicturePicker()" aria-label="Change profile picture"><div class="rider-profile-avatar">'+avatar+'</div><span class="rider-profile-avatar-edit">+</span></button>'+
+    '<div><span class="eyebrow">RIDER PROFILE</span><h2>'+esc(r.name||'Rider')+'</h2><p class="muted">Manage your personal, contact and payment details.</p></div></div>'+
+    '<input id="rider-profile-picture-input" type="file" accept="image/*" class="rider-profile-picture-input" onchange="handleProfilePicture(event)">'+
+    '<div class="rider-profile-picture-actions"><button type="button" onclick="openProfilePicturePicker()">ADD / CHANGE PROFILE PICTURE</button><button type="button" class="secondary" onclick="clearProfilePicture()">REMOVE PHOTO</button><small>Choose a photo directly from your phone or computer.</small></div>'+
+    '<div id="rider-profile-message" class="rider-profile-message hidden"></div>'+
+    '<form id="rider-profile-form" class="rider-profile-form" onsubmit="saveRiderProfile(event)">'+
+    '<div class="rider-profile-section"><span class="eyebrow">PERSONAL DETAILS</span><label>Full name<input name="name" value="'+esc(r.name)+'" required></label></div>'+
+    '<div class="rider-profile-section"><span class="eyebrow">CONTACT DETAILS</span><label>Phone & SMS number<input name="phone" type="tel" inputmode="tel" value="'+esc(r.phone||'')+'" required><small>This is your rider login and registered notification/SMS number.</small></label><label>Email address<input name="email" type="email" value="'+esc(r.email||'')+'" placeholder="you@example.com"></label></div>'+
+    '<div class="rider-profile-section"><span class="eyebrow">PAYMENT DETAILS</span><label>Payout / M-Pesa number<input name="payout_phone" type="tel" inputmode="tel" value="'+esc(r.payout_phone||r.phone||'')+'" required><small>Used for rider delivery earnings when automatic payouts are enabled.</small></label></div>'+
+    '<div class="rider-profile-section"><span class="eyebrow">VEHICLE DETAILS</span><label>Vehicle type<input name="vehicle_type" value="'+esc(r.vehicle_type||'Motorbike')+'"></label><label>Number plate<input name="number_plate" value="'+esc(r.number_plate||'')+'" placeholder="KXX 123X"></label></div>'+
+    '<div class="rider-profile-section"><span class="eyebrow">SECURITY</span><label>Current password<input name="current_password" type="password" autocomplete="current-password" placeholder="Required only to change password"></label><label>New password<input name="new_password" type="password" autocomplete="new-password" placeholder="Leave blank to keep current password"></label></div>'+
+    '<div class="rider-profile-actions"><button type="button" class="rider-profile-secondary" onclick="closeRiderProfile()">CANCEL</button><button type="submit" class="rider-profile-save" id="rider-profile-save">SAVE CHANGES</button></div></form>'+
+    '<button type="button" class="rider-profile-logout" onclick="logoutRider()">SIGN OUT OF RIDER ACCOUNT</button></section></div>';
   document.body.insertAdjacentHTML('beforeend',html);
 }
+function openProfilePicturePicker(){document.getElementById('rider-profile-picture-input')?.click();}
+function handleProfilePicture(event){
+  const file=event.target.files?.[0];
+  if(!file)return;
+  if(!file.type.startsWith('image/')){showRiderProfileMessage('Please choose an image file.',true);return;}
+  if(file.size>5*1024*1024){showRiderProfileMessage('Please choose an image smaller than 5 MB.',true);return;}
+  const reader=new FileReader();
+  reader.onload=()=>setProfilePreview(String(reader.result||''));
+  reader.readAsDataURL(file);
+}
+function setProfilePreview(src){
+  const wrap=document.querySelector('.rider-profile-avatar');
+  if(!wrap)return;
+  wrap.innerHTML=src?'<img id="rider-profile-preview-image" src="'+esc(src)+'" alt="Rider profile photo">':'<span id="rider-profile-preview-fallback" class="rider-profile-preview-fallback">'+esc((rider?.name||'?')[0])+'</span>';
+  wrap.classList.toggle('has-photo',Boolean(src));
+  const remove=document.querySelector('.rider-profile-picture-actions .secondary');
+  if(remove)remove.disabled=!src;
+  const input=document.getElementById('rider-profile-picture-input');
+  if(input&&src)input.dataset.preview=src;
+}
+function clearProfilePicture(){
+  setProfilePreview('');
+  const input=document.getElementById('rider-profile-picture-input');
+  if(input){input.value='';input.dataset.preview='';input.dataset.remove='1';}
+}
+function closeRiderProfile(){document.getElementById('rider-profile-overlay')?.remove();}
 function closeRiderProfile(){document.getElementById('rider-profile-overlay')?.remove();}
 function showRiderProfileMessage(message,error=false){const el=document.getElementById('rider-profile-message');if(!el)return;el.textContent=message;el.className='rider-profile-message '+(error?'error':'success');}
 async function saveRiderProfile(e){
-  e.preventDefault();const form=e.currentTarget,button=document.getElementById('rider-profile-save'),values=Object.fromEntries(new FormData(form).entries());
+  e.preventDefault();
+  const form=e.currentTarget,button=document.getElementById('rider-profile-save'),values=Object.fromEntries(new FormData(form).entries());
+  const pictureInput=document.getElementById('rider-profile-picture-input');
+  const preview=pictureInput?.dataset.preview;
+  if(preview)values.profile_image_url=preview;
+  else if(pictureInput?.dataset.remove)values.profile_image_url='';
   button.disabled=true;button.textContent='SAVING…';
-  try{const data=await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/profile',{method:'PUT',body:JSON.stringify(values)});rider=data.rider;updateRiderProfileButton();showRiderProfileMessage('Profile updated successfully.');await loadRiderDashboard();setTimeout(closeRiderProfile,700);}
-  catch(err){showRiderProfileMessage(err.message||'Could not update profile.',true);}
+  try{
+    const data=await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/profile',{method:'PUT',body:JSON.stringify(values)});
+    rider=data.rider;updateRiderProfileButton();showRiderProfileMessage('Profile updated successfully.');
+    await loadRiderDashboard();setTimeout(closeRiderProfile,700);
+  }catch(err){showRiderProfileMessage(err.message||'Could not update profile.',true);}
   finally{button.disabled=false;button.textContent='SAVE CHANGES';}
 }
 function updateRiderProfileButton(){
   const button=document.getElementById('rider-profile-nav');if(!button||!rider)return;
   const image=rider.profile_image_url?'<img src="'+esc(rider.profile_image_url)+'" alt="">':'<span class="rider-nav-avatar-fallback">'+esc((rider.name||'?')[0])+'</span>';
-  button.innerHTML=image+'<span>PROFILE</span>';button.classList.remove('hidden');
+  button.innerHTML=image;button.setAttribute('aria-label','Open rider profile');button.classList.remove('hidden');
 }
 async function loginRider(e){
   e?.preventDefault();
@@ -255,8 +349,12 @@ function activeCard(a){
   else if(current==='ARRIVED_AT_RESTAURANT') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'PICKED_UP\')">PICKED UP</button>';
   else if(current==='PICKED_UP') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'ON_THE_WAY\')">ON THE WAY</button>';
   else if(current==='ON_THE_WAY') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'DELIVERED\')">MARK DELIVERED</button>';
-  const mapAction=current!=='ASSIGNED'?'<a class="rider-map-action" href="'+mapsUrl(a.pickup_address,a.delivery_address)+'" target="_blank" rel="noopener">VIEW ROUTE IN GOOGLE MAPS</a>':'';
-  return '<article class="rider-card"><h3>'+esc(a.order_number)+' · '+esc(a.customer_name)+'</h3><div class="rider-meta"><span>'+esc(a.pickup_address||'Restaurant')+'</span><span>→</span><span>'+esc(a.delivery_address||a.delivery_note||'Customer location')+'</span></div>'+statusSteps(current)+'<p><strong>Customer:</strong> '+esc(a.customer_name)+' · '+esc(a.phone||'')+'</p><p><strong>Order:</strong> '+esc(a.order_number)+' · <strong>Delivery fee:</strong> '+riderMoney(a.delivery_fee)+'</p><p><strong>Distance:</strong> '+(Number(a.route_distance_meters||0)/1000).toFixed(1)+' km</p><div class="rider-actions">'+action+'</div></article>'+(current!=='ASSIGNED'?'<section id="rider-live-route-panel" class="rider-live-route-panel"><div class="rider-live-route-head"><div><span class="eyebrow">LIVE ROUTE</span><h3>Delivery navigation</h3><p>Follow the same two-wheeler route used by the delivery system.</p></div><div class="rider-live-route-tools"><span id="rider-live-map-status" class="rider-live-map-status">LOADING…</span><button type="button" id="rider-map-fullscreen-button" class="rider-map-fullscreen-button" onclick="toggleRiderMapFullscreen()">FULL SCREEN</button></div></div><div class="rider-live-map-wrap"><div id="rider-live-map" class="rider-live-map"></div><button type="button" class="rider-map-floating-fullscreen" onclick="toggleRiderMapFullscreen()" aria-label="Open map full screen">⛶</button></div><div class="rider-live-route-note">Tap <strong>FULL SCREEN</strong> or ⛶ for an easier map view. Scroll to move around the map and pinch or use + / − to zoom.</div></section>':'');
+  const mapAction=current!=='ASSIGNED'?'<a class="rider-map-action" href="'+mapsUrl(a.pickup_address,a.delivery_address)+'" target="_blank" rel="noopener">GOOGLE MAPS</a>':'';
+  return '<article class="rider-card rider-active-card"><div class="rider-active-top"><div><span class="eyebrow">ACTIVE DELIVERY</span><h3>'+esc(a.order_number)+'</h3></div><span class="rider-active-status">'+esc(current.replaceAll('_',' '))+'</span></div>'+
+    '<div class="rider-active-route"><div><small>FROM</small><strong>'+esc(a.pickup_address||'Restaurant')+'</strong></div><span>→</span><div><small>TO</small><strong>'+esc(a.delivery_address||a.delivery_note||'Customer location')+'</strong></div></div>'+
+    '<div class="rider-active-info"><div><small>CUSTOMER</small><strong>'+esc(a.customer_name||'Customer')+'</strong></div><div><small>FEE</small><strong>'+riderMoney(a.delivery_fee)+'</strong></div><div><small>DISTANCE</small><strong>'+((Number(a.route_distance_meters||0)/1000).toFixed(1))+' km</strong></div></div>'+
+    '<div class="rider-status-steps-wrap">'+statusSteps(current)+'</div><div class="rider-actions">'+action+mapAction+'</div></article>'+
+    (current!=='ASSIGNED'?'<section id="rider-live-route-panel" class="rider-live-route-panel"><div class="rider-live-route-head"><div><span class="eyebrow">LIVE ROUTE</span><h3>Delivery navigation</h3><p>Follow the same two-wheeler route used by the delivery system.</p></div><div class="rider-live-route-tools"><span id="rider-live-map-status" class="rider-live-map-status">LOADING…</span><button type="button" id="rider-map-fullscreen-button" class="rider-map-fullscreen-button" onclick="toggleRiderMapFullscreen()" aria-label="Open full screen map">⛶</button></div></div><div class="rider-live-map-wrap"><div id="rider-live-map" class="rider-live-map"></div><button type="button" id="rider-map-floating-exit" class="rider-map-floating-fullscreen" onclick="toggleRiderMapFullscreen()" aria-label="Open full screen map">⛶</button></div><div class="rider-live-route-note">Your live position follows your phone GPS while this delivery is active.</div><button type="button" class="rider-demo-launch" onclick="startDemoTracking()">TEST LIVE TRACKING (DEMO)</button></section>':'<button type="button" class="rider-demo-launch standalone" onclick="startDemoTracking()">TEST LIVE TRACKING (DEMO)</button>');
 }
 function renderAvailable(list){
   if(!list.length)return '<p class="muted">No new assignments.</p>';

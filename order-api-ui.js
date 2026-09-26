@@ -26,6 +26,7 @@ async function cancelCustomerOrder(id){
 }
 function showRefundMessage(text){const existing=document.getElementById('refund-toast');if(existing)existing.remove();document.body.insertAdjacentHTML('beforeend',`<div id="refund-toast" class="panel" style="position:fixed;left:20px;right:20px;bottom:20px;z-index:30;box-shadow:0 15px 40px rgba(0,0,0,.18)"><strong>${text}</strong></div>`);setTimeout(()=>document.getElementById('refund-toast')?.remove(),5000);}
 
+async function markOrderReceived(id,b){b.disabled=true;b.textContent="UPDATING…";try{await fetch(ORDER_API_BASE+"/api/orders/"+encodeURIComponent(id)+"/confirm-delivery",{method:"POST",headers:{"Content-Type":"application/json"}});await renderRemoteOrder(false)}catch(err){b.disabled=false;b.textContent="MARK DELIVERED";alert(err.message||"Could not update the order.")}}
 function connectCustomerEvents(orderId){
   const old=window.customerOrderEvents; if(old)old.close();
   const source=new EventSource(`${ORDER_API_BASE}/api/events?businessId=${encodeURIComponent(window.CUSTOMER_ORDER_BUSINESS_ID||'11111111-1111-4111-8111-111111111111')}&orderId=${encodeURIComponent(orderId)}`);

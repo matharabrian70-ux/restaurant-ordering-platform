@@ -117,7 +117,7 @@ function demoRoutePoints(){
   ];
 }
 let riderDemoTimer=null;
-function startDemoTracking(){
+async function startDemoTracking(){
   const panel=document.getElementById('rider-live-route-panel');
   if(!panel)return;
   const L=await loadLeaflet();

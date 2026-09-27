@@ -630,3 +630,50 @@ body.rider-map-fullscreen-open{overflow:hidden}
   .rider-delivery-panel{padding:11px!important}
   .rider-delivery-panel header h2{font-size:19px!important}
 }
+/* Mobile viewport correction: prevent desktop-width overlays and horizontal page drift. */
+html,body{max-width:100%;overflow-x:hidden}
+@media(max-width:650px){
+  .rider-detail-overlay{padding:8px!important;overflow:hidden!important;place-items:center!important}
+  .rider-detail-modal{
+    box-sizing:border-box!important;
+    width:calc(100vw - 16px)!important;
+    max-width:calc(100vw - 16px)!important;
+    max-height:calc(100dvh - 16px)!important;
+    padding:16px!important;
+    border-radius:16px!important;
+    overflow-x:hidden!important;
+  }
+  .rider-detail-modal h2{font-size:23px!important;line-height:1.05!important}
+  .rider-detail-modal>.muted{font-size:10px!important;line-height:1.3!important}
+  .rider-detail-close{width:38px!important;height:38px!important;right:10px!important;top:10px!important}
+  .rider-week-modal{
+    padding:14px 14px 10px!important;
+    max-height:calc(100dvh - 16px)!important;
+  }
+  .rider-week-modal .eyebrow{font-size:8px!important;margin-bottom:4px!important}
+  .rider-week-modal h2{font-size:22px!important;margin:0 0 4px!important;padding-right:42px!important}
+  .rider-week-modal>.muted{margin:0 0 6px!important;font-size:9px!important}
+  .rider-week-list{margin-top:4px!important}
+  .rider-week-row{
+    box-sizing:border-box!important;
+    min-height:0!important;
+    height:52px!important;
+    padding:6px 0!important;
+    gap:8px!important;
+  }
+  .rider-week-row span{min-width:0!important;gap:2px!important}
+  .rider-week-row strong{font-size:11px!important;line-height:1.1!important}
+  .rider-week-row small{font-size:8px!important;line-height:1.1!important}
+  .rider-week-row>strong{font-size:10px!important;flex:0 0 auto!important}
+  .rider-detail-grid{gap:7px!important;margin:12px 0!important}
+  .rider-detail-grid>div{padding:10px!important}
+  .rider-detail-grid span,.rider-detail-lines span{font-size:8px!important}
+  .rider-detail-grid strong{font-size:14px!important}
+}
+/* Keep the active delivery content inside the phone viewport. */
+@media(max-width:650px){
+  .rider-delivery-panel,.rider-active-card,.rider-active-info,.rider-active-route{box-sizing:border-box!important;max-width:100%!important}
+  .rider-active-info>div{overflow:hidden!important}
+  .rider-active-info strong,.rider-active-route strong{overflow-wrap:anywhere!important}
+  .rider-status-steps-wrap{max-width:100%!important;overflow-x:auto!important}
+}

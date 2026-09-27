@@ -697,3 +697,18 @@ body.rider-map-fullscreen-open{overflow:hidden}
   .rider-history-row span,.rider-week-row span{min-width:0!important;overflow:hidden!important}
   .rider-history-row strong,.rider-history-row small{overflow-wrap:anywhere!important}
 }
+
+
+/* Phase 2 delivery controls */
+.rider-assignment-actions{display:grid;grid-template-columns:auto 1fr;gap:10px;margin-top:16px}
+.rider-assignment-decline,.rider-decline-inline{border:1px solid #d8b9b9;background:#fff;color:#8a3f3f;border-radius:999px;font-weight:900;letter-spacing:.05em;cursor:pointer}
+.rider-assignment-decline{padding:13px 20px}
+.rider-decline-inline{padding:11px 16px}
+.rider-assignment-decline:hover,.rider-decline-inline:hover{background:#faf2f2}
+.rider-assigned-actions{display:grid;grid-template-columns:auto 1fr;gap:8px;width:100%}
+.rider-assigned-actions button{min-width:0}
+@media(max-width:650px){
+  .rider-assignment-actions{grid-template-columns:1fr;gap:8px}
+  .rider-assignment-decline{order:2}
+  .rider-assigned-actions{grid-template-columns:1fr 1.6fr}
+}

@@ -1269,31 +1269,160 @@ app.get('/api/admin/riders/:id/trips',requireRiderModule,requireManager,async(re
   const result=await pool.query(`select t.id,t.assigned_at,t.completed_at,o.order_number,o.status,o.delivery_address,o.route_distance_meters,o.route_duration_seconds,o.delivery_fee,e.amount as rider_earning,e.status as earning_status from rider_trips t join orders o on o.id=t.order_id left join rider_earnings e on e.trip_id=t.id where t.rider_id=$1 order by t.assigned_at desc limit 200`,[req.params.id]);
   res.json(result.rows);
 });
+async function getRiderConnectionState(businessId, client=pool){
+  const result=await client.query('select coalesce(rider_connected,false) as rider_connected from business_connections where business_id=$1 limit 1',[businessId]);
+  return Boolean(result.rows[0]?.rider_connected);
+}
+
+async function createRiderTripAssignment(client,{businessId,orderId,riderId,riderConnected}){
+  const riderResult=await client.query(`select r.*,coalesce(p.online,false) as online,
+      exists(select 1 from rider_trips t join orders o on o.id=t.order_id where t.rider_id=r.id and t.completed_at is null) as busy
+      from riders r left join rider_presence p on p.rider_id=r.id
+      where r.id=$1 and r.business_id=$2 and r.active=true
+      for update of r`,[riderId,businessId]);
+  if(!riderResult.rowCount) throw Object.assign(new Error('Rider not found'),{status:404});
+  const rider=riderResult.rows[0];
+  if(!rider.online||rider.busy) throw Object.assign(new Error('Rider must be online and available'),{status:409});
+  const existingTrip=await client.query(`select 1 from rider_trips where order_id=$1 and completed_at is null limit 1`,[orderId]);
+  if(existingTrip.rowCount) throw Object.assign(new Error('A rider is already assigned to this order and is awaiting acceptance'),{status:409});
+  const trip=await client.query('insert into rider_trips(id,rider_id,order_id) values(gen_random_uuid(),$1,$2) returning id',[riderId,orderId]);
+  await client.query("insert into delivery_events(id,trip_id,status) values(gen_random_uuid(),$1,'ASSIGNED')",[trip.rows[0].id]);
+  await client.query(`update orders
+    set status=case when $2 then 'ACCEPTED' else 'OUT_FOR_DELIVERY' end,
+        out_for_delivery_at=case when $2 then out_for_delivery_at else coalesce(out_for_delivery_at,now()) end,
+        delivery_status='ASSIGNED',
+        delivery_fee_status='HELD',
+        rider_earning=delivery_fee
+    where id=$1`,[orderId,riderConnected]);
+  return {tripId:trip.rows[0].id,rider};
+}
+
 app.post('/api/orders/:id/assign-rider',requireRiderModule,requireManagerOrder,async(req,res)=>{
   const client=await pool.connect();
   try{
-    const {riderId}=req.body; if(!riderId) return res.status(400).json({error:'riderId is required'});
+    const {riderId}=req.body;
+    if(!riderId)return res.status(400).json({error:'riderId is required'});
     await client.query('begin');
     const orderResult=await client.query('select * from orders where id=$1 for update',[req.params.id]);
     if(!orderResult.rowCount){await client.query('rollback');return res.status(404).json({error:'Order not found'});}
     const order=orderResult.rows[0];
     if(order.status!=='ACCEPTED'){await client.query('rollback');return res.status(409).json({error:'Only accepted orders can be sent for delivery'});}
-    const riderResult=await client.query(`select r.*,coalesce(p.online,false) as online,exists(select 1 from rider_trips t join orders o on o.id=t.order_id where t.rider_id=r.id and t.completed_at is null) as busy from riders r left join rider_presence p on p.rider_id=r.id where r.id=$1 and r.business_id=$2 and r.active=true for update of r`,[riderId,order.business_id]);
-    if(!riderResult.rowCount)return res.status(404).json({error:'Rider not found'});
-    if(!riderResult.rows[0].online||riderResult.rows[0].busy){await client.query('rollback');return res.status(409).json({error:'Rider must be online and available'});}
-    const existingTrip=await client.query(`select 1 from rider_trips where order_id=$1 and completed_at is null limit 1`,[order.id]);
-    if(existingTrip.rowCount){await client.query('rollback');return res.status(409).json({error:'A rider is already assigned to this order and is awaiting acceptance'});}
-    const trip=await client.query('insert into rider_trips(id,rider_id,order_id) values(gen_random_uuid(),$1,$2) returning id',[riderId,order.id]);
-    await client.query('insert into delivery_events(id,trip_id,status) values(gen_random_uuid(),$1,\'ASSIGNED\')',[trip.rows[0].id]);
-    await client.query(`update orders set delivery_status='ASSIGNED',delivery_fee_status='HELD',rider_earning=delivery_fee where id=$1`,[order.id]);
+    const riderConnected=await getRiderConnectionState(order.business_id,client);
+    const assignment=await createRiderTripAssignment(client,{businessId:order.business_id,orderId:order.id,riderId,riderConnected});
     await client.query('commit');
-    broadcastOrder((await pool.query('select * from orders where id=$1',[order.id])).rows[0],{reason:'restaurant.rider_assigned',notification:'Rider assigned — awaiting rider acceptance'});
-    broadcastRider({businessId:order.business_id,riderId:riderId,orderId:order.id,action:'DELIVERY_ASSIGNED',data:{tripId:trip.rows[0].id,status:'ASSIGNED'}});
+    const updatedOrder=(await pool.query('select * from orders where id=$1',[order.id])).rows[0];
+    const notification=riderConnected?'Rider assigned — awaiting rider acceptance':'Rider assigned — delivery is now in progress';
+    broadcastOrder(updatedOrder,{reason:'restaurant.rider_assigned',notification,riderConnected});
+    broadcastRider({businessId:order.business_id,riderId,orderId:order.id,action:'DELIVERY_ASSIGNED',data:{tripId:assignment.tripId,status:'ASSIGNED',riderConnected}});
     sendRiderAssignmentSms({businessId:order.business_id,riderId,orderId:order.id}).catch(error=>console.error('Rider assignment SMS failed:',error.message));
-    res.json({ok:true,tripId:trip.rows[0].id});
-  }catch(error){try{await client.query('rollback')}catch{}res.status(500).json({error:error.message||'Unable to assign rider'});}finally{client.release();}
+    res.json({ok:true,tripId:assignment.tripId,riderConnected,trackingStatus:updatedOrder.status});
+  }catch(error){
+    try{await client.query('rollback')}catch{}
+    res.status(error.status||500).json({error:error.message||'Unable to assign rider'});
+  }finally{client.release();}
 });
 
+app.post('/api/orders/:id/cancel-rider-assignment',requireRiderModule,requireManagerOrder,async(req,res)=>{
+  const client=await pool.connect();
+  try{
+    await client.query('begin');
+    const orderResult=await client.query('select * from orders where id=$1 for update',[req.params.id]);
+    if(!orderResult.rowCount){await client.query('rollback');return res.status(404).json({error:'Order not found'});}
+    const order=orderResult.rows[0];
+    const tripResult=await client.query(`select t.*,r.name as rider_name
+      from rider_trips t join riders r on r.id=t.rider_id
+      where t.order_id=$1 and t.completed_at is null
+      order by t.assigned_at desc limit 1
+      for update of t`,[order.id]);
+    if(!tripResult.rowCount){await client.query('rollback');return res.status(404).json({error:'No active rider assignment'});}
+    const trip=tripResult.rows[0];
+    const latest=await client.query('select status from delivery_events where trip_id=$1 order by created_at desc limit 1',[trip.id]);
+    const current=String(latest.rows[0]?.status||'ASSIGNED');
+    if(!['ASSIGNED','ACCEPTED','ARRIVED_AT_RESTAURANT'].includes(current)){
+      await client.query('rollback');
+      return res.status(409).json({error:'This delivery can only be reassigned before the rider picks it up'});
+    }
+    await client.query("insert into delivery_events(id,trip_id,status,note) values(gen_random_uuid(),$1,'CANCELLED',$2)",[trip.id,'Assignment cancelled by restaurant manager']);
+    await client.query("update rider_trips set completed_at=now(),confirmed_by='manager' where id=$1",[trip.id]);
+    await client.query("update orders set status='ACCEPTED',delivery_status='REASSIGN_REQUIRED' where id=$1",[order.id]);
+    await client.query('commit');
+    const updated=(await pool.query('select * from orders where id=$1',[order.id])).rows[0];
+    broadcastOrder(updated,{reason:'restaurant.rider_assignment_cancelled',notification:'Rider assignment cancelled — reassignment required'});
+    broadcastRider({businessId:order.business_id,riderId:trip.rider_id,orderId:order.id,action:'DELIVERY_ASSIGNMENT_CANCELLED',data:{tripId:trip.id,status:'CANCELLED'}});
+    res.json({ok:true,order:updated,previousRiderId:trip.rider_id});
+  }catch(error){
+    try{await client.query('rollback')}catch{}
+    res.status(error.status||500).json({error:error.message||'Unable to cancel rider assignment'});
+  }finally{client.release();}
+});
+
+app.post('/api/orders/:id/reassign-rider',requireRiderModule,requireManagerOrder,async(req,res)=>{
+  const client=await pool.connect();
+  try{
+    const {riderId}=req.body;
+    if(!riderId)return res.status(400).json({error:'riderId is required'});
+    await client.query('begin');
+    const orderResult=await client.query('select * from orders where id=$1 for update',[req.params.id]);
+    if(!orderResult.rowCount){await client.query('rollback');return res.status(404).json({error:'Order not found'});}
+    const order=orderResult.rows[0];
+    const tripResult=await client.query(`select t.*,r.name as rider_name
+      from rider_trips t join riders r on r.id=t.rider_id
+      where t.order_id=$1 and t.completed_at is null
+      order by t.assigned_at desc limit 1
+      for update of t`,[order.id]);
+    if(!tripResult.rowCount){await client.query('rollback');return res.status(409).json({error:'No active rider assignment to reassign'});}
+    const oldTrip=tripResult.rows[0];
+    if(String(oldTrip.rider_id)===String(riderId)){await client.query('rollback');return res.status(409).json({error:'Choose a different rider'});}
+    const latest=await client.query('select status from delivery_events where trip_id=$1 order by created_at desc limit 1',[oldTrip.id]);
+    const current=String(latest.rows[0]?.status||'ASSIGNED');
+    if(!['ASSIGNED','ACCEPTED','ARRIVED_AT_RESTAURANT'].includes(current)){
+      await client.query('rollback');
+      return res.status(409).json({error:'This delivery can only be reassigned before the rider picks it up'});
+    }
+    const riderConnected=await getRiderConnectionState(order.business_id,client);
+    await client.query("insert into delivery_events(id,trip_id,status,note) values(gen_random_uuid(),$1,'CANCELLED',$2)",[oldTrip.id,'Previous rider assignment replaced by manager']);
+    await client.query("update rider_trips set completed_at=now(),confirmed_by='manager' where id=$1",[oldTrip.id]);
+    const assignment=await createRiderTripAssignment(client,{businessId:order.business_id,orderId:order.id,riderId,riderConnected});
+    await client.query('commit');
+    const updated=(await pool.query('select * from orders where id=$1',[order.id])).rows[0];
+    const notification=riderConnected?'Rider reassigned — awaiting new rider acceptance':'Rider reassigned — delivery remains in progress';
+    broadcastOrder(updated,{reason:'restaurant.rider_reassigned',notification,riderConnected});
+    broadcastRider({businessId:order.business_id,riderId:oldTrip.rider_id,orderId:order.id,action:'DELIVERY_REASSIGNED',data:{tripId:oldTrip.id,status:'CANCELLED'}});
+    broadcastRider({businessId:order.business_id,riderId,orderId:order.id,action:'DELIVERY_ASSIGNED',data:{tripId:assignment.tripId,status:'ASSIGNED',riderConnected,reassigned:true}});
+    sendRiderAssignmentSms({businessId:order.business_id,riderId,orderId:order.id}).catch(error=>console.error('Rider reassignment SMS failed:',error.message));
+    res.json({ok:true,tripId:assignment.tripId,previousRiderId:oldTrip.rider_id,riderConnected,trackingStatus:updated.status});
+  }catch(error){
+    try{await client.query('rollback')}catch{}
+    res.status(error.status||500).json({error:error.message||'Unable to reassign rider'});
+  }finally{client.release();}
+});
+
+app.post('/api/riders/:id/deliveries/:tripId/decline',requireRiderModule,requireRiderAuth,async(req,res)=>{
+  const client=await pool.connect();
+  try{
+    await client.query('begin');
+    const result=await client.query(`select t.*,o.status as order_status,o.business_id,o.id as order_id
+      from rider_trips t join orders o on o.id=t.order_id
+      where t.id=$1 and t.rider_id=$2 and t.completed_at is null
+      for update`,[req.params.tripId,req.rider.id]);
+    if(!result.rowCount){await client.query('rollback');return res.status(404).json({error:'Delivery not found'});}
+    const trip=result.rows[0];
+    const latest=await client.query('select status from delivery_events where trip_id=$1 order by created_at desc limit 1',[trip.id]);
+    const current=String(latest.rows[0]?.status||'ASSIGNED');
+    if(current!=='ASSIGNED'){await client.query('rollback');return res.status(409).json({error:'You can only decline a delivery before accepting it'});}
+    await client.query("insert into delivery_events(id,trip_id,status,note) values(gen_random_uuid(),$1,'DECLINED',$2)",[trip.id,String(req.body.note||'Rider declined the delivery')]);
+    await client.query("update rider_trips set completed_at=now(),confirmed_by='rider' where id=$1",[trip.id]);
+    await client.query("update orders set status='ACCEPTED',delivery_status='REASSIGN_REQUIRED' where id=$1",[trip.order_id]);
+    await client.query('commit');
+    const updated=(await pool.query('select * from orders where id=$1',[trip.order_id])).rows[0];
+    broadcastOrder(updated,{reason:'rider.declined',notification:'Rider declined the delivery — reassignment required'});
+    broadcastRider({businessId:trip.business_id,riderId:trip.rider_id,orderId:trip.order_id,action:'DELIVERY_DECLINED',data:{tripId:trip.id,status:'DECLINED'}});
+    res.json({ok:true,status:'DECLINED'});
+  }catch(error){
+    try{await client.query('rollback')}catch{}
+    res.status(error.status||500).json({error:error.message||'Unable to decline delivery'});
+  }finally{client.release();}
+});
 
 app.get('/api/stations',requireManager,async(req,res)=>{
   try{

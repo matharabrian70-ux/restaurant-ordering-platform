@@ -173,11 +173,26 @@ function showDeliveryAssignmentPopup(job){
     '<div class="rider-assignment-order"><strong>'+esc(job.order_number)+'</strong><span>'+esc(job.restaurant_name||'Restaurant')+'</span></div>'+
     '<div class="rider-assignment-grid"><div><small>CUSTOMER</small><strong>'+esc(job.customer_name||'Customer')+'</strong></div><div><small>DELIVERY FEE</small><strong>'+riderMoney(job.delivery_fee)+'</strong></div><div><small>DISTANCE</small><strong>'+((Number(job.route_distance_meters||0)/1000).toFixed(1))+' km</strong></div><div><small>ETA</small><strong>'+((Number(job.route_duration_seconds||0)/60).toFixed(0))+' min</strong></div></div>'+
     '<div class="rider-assignment-route"><div><span class="route-dot pickup"></span><div><small>PICK UP</small><strong>'+esc(job.pickup_address||job.restaurant_name||'Restaurant')+'</strong></div></div><div class="route-line"></div><div><span class="route-dot dropoff"></span><div><small>DELIVER TO</small><strong>'+esc(job.delivery_address||'Customer location')+'</strong></div></div></div>'+
-    '<div class="rider-assignment-actions"><button type="button" class="rider-assignment-accept" onclick="acceptAssignmentPopup(\''+esc(job.trip_id||'')+'\')">ACCEPT ORDER</button></div>'+
+    '<div class="rider-assignment-actions"><button type="button" class="rider-assignment-decline" onclick="declineAssignmentPopup(\\''+esc(job.trip_id||'')+'\\')">DECLINE</button><button type="button" class="rider-assignment-accept" onclick="acceptAssignmentPopup(\\''+esc(job.trip_id||'')+'\\')">ACCEPT ORDER</button></div>'+
     '</section>';
   document.body.appendChild(el);playAssignmentSound();
 }
 function closeAssignmentPopup(){document.getElementById('rider-assignment-popup')?.remove();}
+async function declineAssignmentPopup(tripId){
+  if(!tripId)return;
+  if(!confirm('Decline this delivery assignment? It will be returned to the restaurant for reassignment.'))return;
+  const button=document.querySelector('.rider-assignment-decline');
+  if(button){button.disabled=true;button.textContent='DECLINING…';}
+  try{
+    await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/deliveries/'+encodeURIComponent(tripId)+'/decline',{method:'POST',body:JSON.stringify({})});
+    closeAssignmentPopup();
+    await loadRiderDashboard();
+  }catch(err){
+    if(button){button.disabled=false;button.textContent='DECLINE';}
+    alert(err.message||'Could not decline delivery.');
+  }
+}
+
 async function acceptAssignmentPopup(tripId){
   const button=document.querySelector('.rider-assignment-accept');if(button){button.disabled=true;button.textContent='ACCEPTING…';}
   try{await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/deliveries/'+encodeURIComponent(tripId)+'/accept',{method:'POST',body:JSON.stringify({})});
@@ -394,6 +409,14 @@ function updateOnlineButton(online){
 }
 async function dashboardData(){return riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/dashboard');}
 async function acceptTrip(tripId){try{await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/deliveries/'+encodeURIComponent(tripId)+'/accept',{method:'POST',body:JSON.stringify({})});await loadRiderDashboard();}catch(err){alert(err.message||'Could not accept delivery.');}}
+async function declineTrip(tripId){
+  if(!tripId)return;
+  if(!confirm('Decline this delivery? The restaurant will be able to reassign it.'))return;
+  try{
+    await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/deliveries/'+encodeURIComponent(tripId)+'/decline',{method:'POST',body:JSON.stringify({})});
+    await loadRiderDashboard();
+  }catch(err){alert(err.message||'Could not decline delivery.');}
+}
 async function setTripStatus(tripId,status){
   const route={ARRIVED_AT_RESTAURANT:'arrived',PICKED_UP:'picked-up',ON_THE_WAY:'on-the-way',DELIVERED:'delivered'}[status];
   if(!route)return;
@@ -433,7 +456,7 @@ function activeCard(a){
   if(!a)return '<div class="empty" style="padding:30px 10px"><h3>No active delivery.</h3><p>When the restaurant assigns a job to you, it will appear here.</p></div>';
   const current=(a.delivery_status||'ASSIGNED');
   let action='';
-  if(current==='ASSIGNED') action='<button onclick="acceptTrip(\''+a.trip_id+'\')">ACCEPT DELIVERY</button>';
+  if(current==='ASSIGNED') action='<div class="rider-assigned-actions"><button class="rider-decline-inline" onclick="declineTrip(\\''+a.trip_id+'\\')">DECLINE</button><button onclick="acceptTrip(\\''+a.trip_id+'\\')">ACCEPT DELIVERY</button></div>';
   else if(current==='ACCEPTED') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'ARRIVED_AT_RESTAURANT\')">ARRIVED AT RESTAURANT</button>';
   else if(current==='ARRIVED_AT_RESTAURANT') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'PICKED_UP\')">PICKED UP</button>';
   else if(current==='PICKED_UP') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'ON_THE_WAY\')">ON THE WAY</button>';

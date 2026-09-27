@@ -276,10 +276,14 @@ async function saveRiderProfile(e){
   }catch(err){showRiderProfileMessage(err.message||'Could not update profile.',true);}
   finally{button.disabled=false;button.textContent='SAVE CHANGES';}
 }
+function riderAvatarMarkup(sizeClass){
+  const fallback='<span class="'+sizeClass+'-fallback">'+esc((rider?.name||'?')[0])+'</span>';
+  if(!rider?.profile_image_url)return fallback;
+  return '<img class="'+sizeClass+'-photo" src="'+esc(rider.profile_image_url)+'" alt="'+esc(rider.name||'Rider')+'" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'grid\';">'+fallback;
+}
 function updateRiderProfileButton(){
   const button=document.getElementById('rider-profile-nav');if(!button||!rider)return;
-  const image=rider.profile_image_url?'<img src="'+esc(rider.profile_image_url)+'" alt="">':'<span class="rider-nav-avatar-fallback">'+esc((rider.name||'?')[0])+'</span>';
-  button.innerHTML=image;button.setAttribute('aria-label','Open rider profile');button.classList.remove('hidden');
+  button.innerHTML=riderAvatarMarkup('rider-nav-avatar');button.setAttribute('aria-label','Open rider profile');button.classList.remove('hidden');
 }
 async function loginRider(e){
   e?.preventDefault();
@@ -496,7 +500,7 @@ async function bootRider(){
   try{
     rider=await riderApi('/api/riders/me');
     document.getElementById('rider-login').classList.add('hidden');document.getElementById('rider-app').classList.remove('hidden');updateRiderProfileButton();
-    document.getElementById('rider-header').innerHTML='<div class="rider-identity-card"><div class="rider-presence-indicator"><span id="rider-presence-dot" class="presence-dot is-offline"></span><span id="rider-presence-text">OFFLINE</span></div><div class="rider-profile-line">'+(rider.profile_image_url?'<img src="'+esc(rider.profile_image_url)+'" alt="">':'<span class="rider-profile-fallback">'+esc((rider.name||'?')[0])+'</span>')+'<div><p class="eyebrow">RIDER OPERATIONS</p><h1>'+esc(rider.name)+'</h1><p class="muted">'+esc(rider.vehicle_type)+' · '+esc(rider.number_plate||'Plate not set')+' · '+esc(rider.payout_phone||rider.phone)+'</p></div></div><div class="rider-availability"><span class="availability-label">DELIVERY AVAILABILITY</span><button id="online-button" class="availability-button is-offline" type="button" aria-pressed="false" onclick="toggleOnline()" title="Press to change your delivery availability">GO ONLINE</button><p>Go online when you are ready to receive delivery assignments.</p></div></div>';
+    document.getElementById('rider-header').innerHTML='<div class="rider-identity-card"><div class="rider-presence-indicator"><span id="rider-presence-dot" class="presence-dot is-offline"></span><span id="rider-presence-text">OFFLINE</span></div><div class="rider-profile-line">'+riderAvatarMarkup('rider-identity-avatar')+'<div><p class="eyebrow">RIDER OPERATIONS</p><h1>'+esc(rider.name)+'</h1><p class="muted">'+esc(rider.vehicle_type)+' · '+esc(rider.number_plate||'Plate not set')+' · '+esc(rider.payout_phone||rider.phone)+'</p></div></div><div class="rider-availability"><span class="availability-label">DELIVERY AVAILABILITY</span><button id="online-button" class="availability-button is-offline" type="button" aria-pressed="false" onclick="toggleOnline()" title="Press to change your delivery availability">GO ONLINE</button><p>Go online when you are ready to receive delivery assignments.</p></div></div>';
     await loadRiderDashboard();startRiderRealtime();
     clearInterval(pollTimer);
     pollTimer=setInterval(async()=>{

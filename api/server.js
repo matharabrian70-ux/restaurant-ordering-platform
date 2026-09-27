@@ -15,7 +15,8 @@ const port = Number(process.env.PORT || 3000);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false });
 const PAYSTACK_API = 'https://api.paystack.co';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://matharabrian70-ux.github.io/restaurant-ordering-platform';
-const RIDER_MODULE_ENABLED = String(process.env.RIDER_MODULE_ENABLED || 'false').toLowerCase() === 'true';
+// Temporary prototype mode: keep the rider module available for end-to-end testing.
+const RIDER_MODULE_ENABLED = String(process.env.RIDER_MODULE_ENABLED || 'true').toLowerCase() === 'true';
 
 app.use(cors());
 app.use(express.json({ limit: '2mb', verify: (req, _res, buf) => { req.rawBody = Buffer.from(buf); } }));

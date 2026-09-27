@@ -207,10 +207,10 @@ function renderRiderProfileModal(){
   const html='<div id="rider-profile-overlay" class="rider-profile-overlay" onclick="if(event.target===this)closeRiderProfile()">'+
     '<section class="rider-profile-modal" role="dialog" aria-modal="true" aria-label="Rider profile">'+
     '<button type="button" class="rider-profile-close" onclick="closeRiderProfile()" aria-label="Close profile">×</button>'+
-    '<div class="rider-profile-hero"><button type="button" class="rider-profile-avatar-button" onclick="openProfilePicturePicker()" aria-label="Change profile picture"><div class="rider-profile-avatar">'+avatar+'</div><span class="rider-profile-avatar-edit">+</span></button>'+
+    '<div class="rider-profile-hero"><button type="button" class="rider-profile-avatar-button" onclick="openProfilePictureViewer()" aria-label="View profile picture"><div class="rider-profile-avatar">'+avatar+'</div><span class="rider-profile-avatar-edit">+</span></button>'+
     '<div><span class="eyebrow">RIDER PROFILE</span><h2>'+esc(r.name||'Rider')+'</h2><p class="muted">Manage your personal, contact and payment details.</p></div></div>'+
     '<input id="rider-profile-picture-input" type="file" accept="image/*" class="rider-profile-picture-input" onchange="handleProfilePicture(event)">'+
-    '<div class="rider-profile-picture-actions"><button type="button" onclick="openProfilePicturePicker()">ADD / CHANGE PROFILE PICTURE</button><button type="button" class="secondary" onclick="clearProfilePicture()">REMOVE PHOTO</button><small>Choose a photo directly from your phone or computer.</small></div>'+
+    '<div class="rider-profile-picture-actions"><small>Tap the profile photo above to view it larger and manage your picture.</small></div>'+
     '<div id="rider-profile-message" class="rider-profile-message hidden"></div>'+
     '<form id="rider-profile-form" class="rider-profile-form" onsubmit="saveRiderProfile(event)">'+
     '<div class="rider-profile-section"><span class="eyebrow">PERSONAL DETAILS</span><label>Full name<input name="name" value="'+esc(r.name)+'" required></label></div>'+
@@ -223,56 +223,61 @@ function renderRiderProfileModal(){
   document.body.insertAdjacentHTML('beforeend',html);
 }
 function openProfilePicturePicker(){document.getElementById('rider-profile-picture-input')?.click();}
+function openProfilePictureViewer(){
+  document.getElementById('rider-picture-viewer')?.remove();
+  const hasPhoto=Boolean(rider?.profile_image_url);
+  const visual=hasPhoto
+    ? '<img class="rider-picture-viewer-image" src="'+esc(rider.profile_image_url)+'" alt="Rider profile picture">'
+    : '<div class="rider-picture-viewer-fallback">'+esc((rider?.name||'?')[0])+'</div>';
+  const viewer='<div id="rider-picture-viewer" class="rider-picture-viewer" onclick="if(event.target===this)closeProfilePictureViewer()">'+
+    '<div class="rider-picture-viewer-card"><button type="button" class="rider-picture-viewer-close" onclick="closeProfilePictureViewer()" aria-label="Close profile picture">×</button>'+
+    '<span class="eyebrow">PROFILE PICTURE</span><div class="rider-picture-viewer-image-wrap">'+visual+'</div>'+
+    '<h3>'+esc(rider?.name||'Rider')+'</h3><p class="muted">Manage the picture shown on your rider dashboard.</p>'+
+    '<div class="rider-picture-viewer-actions"><button type="button" class="rider-picture-change" onclick="openProfilePicturePicker()">ADD / CHANGE PROFILE PICTURE</button>'+
+    (hasPhoto?'<button type="button" class="rider-picture-remove" onclick="removeProfilePictureNow()">REMOVE PROFILE PICTURE</button>':'')+
+    '</div><div id="rider-picture-viewer-status" class="rider-picture-viewer-status"></div></div></div>';
+  document.body.insertAdjacentHTML('beforeend',viewer);
+}
+function closeProfilePictureViewer(){document.getElementById('rider-picture-viewer')?.remove();}
+function setPictureViewerStatus(message,error=false){const el=document.getElementById('rider-picture-viewer-status');if(!el)return;el.textContent=message;el.className='rider-picture-viewer-status '+(error?'error':'');}
+function setProfilePreview(src){
+  const wrap=document.querySelector('.rider-profile-avatar');if(!wrap)return;
+  wrap.innerHTML=src?'<img id="rider-profile-preview-image" src="'+esc(src)+'" alt="Rider profile photo">':'<span id="rider-profile-preview-fallback" class="rider-profile-preview-fallback">'+esc((rider?.name||'?')[0])+'</span>';
+}
+async function saveProfilePictureNow(src){
+  setPictureViewerStatus(src?'Saving profile picture…':'Removing profile picture…');
+  try{
+    const data=await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/profile',{method:'PUT',body:JSON.stringify({
+      name:rider.name,email:rider.email||'',phone:rider.phone,payout_phone:rider.payout_phone||rider.phone,
+      vehicle_type:rider.vehicle_type||'Motorbike',number_plate:rider.number_plate||'',profile_image_url:src||''
+    })});
+    rider=data.rider;updateRiderProfileButton();setProfilePreview(rider.profile_image_url||'');await loadRiderDashboard();
+    setPictureViewerStatus(src?'Profile picture saved.':'Profile picture removed.');
+    setTimeout(()=>openProfilePictureViewer(),350);
+  }catch(err){setPictureViewerStatus(err.message||'Could not save profile picture.',true);}
+}
 function handleProfilePicture(event){
-  const file=event.target.files?.[0];
-  if(!file)return;
-  if(!file.type.startsWith('image/')){showRiderProfileMessage('Please choose an image file.',true);return;}
-  if(file.size>8*1024*1024){showRiderProfileMessage('Please choose an image smaller than 8 MB.',true);return;}
+  const file=event.target.files?.[0];if(!file)return;
+  if(!file.type.startsWith('image/')){setPictureViewerStatus('Please choose an image file.',true);return;}
+  if(file.size>8*1024*1024){setPictureViewerStatus('Please choose an image smaller than 8 MB.',true);return;}
   const reader=new FileReader();
-  reader.onload=()=>{
-    const img=new Image();
-    img.onload=()=>{
-      const max=900,scale=Math.min(1,max/Math.max(img.width,img.height));
-      const canvas=document.createElement('canvas');
-      canvas.width=Math.max(1,Math.round(img.width*scale));canvas.height=Math.max(1,Math.round(img.height*scale));
-      const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0,canvas.width,canvas.height);
-      setProfilePreview(canvas.toDataURL('image/jpeg',.82));
-    };
-    img.onerror=()=>showRiderProfileMessage('That image could not be read. Please choose another photo.',true);
-    img.src=String(reader.result||'');
-  };
+  reader.onload=()=>{const img=new Image();img.onload=()=>{
+    const max=900,scale=Math.min(1,max/Math.max(img.width,img.height)),canvas=document.createElement('canvas');
+    canvas.width=Math.max(1,Math.round(img.width*scale));canvas.height=Math.max(1,Math.round(img.height*scale));
+    const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0,canvas.width,canvas.height);
+    saveProfilePictureNow(canvas.toDataURL('image/jpeg',.82));
+  };img.onerror=()=>setPictureViewerStatus('That image could not be read. Please choose another photo.',true);img.src=String(reader.result||'');};
   reader.readAsDataURL(file);
 }
-function setProfilePreview(src){
-  const wrap=document.querySelector('.rider-profile-avatar');
-  if(!wrap)return;
-  wrap.innerHTML=src?'<img id="rider-profile-preview-image" src="'+esc(src)+'" alt="Rider profile photo">':'<span id="rider-profile-preview-fallback" class="rider-profile-preview-fallback">'+esc((rider?.name||'?')[0])+'</span>';
-  wrap.classList.toggle('has-photo',Boolean(src));
-  const remove=document.querySelector('.rider-profile-picture-actions .secondary');
-  if(remove)remove.disabled=!src;
-  const input=document.getElementById('rider-profile-picture-input');
-  if(input&&src)input.dataset.preview=src;
-}
-function clearProfilePicture(){
-  setProfilePreview('');
-  const input=document.getElementById('rider-profile-picture-input');
-  if(input){input.value='';input.dataset.preview='';input.dataset.remove='1';}
-}
-function closeRiderProfile(){document.getElementById('rider-profile-overlay')?.remove();}
-function closeRiderProfile(){document.getElementById('rider-profile-overlay')?.remove();}
+function removeProfilePictureNow(){saveProfilePictureNow('');}
+function closeRiderProfile(){document.getElementById('rider-profile-overlay')?.remove();document.getElementById('rider-picture-viewer')?.remove();}
 function showRiderProfileMessage(message,error=false){const el=document.getElementById('rider-profile-message');if(!el)return;el.textContent=message;el.className='rider-profile-message '+(error?'error':'success');}
 async function saveRiderProfile(e){
   e.preventDefault();
   const form=e.currentTarget,button=document.getElementById('rider-profile-save'),values=Object.fromEntries(new FormData(form).entries());
-  const pictureInput=document.getElementById('rider-profile-picture-input');
-  const preview=pictureInput?.dataset.preview;
-  if(preview)values.profile_image_url=preview;
-  else if(pictureInput?.dataset.remove)values.profile_image_url='';
   button.disabled=true;button.textContent='SAVING…';
-  try{
-    const data=await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/profile',{method:'PUT',body:JSON.stringify(values)});
-    rider=data.rider;updateRiderProfileButton();showRiderProfileMessage('Profile updated successfully.');
-    await loadRiderDashboard();setTimeout(closeRiderProfile,700);
+  try{const data=await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/profile',{method:'PUT',body:JSON.stringify(values)});
+    rider=data.rider;updateRiderProfileButton();showRiderProfileMessage('Profile updated successfully.');await loadRiderDashboard();setTimeout(closeRiderProfile,700);
   }catch(err){showRiderProfileMessage(err.message||'Could not update profile.',true);}
   finally{button.disabled=false;button.textContent='SAVE CHANGES';}
 }

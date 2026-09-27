@@ -198,7 +198,7 @@ function showAcceptedRoutePopup(job){
   setTimeout(()=>{if(document.getElementById('rider-assignment-popup'))closeAssignmentPopup();},12000);
 }
 
-async function renderRiderProfileModal(){
+async async function renderRiderProfileModal(){
   if(!rider){
     try{rider=await riderApi('/api/riders/me');}
     catch(err){return;}
@@ -227,7 +227,7 @@ async function renderRiderProfileModal(){
   document.body.insertAdjacentHTML('beforeend',html);
 }
 function openProfilePicturePicker(){document.getElementById('rider-profile-picture-input')?.click();}
-async function openProfilePictureViewer(){
+async async function openProfilePictureViewer(){
   if(!rider){
     try{rider=await riderApi('/api/riders/me');}
     catch(err){return;}
@@ -339,6 +339,10 @@ function toggleOnline(){
 }
 async function setOnline(online){
   unlockRiderAudio();
+  if(!rider?.id){
+    try{rider=await riderApi('/api/riders/me');updateRiderProfileButton();}
+    catch(err){alert(err.message||'Your rider session has expired. Please sign in again.');return;}
+  }
   const actionVersion=++availabilityActionVersion;
   // Update the interface immediately. The rider should never have to wait
   // for a network round-trip before being able to change availability again.

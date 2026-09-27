@@ -649,6 +649,29 @@ create index if not exists business_integrations_business_idx on business_integr
 
 
 -- SaaS platform foundation: platform-owner audit trail and package capability flags.
+-- Phase 6: platform-wide observability and dashboard error monitoring.
+create table if not exists platform_incidents (
+  id uuid primary key default gen_random_uuid(),
+  business_id uuid references businesses(id) on delete set null,
+  source text not null default 'API',
+  dashboard text,
+  severity text not null default 'ERROR',
+  status text not null default 'OPEN',
+  fingerprint text not null,
+  message text not null,
+  stack text,
+  url text,
+  metadata jsonb not null default '{}'::jsonb,
+  occurrences integer not null default 1,
+  first_seen_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now(),
+  resolved_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists platform_incidents_fingerprint_idx on platform_incidents(fingerprint);
+create index if not exists platform_incidents_business_idx on platform_incidents(business_id,last_seen_at desc);
+create index if not exists platform_incidents_status_idx on platform_incidents(status,last_seen_at desc);
+
 create table if not exists platform_audit_events (
   id uuid primary key,
   admin_id uuid references platform_admin_users(id) on delete set null,

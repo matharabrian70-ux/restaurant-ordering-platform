@@ -670,6 +670,47 @@ app.get('/api/manager/dispatch', requireManager, async (req, res) => {
   }
 });
 
+app.get('/api/manager/payments', requireManager, async (req, res) => {
+  try {
+    const result=await pool.query(`
+      select p.id,p.order_id,p.provider,p.provider_reference,p.amount,p.status,p.confirmed_at,p.created_at,
+        o.order_number,o.status as order_status,o.payment_status,o.payment_method,o.total,
+        c.name as customer_name,c.phone as customer_phone
+      from payments p
+      join orders o on o.id=p.order_id
+      join customers c on c.id=o.customer_id
+      where o.business_id=$1
+      order by p.created_at desc
+      limit 300`, [req.manager.business_id]);
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({error:error.message||'Unable to load payments'});
+  }
+});
+
+app.post('/api/manager/payments/:id/verify', requireManager, async (req, res) => {
+  try {
+    const result=await pool.query(`
+      select p.id,p.provider,p.provider_reference,p.status,o.id as order_id,o.business_id
+      from payments p join orders o on o.id=p.order_id
+      where p.id=$1 and o.business_id=$2
+      limit 1`, [req.params.id, req.manager.business_id]);
+    if(!result.rowCount) return res.status(404).json({error:'Payment not found'});
+    const payment=result.rows[0];
+    if(payment.provider!=='PAYSTACK') return res.status(400).json({error:'Only Paystack payments can be verified here'});
+    if(!payment.provider_reference) return res.status(409).json({error:'Payment provider reference is missing'});
+    const verified=await paystackRequest(`/transaction/verify/${encodeURIComponent(payment.provider_reference)}`,{method:'GET'});
+    const data=verified.data||{};
+    if(data.status==='success'){
+      const orderId=await markPaymentSuccessful(payment.provider_reference,data);
+      return res.json({status:'success',orderId});
+    }
+    res.json({status:data.status||'pending',orderId:payment.order_id});
+  } catch(error) {
+    res.status(500).json({error:error.message||'Unable to verify payment'});
+  }
+});
+
 app.get('/api/manager/refunds', requireManager, async (req, res) => {
   try {
     const result=await pool.query(`

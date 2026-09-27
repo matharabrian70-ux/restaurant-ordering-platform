@@ -546,3 +546,22 @@ body.rider-map-fullscreen-open{overflow:hidden}
 .rider-nav-avatar-photo,.rider-nav-avatar-fallback{width:30px;height:30px;border-radius:50%;object-fit:cover;border:1px solid var(--line)}
 .rider-nav-avatar-fallback{display:grid;place-items:center;background:#edf7ef;color:#246d35}
 .rider-profile-nav{overflow:hidden}
+
+.rider-profile-picture-actions{display:block;padding:12px 0;border-bottom:1px solid var(--line)}
+.rider-profile-picture-actions small{display:block;color:var(--muted);font-size:10px}
+.rider-picture-viewer{position:fixed;inset:0;z-index:16000;display:grid;place-items:center;padding:24px;background:rgba(18,25,20,.72);backdrop-filter:blur(7px)}
+.rider-picture-viewer-card{position:relative;width:min(460px,92vw);max-height:90vh;overflow:auto;background:#fff;border-radius:22px;padding:28px;box-shadow:0 24px 70px rgba(0,0,0,.28);text-align:center}
+.rider-picture-viewer-close{position:absolute;right:14px;top:14px;width:40px;height:40px;border:1px solid var(--line);border-radius:50%;background:#fff;font-size:24px;cursor:pointer}
+.rider-picture-viewer-card>.eyebrow{display:block;margin:5px 0 16px}
+.rider-picture-viewer-image-wrap{width:min(330px,72vw);height:min(330px,72vw);margin:0 auto 18px;border-radius:18px;overflow:hidden;background:#eef4ef;border:1px solid #d7e3d9;display:grid;place-items:center}
+.rider-picture-viewer-image{width:100%;height:100%;object-fit:cover}
+.rider-picture-viewer-fallback{width:100%;height:100%;display:grid;place-items:center;font-size:90px;font-weight:950;color:#246d35}
+.rider-picture-viewer-card h3{margin:0 0 6px;font-size:22px}
+.rider-picture-viewer-card p{margin:0 auto 20px;max-width:360px;font-size:11px}
+.rider-picture-viewer-actions{display:grid;gap:10px}
+.rider-picture-change,.rider-picture-remove{min-height:48px;border-radius:999px;font:inherit;font-size:10px;font-weight:950;letter-spacing:.06em;cursor:pointer}
+.rider-picture-change{border:1px solid #176b32;background:#176b32;color:#fff}
+.rider-picture-remove{border:1px solid #e1caca;background:#fff;color:#8a3434}
+.rider-picture-viewer-status{min-height:18px;margin-top:12px;color:#176b32;font-size:10px;font-weight:800}
+.rider-picture-viewer-status.error{color:#a33b3b}
+@media(max-width:600px){.rider-picture-viewer{padding:12px}.rider-picture-viewer-card{width:100%;padding:22px 18px;border-radius:18px}.rider-picture-viewer-image-wrap{width:min(290px,76vw);height:min(290px,76vw)}}

@@ -594,6 +594,98 @@ app.post('/api/manager/google', async (req,res)=>{
   }catch(error){res.status(500).json({error:error.message||'Unable to sign in with Google'});}
 });
 
+
+// Phase 4 Restaurant Operations OS: one manager view for dispatch state across orders, riders and live tracking.
+app.get('/api/manager/dispatch', requireManager, async (req, res) => {
+  try {
+    await ensureDeliveryTrackingSchema();
+    const businessId = req.manager.business_id;
+    const [connection, riders, unassigned, active] = await Promise.all([
+      pool.query('select coalesce(rider_connected,false) as rider_connected from business_connections where business_id=$1 limit 1', [businessId]),
+      pool.query(`
+        select r.id,r.name,r.phone,r.vehicle_type,r.number_plate,r.profile_image_url,r.rider_status,
+          coalesce(p.online,false) as online,
+          a.trip_id,a.order_id,a.order_number,a.order_status,a.delivery_status,a.delivery_event_status,a.assigned_at,
+          a.customer_name,a.delivery_address,a.route_distance_meters,a.route_duration_seconds,a.delivery_fee,a.rider_earning,
+          l.latitude,l.longitude,l.accuracy_meters,l.updated_at as location_updated_at
+        from riders r
+        left join rider_presence p on p.rider_id=r.id
+        left join lateral (
+          select t.id as trip_id,t.order_id,t.assigned_at,o.order_number,o.status as order_status,o.delivery_status,
+            o.delivery_address,o.route_distance_meters,o.route_duration_seconds,o.delivery_fee,o.rider_earning,c.name as customer_name,
+            (select de.status from delivery_events de where de.trip_id=t.id order by de.created_at desc limit 1) as delivery_event_status
+          from rider_trips t
+          join orders o on o.id=t.order_id
+          join customers c on c.id=o.customer_id
+          where t.rider_id=r.id and t.completed_at is null
+          order by t.assigned_at desc limit 1
+        ) a on true
+        left join rider_live_locations l on l.rider_id=r.id and l.trip_id=a.trip_id
+        where r.business_id=$1
+        order by r.rider_status,r.name`, [businessId]),
+      pool.query(`
+        select o.id,o.order_number,o.status,o.payment_status,o.total,o.delivery_fee,o.delivery_address,
+          o.route_distance_meters,o.route_duration_seconds,o.created_at,c.name as customer_name,c.phone as customer_phone,
+          o.branch_id,bb.name as branch_name
+        from orders o
+        join customers c on c.id=o.customer_id
+        left join business_branches bb on bb.id=o.branch_id
+        where o.business_id=$1 and o.status='ACCEPTED'
+          and not exists(select 1 from rider_trips t where t.order_id=o.id and t.completed_at is null)
+        order by o.created_at asc`, [businessId]),
+      pool.query(`
+        select o.id,o.order_number,o.status,o.payment_status,o.total,o.delivery_fee,o.delivery_status,
+          o.delivery_address,o.route_distance_meters,o.route_duration_seconds,o.created_at,c.name as customer_name,c.phone as customer_phone,
+          t.id as trip_id,t.assigned_at,r.id as rider_id,r.name as rider_name,r.vehicle_type,r.number_plate,
+          (select de.status from delivery_events de where de.trip_id=t.id order by de.created_at desc limit 1) as rider_event_status
+        from rider_trips t
+        join orders o on o.id=t.order_id
+        join customers c on c.id=o.customer_id
+        join riders r on r.id=t.rider_id
+        where o.business_id=$1 and t.completed_at is null
+        order by t.assigned_at asc`, [businessId])
+    ]);
+    const riderRows=riders.rows.map(r=>({
+      ...r,
+      available:Boolean(r.rider_status==='ACTIVE' && r.online && !r.trip_id),
+      liveLocation:Boolean(r.location_updated_at && (Date.now()-new Date(r.location_updated_at).getTime())<60000)
+    }));
+    res.json({
+      riderConnected:Boolean(connection.rows[0]?.rider_connected),
+      riders:riderRows,
+      unassigned:unassigned.rows,
+      active:active.rows,
+      summary:{
+        riders:riderRows.length,
+        online:riderRows.filter(r=>r.online).length,
+        available:riderRows.filter(r=>r.available).length,
+        busy:riderRows.filter(r=>Boolean(r.trip_id)).length,
+        unassigned:unassigned.rowCount,
+        active:active.rowCount,
+        liveLocations:riderRows.filter(r=>r.liveLocation).length
+      }
+    });
+  } catch (error) {
+    res.status(500).json({error:error.message||'Unable to load dispatch operations'});
+  }
+});
+
+app.get('/api/manager/refunds', requireManager, async (req, res) => {
+  try {
+    const result=await pool.query(`
+      select rf.id,rf.order_id,rf.provider,rf.provider_refund_id,rf.transaction_reference,rf.amount,rf.currency,rf.status,
+        rf.customer_note,rf.merchant_note,rf.created_at,rf.updated_at,o.order_number,c.name as customer_name
+      from refunds rf
+      join orders o on o.id=rf.order_id
+      join customers c on c.id=o.customer_id
+      where o.business_id=$1
+      order by rf.created_at desc limit 200`, [req.manager.business_id]);
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).json({error:error.message||'Unable to load refunds'});
+  }
+});
+
 app.get('/api/manager/sms-settings',requireManager,async(req,res)=>{
   try{
     const config=await getBusinessSmsSettings(req.manager.business_id);

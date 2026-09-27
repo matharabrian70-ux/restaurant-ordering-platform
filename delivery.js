@@ -2,9 +2,9 @@ const RIDER_TOKEN_KEY='rider_session_token';
 const RIDER_BUSINESS_ID=BUSINESS_ID;
 let rider=null,lastTripId=null,pollTimer=null,riderEvents=null,riderLiveSyncBusy=false,availabilityActionVersion=0,riderDashboardInitialized=false,riderAudioContext=null,riderMap=null,riderMapTripId=null,riderMapWatchId=null,riderMapRouteLayer=null,riderMapRiderMarker=null,riderMapReady=false,lastActiveRenderKey='';
 
-function riderHeaders(){const token=localStorage.getItem(RIDER_TOKEN_KEY);return token?{'Authorization':'Bearer '+token}:{};}
+function riderHeaders(){const token=sessionStorage.getItem(RIDER_TOKEN_KEY);return token?{'Authorization':'Bearer '+token}:{};}
 async function riderApi(path,options={}){return apiRequest(path,{...options,headers:{...riderHeaders(),...(options.headers||{})}});}
-function clearRiderSession(){localStorage.removeItem(RIDER_TOKEN_KEY);rider=null;}
+function clearRiderSession(){sessionStorage.removeItem(RIDER_TOKEN_KEY);localStorage.removeItem(RIDER_TOKEN_KEY);rider=null;}
 function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
 function riderMoney(v){return 'KSh '+Number(v||0).toLocaleString();}
 async function loadLeaflet(){
@@ -326,7 +326,7 @@ async function loginRider(e){
   error.classList.remove('hidden');error.textContent='Signing in…';button.disabled=true;button.textContent='SIGNING IN…';
   try{
     const data=await riderApi('/api/riders/login',{method:'POST',body:JSON.stringify({businessId:RIDER_BUSINESS_ID,phone,password})});
-    localStorage.setItem(RIDER_TOKEN_KEY,data.token);rider=data.rider;await bootRider();
+    sessionStorage.setItem(RIDER_TOKEN_KEY,data.token);localStorage.removeItem(RIDER_TOKEN_KEY);rider=data.rider;await bootRider();
   }catch(err){
     error.textContent=err.message||'Could not sign in.';
     button.disabled=false;button.textContent='SIGN IN';

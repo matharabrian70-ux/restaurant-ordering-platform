@@ -31,8 +31,8 @@ async function load(){
   try{ currentManager=await api('/api/manager/me'); }catch(e){ return showLogin(); }
   root.innerHTML='<div class="manager-loading"><div class="manager-spinner"></div><h2>Loading control centre…</h2></div>';
   try{
-    const x=await Promise.all([api('/api/orders?businessId='+B),api('/api/riders?businessId='+B),api('/api/menu?businessId='+B),api('/api/businesses/'+B+'/branches'),api('/api/businesses/'+B+'/delivery-pricing'),api('/api/stations?businessId='+B),api('/api/businesses/'+B+'/branding'),api('/api/manager/receipt-settings')]);
-    D={orders:x[0],riders:x[1],menu:x[2],branches:x[3],pricing:x[4],stations:x[5]||[],branding:x[6]?.branding||{},receiptConfig:x[7]?.config||{},smsConfig:{}};
+    const x=await Promise.all([api('/api/orders?businessId='+B),api('/api/riders?businessId='+B),api('/api/menu?businessId='+B),api('/api/businesses/'+B+'/branches'),api('/api/businesses/'+B+'/delivery-pricing'),api('/api/stations?businessId='+B),api('/api/businesses/'+B+'/branding'),api('/api/manager/receipt-settings'),api('/api/manager/dispatch'),api('/api/manager/refunds')]);
+    D={orders:x[0],riders:x[1],menu:x[2],branches:x[3],pricing:x[4],stations:x[5]||[],branding:x[6]?.branding||{},receiptConfig:x[7]?.config||{},dispatch:x[8]||{},refunds:x[9]||[],smsConfig:{}};
     render();
     startManagerRealtime();
     startManagerLiveFallback();
@@ -125,7 +125,56 @@ async function logoutManager(){
 }
 
 async function loadSmsSettings(){try{D.smsConfig=await api('/api/manager/sms-settings')}catch(e){D.smsConfig={error:e.message}}}
-function render(){const o=D.orders||[],m=D.menu||{products:[]},paid=o.filter(x=>x.payment_status==='PAID'&&x.status!=='CANCELLED'),rev=paid.reduce((s,x)=>s+Number(x.total||0),0),today=o.filter(x=>new Date(x.created_at).toDateString()===new Date().toDateString());let body=T==='overview'?overview():T==='orders'?orders():T==='menu'?menu():T==='promotions'?promos():T==='branches'?branches():T==='delivery'?delivery():T==='riders'?riders():T==='receipts'?receipts():T==='sms'?smsSettings():station();root.innerHTML='<section class="manager-shell"><header class="manager-header"><div><span class="manager-kicker"><i></i> RESTAURANT CONTROL CENTRE</span><h1>'+esc(window.TenantTheme?.name?.()||'Restaurant')+'.</h1><p>Professional restaurant controls from phone, tablet, laptop or desktop.</p></div><div class="manager-header-actions"><span class="live-badge"><i></i> LIVE</span><span class="station-mini">'+esc(currentManager?.name||'MANAGER')+'</span><button class="btn btn-small" onclick="load()">REFRESH</button><button class="btn btn-small secondary" onclick="logoutManager()">SIGN OUT</button></div></header><nav class="manager-tabs">'+nav('overview','Overview')+nav('orders','Orders')+nav('menu','Menu')+nav('promotions','Promotions')+nav('branches','Branches')+nav('delivery','Delivery')+nav('riders','Riders')+nav('receipts','Receipts')+nav('sms','SMS')+nav('station','Order station')+'</nav><section class="manager-summary"><article><span>Today\'s orders</span><strong>'+today.length+'</strong></article><article><span>Revenue</span><strong>'+money(rev)+'</strong></article><article><span>Menu items</span><strong>'+m.products.length+'</strong></article><article><span>Riders available</span><strong>'+D.riders.filter(x=>x.available).length+'</strong></article></section><div class="manager-content">'+body+'</div></section>'}
+
+async function loadPhase4Ops(){
+  try{D.dispatch=await api('/api/manager/dispatch')}catch(e){D.dispatch={error:e.message,riders:[],unassigned:[],active:[],summary:{}}}
+  try{D.refunds=await api('/api/manager/refunds')}catch(e){D.refunds=[]}
+}
+async function dispatchAssign(orderId,button){
+  const select=document.getElementById('dispatch-rider-'+orderId);
+  const riderId=select?.value||'';
+  if(!riderId)return alert('Choose an available rider first.');
+  button.disabled=true;button.textContent='ASSIGNING…';
+  try{await api('/api/orders/'+encodeURIComponent(orderId)+'/assign-rider',{method:'POST',body:JSON.stringify({riderId})});await load();}
+  catch(e){button.disabled=false;button.textContent='ASSIGN RIDER';alert(e.message||'Unable to assign rider.');}
+}
+function dispatchRiderOptions(){
+  const riders=(D.dispatch?.riders||[]).filter(r=>r.available);
+  return riders.length?'<option value="">SELECT AVAILABLE RIDER</option>'+riders.map(r=>'<option value="'+esc(r.id)+'">'+esc(r.name)+' · '+esc(r.vehicle_type||'Vehicle')+(r.number_plate?' · '+esc(r.number_plate):'')+'</option>').join(''):'<option value="">NO RIDERS AVAILABLE</option>';
+}
+function dispatch(){
+  const d=D.dispatch||{},s=d.summary||{},riders=d.riders||[],unassigned=d.unassigned||[],active=d.active||[];
+  if(d.error)return '<section class="manager-panel"><div class="login-error">'+esc(d.error)+'</div><button class="btn" onclick="load()">TRY AGAIN</button></section>';
+  const riderConnected=Boolean(d.riderConnected);
+  const available=riders.filter(r=>r.available);
+  const optionHtml=available.length
+    ? '<option value="">SELECT AVAILABLE RIDER</option>'+available.map(r=>'<option value="'+esc(r.id)+'">'+esc(r.name)+' · '+esc(r.vehicle_type||'Vehicle')+(r.number_plate?' · '+esc(r.number_plate):'')+'</option>').join('')
+    : '<option value="">NO RIDERS AVAILABLE</option>';
+  const queueHtml=unassigned.length
+    ? unassigned.map(o=>'<article class="dispatch-order-card"><div class="dispatch-order-main"><div><b>'+esc(o.order_number)+'</b><span>'+esc(o.customer_name||'Customer')+' · '+esc(o.customer_phone||'')+'</span><small>'+esc(o.delivery_address||'Delivery address unavailable')+(o.branch_name?' · '+esc(o.branch_name):'')+'</small></div><div class="dispatch-order-value"><strong>'+money(o.delivery_fee)+'</strong><small>delivery fee</small></div></div><div class="dispatch-order-actions"><select id="dispatch-rider-'+esc(o.id)+'">'+optionHtml+'</select><button class="btn btn-small" onclick="dispatchAssign(\''+o.id+'\',this)">ASSIGN RIDER</button></div></article>').join('')
+    : '<div class="empty-state">No accepted orders are waiting for rider assignment.</div>';
+  const activeHtml=active.length
+    ? active.map(o=>'<article class="dispatch-active-card"><div class="dispatch-active-head"><div><b>'+esc(o.order_number)+'</b><span>'+esc(o.rider_name)+' · '+esc(o.vehicle_type||'Vehicle')+(o.number_plate?' · '+esc(o.number_plate):'')+'</span></div><span class="status-chip '+String(o.rider_event_status||o.delivery_status||'ASSIGNED').toLowerCase()+'">'+esc(o.rider_event_status||o.delivery_status||'ASSIGNED')+'</span></div><div class="dispatch-active-grid"><span><small>CUSTOMER</small><b>'+esc(o.customer_name||'Customer')+'</b></span><span><small>DESTINATION</small><b>'+esc(o.delivery_address||'—')+'</b></span><span><small>DISTANCE</small><b>'+((Number(o.route_distance_meters||0)/1000).toFixed(1))+' km</b></span><span><small>RIDER EARNING</small><b>'+money(o.rider_earning)+'</b></span></div><div class="dispatch-active-actions"><button class="btn btn-small secondary" onclick="openRiderProfile(\''+o.rider_id+'\')">RIDER PROFILE</button><button class="btn btn-small secondary" onclick="reassignOrder(\''+o.id+'\',this)">REASSIGN</button><button class="btn btn-small secondary" onclick="cancelRiderAssignment(\''+o.id+'\',this)">CANCEL ASSIGNMENT</button></div></article>').join('')
+    : '<div class="empty-state">No active rider deliveries right now.</div>';
+  const riderHtml=riders.length
+    ? riders.map(r=>'<article class="dispatch-rider-card"><div class="dispatch-rider-avatar">'+(r.profile_image_url?'<img src="'+esc(r.profile_image_url)+'" alt="">':esc((r.name||'?')[0]))+'</div><div class="dispatch-rider-body"><div><b>'+esc(r.name)+'</b><span>'+esc(r.vehicle_type||'Vehicle')+(r.number_plate?' · '+esc(r.number_plate):'')+'</span></div><span class="dispatch-rider-state '+(r.available?'available':r.trip_id?'busy':r.online?'online':'offline')+'"><i></i>'+(r.available?'AVAILABLE':r.trip_id?'ON DELIVERY':r.online?'ONLINE':'OFFLINE')+'</span><small>'+(r.trip_id?(esc(r.order_number||'Active trip')+' · '+esc(r.delivery_event_status||r.delivery_status||'ASSIGNED')):(r.liveLocation?'GPS LIVE':'No recent GPS'))+'</small></div></article>').join('')
+    : '<div class="empty-state">No riders are configured.</div>';
+  return '<div class="dispatch-page">'+
+    '<div class="dispatch-hero"><div><span class="manager-kicker"><i></i> RESTAURANT OPERATIONS OS</span><h2>Dispatch.</h2><p>One live control surface for riders, assignments, delivery progress and exceptions.</p></div><div class="dispatch-connection '+(riderConnected?'connected':'manual')+'"><i></i>'+(riderConnected?'RIDER DASHBOARD CONNECTED':'MANUAL / STATION DISPATCH')+'</div></div>'+
+    '<div class="dispatch-summary"><article><span>AVAILABLE</span><strong>'+Number(s.available||0)+'</strong><small>Online and ready</small></article><article><span>BUSY</span><strong>'+Number(s.busy||0)+'</strong><small>Active deliveries</small></article><article class="'+(Number(s.unassigned||0)?'attention':'')+'"><span>WAITING</span><strong>'+Number(s.unassigned||0)+'</strong><small>Orders need a rider</small></article><article><span>LIVE GPS</span><strong>'+Number(s.liveLocations||0)+'</strong><small>Recent rider positions</small></article></div>'+
+    '<section class="manager-panel dispatch-section"><div class="panel-title"><div><span class="eyebrow">DISPATCH QUEUE</span><h2>Orders waiting for a rider</h2><p>Paid orders already accepted by the restaurant but not currently assigned.</p></div><button class="btn btn-small secondary" onclick="load()">↻ REFRESH</button></div>'+queueHtml+'</section>'+
+    '<section class="manager-panel dispatch-section"><div class="panel-title"><div><span class="eyebrow">ACTIVE DELIVERIES</span><h2>Live rider operations</h2><p>Assignment state, delivery progress and the latest rider location are shown here.</p></div></div>'+activeHtml+'</section>'+
+    '<section class="manager-panel dispatch-section"><div class="panel-title"><div><span class="eyebrow">RIDER FLEET</span><h2>Availability</h2><p>Live status for every rider attached to this restaurant.</p></div></div><div class="dispatch-rider-grid">'+riderHtml+'</div></section>'+
+  '</div>';
+}
+function refunds(){
+  const rows=D.refunds||[];
+  return '<section class="manager-panel refunds-page"><div class="panel-title"><div><span class="eyebrow">PAYMENTS CONTROL</span><h2>Refunds.</h2><p>Restaurant-scoped refund history from the payment system. Automatic refunds and their provider status appear here.</p></div><button class="btn btn-small secondary" onclick="load()">↻ REFRESH</button></div>'+
+    (rows.length?'<div class="refund-list">'+rows.map(r=>'<article class="refund-card"><div><b>'+esc(r.order_number)+'</b><span>'+esc(r.customer_name||'Customer')+'</span><small>'+esc(r.provider||'PAYSTACK')+' · '+esc(r.transaction_reference||'No transaction reference')+'</small></div><div><strong>'+money(r.amount)+'</strong><span class="refund-status '+String(r.status||'').toLowerCase()+'">'+esc(r.status||'UNKNOWN')+'</span><small>'+new Date(r.created_at).toLocaleString('en-KE')+'</small></div></article>').join('')+'</div>':'<div class="empty-state">No refunds have been recorded for this restaurant.</div>')+
+  '</section>';
+}
+
+function render(){const o=D.orders||[],m=D.menu||{products:[]},paid=o.filter(x=>x.payment_status==='PAID'&&x.status!=='CANCELLED'),rev=paid.reduce((s,x)=>s+Number(x.total||0),0),today=o.filter(x=>new Date(x.created_at).toDateString()===new Date().toDateString());let body=T==='overview'?overview():T==='orders'?orders():T==='dispatch'?dispatch():T==='menu'?menu():T==='promotions'?promos():T==='branches'?branches():T==='delivery'?delivery():T==='riders'?riders():T==='receipts'?receipts():T==='refunds'?refunds():T==='sms'?smsSettings():station();root.innerHTML='<section class="manager-shell"><header class="manager-header"><div><span class="manager-kicker"><i></i> RESTAURANT CONTROL CENTRE</span><h1>'+esc(window.TenantTheme?.name?.()||'Restaurant')+'.</h1><p>Professional restaurant controls from phone, tablet, laptop or desktop.</p></div><div class="manager-header-actions"><span class="live-badge"><i></i> LIVE</span><span class="station-mini">'+esc(currentManager?.name||'MANAGER')+'</span><button class="btn btn-small" onclick="load()">REFRESH</button><button class="btn btn-small secondary" onclick="logoutManager()">SIGN OUT</button></div></header><nav class="manager-tabs">'+nav('overview','Overview')+nav('orders','Orders')+nav('dispatch','Dispatch')+nav('menu','Menu')+nav('promotions','Promotions')+nav('branches','Branches')+nav('delivery','Delivery')+nav('riders','Riders')+nav('receipts','Receipts')+nav('refunds','Refunds')+nav('sms','SMS')+nav('station','Order station')+'</nav><section class="manager-summary"><article><span>Today\'s orders</span><strong>'+today.length+'</strong></article><article><span>Revenue</span><strong>'+money(rev)+'</strong></article><article><span>Menu items</span><strong>'+m.products.length+'</strong></article><article><span>Riders available</span><strong>'+D.riders.filter(x=>x.available).length+'</strong></article></section><div class="manager-content">'+body+'</div></section>'}
 
 async function saveSmsSettings(){
   const button=document.getElementById('sms-save-button');if(button)button.disabled=true;

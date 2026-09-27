@@ -75,3 +75,14 @@
 }
 
 .order-received-action{width:100%;margin-top:10px;border:0!important;border-radius:999px!important;background:#4d9b5d!important;color:#fff!important;min-height:50px;font-weight:950!important;letter-spacing:.06em;box-shadow:0 10px 24px rgba(77,155,93,.18);transition:transform .16s ease,box-shadow .16s ease}.order-received-action:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 14px 28px rgba(77,155,93,.24)}.order-received-action:disabled{opacity:.65;cursor:wait}
+
+/* Phase 3 — customer live rider tracking */
+.customer-live-tracking{overflow:hidden}
+.customer-live-head{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:1rem}
+.customer-live-head h2{margin:.15rem 0 .25rem}
+.customer-live-map{width:100%;height:360px;border-radius:18px;overflow:hidden;background:#eef2ee;border:1px solid rgba(23,32,25,.1)}
+@media(max-width:650px){
+  .customer-live-head{gap:.6rem}
+  .customer-live-head h2{font-size:1.2rem}
+  .customer-live-map{height:300px;border-radius:14px}
+}

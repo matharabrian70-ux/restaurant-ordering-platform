@@ -1,6 +1,7 @@
 const ORDER_API_BASE = 'https://restaurant-ordering-api-ow3p.onrender.com';
 const REMOTE_STATUSES = ['NEW','ACCEPTED','OUT_FOR_DELIVERY','DELIVERED','CANCELLED'];
 const REMOTE_LABELS = { NEW:'Order received', ACCEPTED:'Accepted & preparing', OUT_FOR_DELIVERY:'On its way', DELIVERED:'Delivered', CANCELLED:'Order cancelled' };
+let customerLiveMap=null,customerLiveMarker=null,customerLiveDestinationMarker=null,customerLiveMapOrderId=null;
 
 function paymentMessage(params,paymentStatus){
   if(params.get('payment')==='success') return 'Payment confirmed. Your order has been sent to the restaurant.';
@@ -17,6 +18,50 @@ function refundTimingText(status){
   return 'Paystack currently states that customers can expect refunds within 3–10 working days. The exact timing depends on the payment processor and bank.';
 }
 async function loadRefunds(id){return fetch(`${ORDER_API_BASE}/api/orders/${encodeURIComponent(id)}/refunds`).then(r=>r.ok?r.json():[]).catch(()=>[]);}
+async function destroyCustomerLiveMap(){
+  if(customerLiveMap){try{customerLiveMap.remove();}catch{}}
+  customerLiveMap=null;customerLiveMarker=null;customerLiveDestinationMarker=null;customerLiveMapOrderId=null;
+}
+async function initCustomerLiveMap(order){
+  const panel=document.getElementById('customer-live-tracking');
+  if(!panel||!order||order.status!=='OUT_FOR_DELIVERY')return;
+  await destroyCustomerLiveMap();
+  const mapEl=document.getElementById('customer-live-map');
+  const statusEl=document.getElementById('customer-live-map-status');
+  if(!mapEl)return;
+  try{
+    const L=await loadLeaflet();
+    const response=await fetch(ORDER_API_BASE+'/api/orders/'+encodeURIComponent(order.id)+'/live-location');
+    if(!response.ok){
+      if(statusEl)statusEl.textContent='Waiting for rider location…';
+      customerLiveMap=L.map(mapEl,{zoomControl:true,attributionControl:true}).setView(
+        [Number(order.delivery_lat)||-1.286389,Number(order.delivery_lng)||36.817223],14
+      );
+    }else{
+      const loc=await response.json();
+      customerLiveMap=L.map(mapEl,{zoomControl:true,attributionControl:true}).setView([Number(loc.latitude),Number(loc.longitude)],15);
+      customerLiveMarker=L.marker([Number(loc.latitude),Number(loc.longitude)],{title:'Rider live location'}).addTo(customerLiveMap).bindPopup('<strong>Rider location</strong><br>Live position');
+      if(statusEl)statusEl.textContent='RIDER LIVE · UPDATED '+new Date(loc.updated_at||Date.now()).toLocaleTimeString();
+    }
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(customerLiveMap);
+    if(Number.isFinite(Number(order.delivery_lat))&&Number.isFinite(Number(order.delivery_lng))){
+      customerLiveDestinationMarker=L.marker([Number(order.delivery_lat),Number(order.delivery_lng)],{title:'Delivery destination'}).addTo(customerLiveMap).bindPopup('<strong>Delivery destination</strong>');
+    }
+    customerLiveMapOrderId=String(order.id);
+  }catch(err){
+    if(statusEl)statusEl.textContent='Live map unavailable';
+  }
+}
+function updateCustomerLiveLocation(data){
+  if(!data||!customerLiveMap||String(data.orderId)!==String(customerLiveMapOrderId))return;
+  const point=[Number(data.latitude),Number(data.longitude)];
+  if(!Number.isFinite(point[0])||!Number.isFinite(point[1]))return;
+  if(!customerLiveMarker){
+    customerLiveMarker=window.L?.marker(point,{title:'Rider live location'}).addTo(customerLiveMap).bindPopup('<strong>Rider location</strong><br>Live position');
+  }else customerLiveMarker.setLatLng(point);
+  const statusEl=document.getElementById('customer-live-map-status');
+  if(statusEl)statusEl.textContent='RIDER LIVE · UPDATED '+new Date(data.updatedAt||Date.now()).toLocaleTimeString();
+}
 
 async function cancelCustomerOrder(id){
   if(!confirm('Cancel this order? You can cancel only before the restaurant accepts it.'))return;
@@ -32,6 +77,7 @@ function connectCustomerEvents(orderId){
   const source=new EventSource(`${ORDER_API_BASE}/api/events?businessId=${encodeURIComponent(window.CUSTOMER_ORDER_BUSINESS_ID||'11111111-1111-4111-8111-111111111111')}&orderId=${encodeURIComponent(orderId)}`);
   window.customerOrderEvents=source;
   source.addEventListener('order.updated',()=>renderRemoteOrder(false));
+  source.addEventListener('delivery.location',e=>{try{updateCustomerLiveLocation(JSON.parse(e.data||'{}'));}catch{}});
   source.addEventListener('refund.updated',()=>renderRemoteOrder(false));
   source.onerror=()=>{source.close();setTimeout(()=>connectCustomerEvents(orderId),3000);};
 }
@@ -51,6 +97,7 @@ async function renderRemoteOrder(showLoading=true){
     const cancelPanel=canCancel?`<div class="panel"><h2>Need to cancel?</h2><p class="muted">You can cancel while the restaurant is still reviewing the order. Once accepted, cancellation from the customer side is disabled.</p><button id="cancel-order-btn" class="btn" type="button" onclick="cancelCustomerOrder('${o.id}')">CANCEL ORDER</button></div>`:'';
     const refundNotice=refunds.length?`<div class="panel refund-customer-panel"><p class="eyebrow">REFUND STATUS</p><h2>${refundStatusLabel(refunds[0].status)}</h2><p><strong>${money(refunds[0].amount)} ${refunds[0].currency||'KES'}</strong></p><p class="muted">${refundTimingText(refunds[0].status)}</p>${refunds.map(r=>`<div class="summary-row"><span>${refundStatusLabel(r.status)}</span><strong>${money(r.amount)}</strong></div>`).join('')}</div>`:'';
     el.innerHTML=`<div class="track-head"><p class="eyebrow">ORDER ${o.order_number}</p><h1>${status==='CANCELLED'?'Order cancelled':deliveryQuestion?'Have you received your order?':'We have your order.'}</h1><p>Payment: <strong>${paymentLabel}</strong> · ${o.payment_method||'Payment method'}</p>${notice?`<p class="panel">${notice}</p>`:''}<p class="muted">${REMOTE_LABELS[status]}</p></div>${receiptPanel}${refundNotice}${rider}<div class="panel tracking"><div class="timeline">${REMOTE_STATUSES.filter(s=>s!=='CANCELLED').map((s,i)=>`<div class="timeline-step ${s===status||i<=statusIndex?'active':''}"><span>${i+1}</span><strong>${REMOTE_LABELS[s]}</strong></div>`).join('')}</div><div class="order-details"><h2>Order summary</h2><div class="summary-row"><span>Customer</span><strong>${o.customer_name}</strong></div><div class="summary-row"><span>Phone</span><strong>${o.phone}</strong></div><div class="summary-row"><span>Food subtotal</span><strong>${money(o.food_subtotal||o.subtotal)}</strong></div><div class="summary-row"><span>Delivery fee</span><strong>${money(o.delivery_fee||0)}</strong></div><div class="summary-row"><span>Delivery distance</span><strong>${Number(o.route_distance_meters||0)?(Number(o.route_distance_meters)/1000).toFixed(1)+' km':'—'}</strong></div><div class="summary-row total"><span>Total</span><strong>${money(o.total)}</strong></div></div>${deliveryQuestion?'<div class="panel order-received-panel"><p>Please confirm once you have received your order.</p><button class="btn order-received-action" type="button" onclick="markOrderReceived(null,this)">MARK DELIVERED</button></div>':''}</div>${cancelPanel}`;
+    if(status==='OUT_FOR_DELIVERY'&&o.rider_name)initCustomerLiveMap(o); else destroyCustomerLiveMap();
     connectCustomerEvents(id);
     if(paymentStatus!=='PAID'&&paymentStatus!=='REFUNDED'&&o.payment_method==='M-Pesa'&&localStorage.getItem('doe_last_payment_reference')&&status!=='CANCELLED'){
       const reference=localStorage.getItem('doe_last_payment_reference');let attempts=0;const poll=async()=>{if(attempts++>=60)return;const check=await verifyPaystackPayment(reference).catch(()=>null);if(check?.status==='success'){localStorage.removeItem('doe_last_payment_reference');if(check.receiptToken){const u=new URL(location.href);u.searchParams.set('receipt',check.receiptToken);history.replaceState({},'',u.toString());}await renderRemoteOrder(false);return;}setTimeout(poll,3000);};setTimeout(poll,3000);

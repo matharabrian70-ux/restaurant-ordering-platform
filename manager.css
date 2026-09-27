@@ -166,3 +166,23 @@
   .receipt-order-row .button-row{width:100%}
   .receipt-order-row .button-row .btn{flex:1}
 }
+
+.sms-settings-panel{display:grid;gap:20px}
+.sms-effective-badge{display:inline-flex;align-items:center;padding:8px 11px;border:1px solid #cfe2d2;border-radius:999px;background:#edf7ef;color:#246d35;font-size:9px;font-weight:950;letter-spacing:.06em}
+.sms-settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.sms-settings-grid>section,.sms-test-box{background:#fff;border:1px solid var(--line);padding:20px}
+.sms-settings-grid h3,.sms-test-box h3{margin:0 0 7px;font-size:18px}
+.sms-settings-grid label,.sms-test-grid label{display:grid;gap:7px;font-size:10px;font-weight:850;margin-top:15px}
+.sms-settings-grid input,.sms-settings-grid textarea,.sms-test-grid input,.sms-test-grid textarea{width:100%;box-sizing:border-box;padding:12px;border:1px solid var(--line);background:#fff;border-radius:7px;font:inherit;font-size:12px;outline:none}
+.sms-settings-grid textarea,.sms-test-grid textarea{min-height:100px;resize:vertical}
+.sms-settings-grid input:focus,.sms-settings-grid textarea:focus,.sms-test-grid input:focus,.sms-test-grid textarea:focus{border-color:#2f8f46;box-shadow:0 0 0 3px #2f8f4615}
+.sms-help,.sms-settings-grid small,.sms-test-box p{color:var(--muted);font-size:10px;line-height:1.5;margin:0}
+.sms-system-default{display:flex;justify-content:space-between;gap:10px;margin-top:15px;padding:11px;background:var(--paper);border:1px solid var(--line);font-size:9px}
+.sms-system-default span{color:var(--muted)}.sms-system-default strong{font-size:10px}
+.sms-toggle{display:flex!important;align-items:center;gap:10px;padding:11px;background:var(--paper);border:1px solid var(--line)}
+.sms-toggle input{width:18px!important;height:18px!important;margin:0}.sms-toggle span{display:grid;gap:4px}.sms-toggle small{font-size:9px}
+.sms-settings-actions{display:flex;justify-content:flex-end}
+.sms-test-box{display:grid;gap:15px}
+.sms-test-grid{display:grid;grid-template-columns:1fr 1.5fr auto;gap:10px;align-items:end}
+.sms-test-grid label{margin:0}.sms-test-grid button{min-height:44px;white-space:nowrap}
+@media(max-width:800px){.sms-settings-grid{grid-template-columns:1fr}.sms-test-grid{grid-template-columns:1fr}.sms-test-grid button{width:100%}.sms-effective-badge{max-width:100%;overflow:hidden;text-overflow:ellipsis}}

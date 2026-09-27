@@ -1801,6 +1801,32 @@ async function recordPlatformAudit(adminId,businessId,action,note='',metadata={}
     await pool.query('insert into platform_audit_events(id,admin_id,business_id,action,note,metadata) values(gen_random_uuid(),$1,$2,$3,$4,$5)',[adminId||null,businessId||null,String(action||'UNKNOWN'),String(note||''),metadata||{}]);
   }catch{}
 }
+async function ensurePlatformObservabilitySchema(){
+  await pool.query(`
+    create table if not exists platform_incidents (
+      id uuid primary key default gen_random_uuid(),
+      business_id uuid references businesses(id) on delete set null,
+      source text not null default 'API',
+      dashboard text,
+      severity text not null default 'ERROR',
+      status text not null default 'OPEN',
+      fingerprint text not null,
+      message text not null,
+      stack text,
+      url text,
+      metadata jsonb not null default '{}'::jsonb,
+      occurrences integer not null default 1,
+      first_seen_at timestamptz not null default now(),
+      last_seen_at timestamptz not null default now(),
+      resolved_at timestamptz,
+      created_at timestamptz not null default now()
+    );
+    create unique index if not exists platform_incidents_fingerprint_idx on platform_incidents(fingerprint);
+    create index if not exists platform_incidents_business_idx on platform_incidents(business_id,last_seen_at desc);
+    create index if not exists platform_incidents_status_idx on platform_incidents(status,last_seen_at desc);
+  `);
+}
+
 
 function platformSlug(value){
   return String(value||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,80);
@@ -1873,6 +1899,124 @@ app.get('/api/platform/packages',requirePlatformAdmin,async(req,res)=>{
   try{const r=await pool.query('select key,name,description,monthly_price_kes,active,features from platform_packages where active=true order by monthly_price_kes,key');res.json(r.rows);}
   catch(e){res.status(500).json({error:e.message||'Unable to load packages'});}
 });
+
+// Phase 6: platform-wide operations, observability and independent dashboard monitoring.
+app.get('/api/platform/command-center',requirePlatformAdmin,async(req,res)=>{
+  try{
+    const [
+      tenants,ordersToday,paidValue,pendingPayments,activeTrips,onlineRiders,
+      riders,totalCustomers,stations,openIncidents,recentOrders,recentIncidents
+    ]=await Promise.all([
+      pool.query("select count(*)::int total,count(*) filter(where status='ACTIVE')::int active,count(*) filter(where status='SUSPENDED')::int suspended from businesses"),
+      pool.query("select count(*)::int total from orders where created_at>=current_date"),
+      pool.query("select coalesce(sum(total) filter(where payment_status='PAID' and status<>'CANCELLED'),0)::numeric value from orders"),
+      pool.query("select count(*)::int total from orders where payment_status='PENDING' and status<>'CANCELLED'"),
+      pool.query("select count(*)::int total from rider_trips where completed_at is null"),
+      pool.query("select count(*)::int total from rider_presence where online=true"),
+      pool.query("select count(*)::int total from riders"),
+      pool.query("select count(*)::int total from customers"),
+      pool.query("select count(*)::int total,count(*) filter(where active=true)::int active from restaurant_order_stations"),
+      pool.query("select count(*)::int total,count(*) filter(where severity='CRITICAL')::int critical from platform_incidents where status='OPEN'"),
+      pool.query(`select o.id,o.order_number,o.status,o.payment_status,o.delivery_status,o.total,o.created_at,b.name as business_name,b.id as business_id
+        from orders o join businesses b on b.id=o.business_id order by o.created_at desc limit 12`),
+      pool.query(`select i.id,i.business_id,i.source,i.dashboard,i.severity,i.status,i.message,i.occurrences,i.last_seen_at,b.name as business_name
+        from platform_incidents i left join businesses b on b.id=i.business_id
+        where i.status='OPEN' order by case i.severity when 'CRITICAL' then 1 when 'ERROR' then 2 else 3 end,i.last_seen_at desc limit 12`)
+    ]);
+    res.json({
+      checkedAt:new Date().toISOString(),
+      tenants:tenants.rows[0],
+      metrics:{
+        ordersToday:ordersToday.rows[0].total,
+        paidValue:Number(paidValue.rows[0].value||0),
+        pendingPayments:pendingPayments.rows[0].total,
+        activeTrips:activeTrips.rows[0].total,
+        onlineRiders:onlineRiders.rows[0].total,
+        riders:riders.rows[0].total,
+        customers:totalCustomers.rows[0].total,
+        stations:stations.rows[0]
+      },
+      incidents:openIncidents.rows[0],
+      recentOrders:recentOrders.rows.map(x=>({...x,total:Number(x.total||0)})),
+      openIssues:recentIncidents.rows
+    });
+  }catch(e){res.status(500).json({error:e.message||'Unable to load platform command centre'});}
+});
+
+app.get('/api/platform/orders',requirePlatformAdmin,async(req,res)=>{
+  try{
+    const limit=Math.min(Math.max(Number(req.query.limit||50),1),200);
+    const businessId=String(req.query.businessId||'').trim();
+    const params=[];let where='';
+    if(businessId){params.push(businessId);where='where o.business_id=$1';}
+    params.push(limit);
+    const r=await pool.query(`select o.id,o.order_number,o.status,o.payment_status,o.delivery_status,o.total,o.created_at,o.accepted_at,o.out_for_delivery_at,o.delivered_at,
+      b.id as business_id,b.name as business_name,c.name as customer_name,
+      coalesce(o.delivery_address,'') as delivery_address
+      from orders o join businesses b on b.id=o.business_id join customers c on c.id=o.customer_id
+      ${where} order by o.created_at desc limit ${params.length}`,params);
+    res.json(r.rows.map(x=>({...x,total:Number(x.total||0)})));
+  }catch(e){res.status(500).json({error:e.message||'Unable to load platform orders'});}
+});
+
+app.get('/api/platform/riders',requirePlatformAdmin,async(req,res)=>{
+  try{
+    const limit=Math.min(Math.max(Number(req.query.limit||100),1),300);
+    const r=await pool.query(`select r.id,r.business_id,r.name,r.phone,r.email,r.vehicle_type,r.number_plate,r.rider_status,r.active,
+      coalesce(p.online,false) as online,p.updated_at as presence_updated_at,
+      t.id as trip_id,t.order_id,t.assigned_at,t.completed_at,o.order_number,o.delivery_status,
+      b.name as business_name
+      from riders r join businesses b on b.id=r.business_id
+      left join rider_presence p on p.rider_id=r.id
+      left join lateral (select t.* from rider_trips t where t.rider_id=r.id and t.completed_at is null order by t.assigned_at desc limit 1) t on true
+      left join orders o on o.id=t.order_id
+      order by b.name,r.name limit $1`,[limit]);
+    res.json(r.rows);
+  }catch(e){res.status(500).json({error:e.message||'Unable to load platform riders'});}
+});
+
+app.get('/api/platform/incidents',requirePlatformAdmin,async(req,res)=>{
+  try{
+    const limit=Math.min(Math.max(Number(req.query.limit||100),1),300);
+    const status=String(req.query.status||'OPEN').toUpperCase();
+    const params=[status,limit];
+    const r=await pool.query(`select i.*,b.name as business_name
+      from platform_incidents i left join businesses b on b.id=i.business_id
+      where i.status=$1 order by case i.severity when 'CRITICAL' then 1 when 'ERROR' then 2 else 3 end,i.last_seen_at desc limit $2`,params);
+    res.json(r.rows);
+  }catch(e){res.status(500).json({error:e.message||'Unable to load platform incidents'});}
+});
+
+app.post('/api/platform/incidents/:id/resolve',requirePlatformAdmin,async(req,res)=>{
+  try{
+    const r=await pool.query("update platform_incidents set status='RESOLVED',resolved_at=now() where id=$1 returning *",[req.params.id]);
+    if(!r.rowCount)return res.status(404).json({error:'Incident not found'});
+    await recordPlatformAudit(req.platformAdmin.id,r.rows[0].business_id,'INCIDENT_RESOLVED','Platform owner resolved an incident',{incidentId:req.params.id});
+    res.json(r.rows[0]);
+  }catch(e){res.status(500).json({error:e.message||'Unable to resolve incident'});}
+});
+
+app.post('/api/platform/telemetry',async(req,res)=>{
+  try{
+    const message=String(req.body.message||'').trim().slice(0,1000);
+    if(!message)return res.status(400).json({error:'Error message is required'});
+    const businessId=String(req.body.businessId||'').trim()||null;
+    const source=String(req.body.source||'WEB').trim().slice(0,40)||'WEB';
+    const dashboard=String(req.body.dashboard||'UNKNOWN').trim().slice(0,80)||'UNKNOWN';
+    const severity=['INFO','WARN','ERROR','CRITICAL'].includes(String(req.body.severity||'ERROR').toUpperCase())?String(req.body.severity).toUpperCase():'ERROR';
+    const url=String(req.body.url||'').slice(0,500);
+    const stack=String(req.body.stack||'').slice(0,5000);
+    const raw=JSON.stringify({businessId,dashboard,source,message,url});
+    const fingerprint=crypto.createHash('sha256').update(raw).digest('hex');
+    const metadata={userAgent:String(req.headers['user-agent']||'').slice(0,500),reportedAt:new Date().toISOString()};
+    const r=await pool.query(`insert into platform_incidents(business_id,source,dashboard,severity,status,fingerprint,message,stack,url,metadata)
+      values($1,$2,$3,$4,'OPEN',$5,$6,$7,$8,$9)
+      on conflict(fingerprint) do update set occurrences=platform_incidents.occurrences+1,last_seen_at=now(),severity=excluded.severity,stack=coalesce(excluded.stack,platform_incidents.stack),url=coalesce(excluded.url,platform_incidents.url),metadata=excluded.metadata,status='OPEN',resolved_at=null
+      returning id`,[businessId,source,dashboard,severity,fingerprint,message,stack||null,url||null,metadata]);
+    res.status(202).json({ok:true,incidentId:r.rows[0].id});
+  }catch(e){res.status(202).json({ok:false});}
+});
+
 app.get('/api/platform/health',requirePlatformAdmin,async(req,res)=>{
   try{
     const started=Date.now();
@@ -2243,6 +2387,7 @@ app.get('/api/public/integrations/:token.js',(req,res)=>{
 async function startServer(){
   await ensureIntegrationSchema();
   await ensureSmsSchema();
+  await ensurePlatformObservabilitySchema();
   app.listen(port, () => console.log(`Ordering API listening on ${port}`));
 }
 startServer().catch(error => { console.error('Unable to start ordering API', error); process.exit(1); });

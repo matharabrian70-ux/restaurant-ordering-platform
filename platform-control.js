@@ -184,20 +184,19 @@ function healthPanel(){
   const envItems=[['DATABASE',env.database],['GOOGLE MAPS',env.googleMaps],['SMS',env.smsProvider],['PAYMENTS',env.payments]];
   const tenantCount=(h.tenants||[]).length;
   const broken=(h.tenants||[]).filter(t=>!t.ok&&t.status==='ACTIVE').length;
-  return \`<section class="pc-panel pc-health" id="pc-health-panel">
+  return `<section class="pc-panel pc-health" id="pc-health-panel">
     <div class="pc-panel-head">
       <div><span class="pc-kicker">AUTOMATIC HEALTH CHECK</span><h2>Platform health</h2></div>
-      <div class="pc-health-actions"><span class="pc-health-status \${h.ok?'ok':'warn'}">\${h.ok?'HEALTHY':'ATTENTION NEEDED'}</span><button class="pc-mini" id="health-refresh">RUN CHECK</button></div>
+      <div class="pc-health-actions"><span class="pc-health-status ${h.ok?'ok':'warn'}">${h.ok?'HEALTHY':'ATTENTION NEEDED'}</span><button class="pc-mini" id="health-refresh">RUN CHECK</button></div>
     </div>
     <div class="pc-health-grid">
-      \${envItems.map(x=>\`<div class="pc-health-card"><span>\${x[0]}</span><strong class="\${x[1]?'ok':'warn'}">\${x[1]?'READY':'NOT CONFIGURED'}</strong></div>\`).join('')}
-      <div class="pc-health-card"><span>TENANTS CHECKED</span><strong>\${tenantCount}</strong><small>\${broken?broken+' active tenant issue'+(broken===1?'':'s'): 'No active tenant issues'}</small></div>
+      ${envItems.map(x=>`<div class="pc-health-card"><span>${x[0]}</span><strong class="${x[1]?'ok':'warn'}">${x[1]?'READY':'NOT CONFIGURED'}</strong></div>`).join('')}
+      <div class="pc-health-card"><span>TENANTS CHECKED</span><strong>${tenantCount}</strong><small>${broken?broken+' active tenant issue'+(broken===1?'':'s'):'No active tenant issues'}</small></div>
     </div>
-    <div class="pc-health-foot"><span>Last check: \${h.checkedAt?new Date(h.checkedAt).toLocaleString():'Not run'}</span><span>\${h.responseMs?Number(h.responseMs)+' ms':''}</span></div>
-    \${state.audit?.length?\`<details class="pc-audit"><summary>Recent platform activity</summary><div class="pc-audit-list">\${state.audit.map(a=>\`<div class="pc-audit-row"><strong>\${esc(a.action)}</strong><span>\${esc(a.business_name||'Platform')}</span><small>\${new Date(a.created_at).toLocaleString()}</small></div>\`).join('')}</div></details>\`:''}
-  </section>\`;
+    <div class="pc-health-foot"><span>Last check: ${h.checkedAt?new Date(h.checkedAt).toLocaleString():'Not run'}</span><span>${h.responseMs?Number(h.responseMs)+' ms':''}</span></div>
+    ${state.audit?.length?`<details class="pc-audit"><summary>Recent platform activity</summary><div class="pc-audit-list">${state.audit.map(a=>`<div class="pc-audit-row"><strong>${esc(a.action)}</strong><span>${esc(a.business_name||'Platform')}</span><small>${new Date(a.created_at).toLocaleString()}</small></div>`).join('')}</div></details>`:''}
+  </section>`;
 }
-
 function render(){
   const o=state.overview||{};
   root.innerHTML=`

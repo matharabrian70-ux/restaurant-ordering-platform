@@ -239,6 +239,97 @@ function hashSessionToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
 
+
+async function ensureSmsSchema() {
+  await pool.query(`
+    create table if not exists business_sms_settings (
+      business_id uuid primary key references businesses(id) on delete cascade,
+      sender_id text,
+      assignment_template text not null default 'You have a new delivery assignment from {restaurant}. Order {order}. Open your Rider Dashboard to view and accept it.',
+      enabled boolean not null default true,
+      updated_at timestamptz not null default now()
+    );
+    create index if not exists business_sms_settings_enabled_idx on business_sms_settings(business_id,enabled);
+  `);
+}
+
+function smsEnvironment() {
+  return String(process.env.AFRICASTALKING_ENVIRONMENT || 'production').toLowerCase() === 'sandbox' ? 'sandbox' : 'production';
+}
+function smsApiBase() {
+  return smsEnvironment() === 'sandbox'
+    ? 'https://api.sandbox.africastalking.com'
+    : 'https://api.africastalking.com';
+}
+function requireSmsConfig() {
+  const username=String(process.env.AFRICASTALKING_USERNAME || '').trim();
+  const apiKey=String(process.env.AFRICASTALKING_API_KEY || '').trim();
+  const defaultSender=String(process.env.AFRICASTALKING_SENDER_ID || '').trim();
+  if(!username || !apiKey) throw new Error('Africa\'s Talking SMS is not configured on the server');
+  return {username,apiKey,defaultSender};
+}
+function normalizeSenderId(value) {
+  const sender=String(value||'').trim();
+  if(!sender)return '';
+  if(sender.length>11 || /\s/.test(sender)) throw new Error('Sender ID must be 11 characters or fewer and cannot contain spaces');
+  if(!/^[A-Za-z0-9_-]+$/.test(sender)) throw new Error('Sender ID may only contain letters, numbers, hyphens or underscores');
+  return sender;
+}
+function renderSmsTemplate(template, vars={}) {
+  return String(template||'').replace(/\\{\\s*(restaurant|order|rider|dashboard)\\s*\\}/gi,(_,key)=>String(vars[String(key).toLowerCase()]||'')).trim();
+}
+async function getBusinessSmsSettings(businessId) {
+  await ensureSmsSchema();
+  const r=await pool.query(`select b.name,coalesce(s.sender_id,'') as sender_id,
+      coalesce(s.assignment_template,'You have a new delivery assignment from {restaurant}. Order {order}. Open your Rider Dashboard to view and accept it.') as assignment_template,
+      coalesce(s.enabled,true) as enabled
+    from businesses b
+    left join business_sms_settings s on s.business_id=b.id
+    where b.id=$1 limit 1`,[businessId]);
+  if(!r.rowCount) throw new Error('Restaurant not found');
+  return r.rows[0];
+}
+async function sendSms({businessId,to,message,senderId=null}) {
+  const config=requireSmsConfig();
+  const recipient=normalizeKenyanPhone(to);
+  const settings=await getBusinessSmsSettings(businessId);
+  const sender=normalizeSenderId(senderId || settings.sender_id || config.defaultSender);
+  if(!sender) throw new Error('No SMS Sender ID is configured for this restaurant');
+  const body=new URLSearchParams({
+    username:config.username,
+    to:recipient,
+    message:String(message).slice(0,918),
+    ...(sender?{from:sender}:{}),
+  });
+  const response=await fetch(smsApiBase()+'/version1/messaging',{
+    method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8','apiKey':config.apiKey,'Accept':'application/json'},
+    body:body.toString()
+  });
+  const data=await response.json().catch(()=>({}));
+  const recipientResult=data?.SMSMessageData?.Recipients?.[0];
+  if(!response.ok || !recipientResult || String(recipientResult.statusCode)!=='101') {
+    throw new Error(recipientResult?.status || data?.SMSMessageData?.Message || data?.message || `SMS provider request failed (${response.status})`);
+  }
+  return {recipient:recipientResult.number || recipient,status:recipientResult.status || 'Success',statusCode:recipientResult.statusCode,messageId:recipientResult.messageId||null,cost:recipientResult.cost||null};
+}
+async function sendRiderAssignmentSms({businessId,riderId,orderId}) {
+  const riderResult=await pool.query('select r.name,r.phone,o.order_number,b.name as restaurant_name from riders r join orders o on o.id=$2 and o.business_id=$1 join businesses b on b.id=$1 where r.id=$3 and r.business_id=$1 limit 1',[businessId,orderId,riderId]);
+  if(!riderResult.rowCount)return null;
+  const rider=riderResult.rows[0];
+  if(!rider.phone)return null;
+  const settings=await getBusinessSmsSettings(businessId);
+  if(!settings.enabled)return {skipped:true,reason:'disabled'};
+  const dashboard=`${FRONTEND_URL.replace(/\\/$/,'')}/rider.html?businessId=${encodeURIComponent(businessId)}`;
+  const message=renderSmsTemplate(settings.assignment_template,{
+    restaurant:rider.restaurant_name,
+    order:rider.order_number,
+    rider:rider.name,
+    dashboard
+  });
+  return sendSms({businessId,to:rider.phone,message});
+}
+
 async function ensureIntegrationSchema() {
   await pool.query(`
     create table if not exists business_integrations (
@@ -485,6 +576,50 @@ app.post('/api/manager/google', async (req,res)=>{
     res.json({token,manager:{id:manager.id,businessId:manager.business_id,name:manager.name,email:manager.email,role:manager.role}});
   }catch(error){res.status(500).json({error:error.message||'Unable to sign in with Google'});}
 });
+
+app.get('/api/manager/sms-settings',requireManager,async(req,res)=>{
+  try{
+    const config=await getBusinessSmsSettings(req.manager.business_id);
+    const serverSender=String(process.env.AFRICASTALKING_SENDER_ID||'').trim();
+    res.json({
+      businessId:req.manager.business_id,
+      enabled:Boolean(config.enabled),
+      senderId:config.sender_id||'',
+      systemSenderId:serverSender,
+      effectiveSenderId:config.sender_id||serverSender||'',
+      assignmentTemplate:config.assignment_template
+    });
+  }catch(e){res.status(500).json({error:e.message||'Unable to load SMS settings'});}
+});
+app.put('/api/manager/sms-settings',requireManager,async(req,res)=>{
+  try{
+    await ensureSmsSchema();
+    const senderId=normalizeSenderId(req.body.senderId);
+    const assignmentTemplate=String(req.body.assignmentTemplate||'').trim();
+    const enabled=req.body.enabled!==false;
+    if(!assignmentTemplate)return res.status(400).json({error:'Assignment message template is required'});
+    if(assignmentTemplate.length>320)return res.status(400).json({error:'SMS template must be 320 characters or fewer'});
+    await pool.query(`insert into business_sms_settings(business_id,sender_id,assignment_template,enabled,updated_at)
+      values($1,$2,$3,$4,now())
+      on conflict(business_id) do update set sender_id=excluded.sender_id,assignment_template=excluded.assignment_template,enabled=excluded.enabled,updated_at=now()`,
+      [req.manager.business_id,senderId||null,assignmentTemplate,enabled]);
+    res.json(await getBusinessSmsSettings(req.manager.business_id));
+  }catch(e){res.status(400).json({error:e.message||'Unable to save SMS settings'});}
+});
+app.post('/api/manager/sms-test',requireManager,async(req,res)=>{
+  try{
+    const phone=normalizeKenyanPhone(req.body.phone);
+    const settings=await getBusinessSmsSettings(req.manager.business_id);
+    const message=String(req.body.message||'').trim() || renderSmsTemplate(settings.assignment_template,{
+      restaurant:settings.name,order:'DEMO-0001',rider:req.manager.name||'Rider',
+      dashboard:`${FRONTEND_URL.replace(/\\/$/,'')}/rider.html?businessId=${encodeURIComponent(req.manager.business_id)}`
+    });
+    if(message.length>918)return res.status(400).json({error:'SMS message is too long'});
+    const result=await sendSms({businessId:req.manager.business_id,to:phone,message});
+    res.json({ok:true,message:'SMS accepted by Africa\'s Talking',...result});
+  }catch(e){res.status(400).json({error:e.message||'Unable to send test SMS'});}
+});
+
 app.get('/api/manager/me',requireManager,(req,res)=>res.json({id:req.manager.id,businessId:req.manager.business_id,name:req.manager.name,email:req.manager.email,role:req.manager.role}));
 app.post('/api/manager/logout',requireManager,async(req,res)=>{
   try{const raw=String(req.headers.authorization||'');const token=raw.startsWith('Bearer ')?raw.slice(7).trim():'';if(token) await pool.query('delete from manager_sessions where token_hash=$1',[hashSessionToken(token)]);res.json({ok:true});}
@@ -1154,6 +1289,7 @@ app.post('/api/orders/:id/assign-rider',requireRiderModule,requireManagerOrder,a
     await client.query('commit');
     broadcastOrder((await pool.query('select * from orders where id=$1',[order.id])).rows[0],{reason:'restaurant.rider_assigned',notification:'Rider assigned — awaiting rider acceptance'});
     broadcastRider({businessId:order.business_id,riderId:riderId,orderId:order.id,action:'DELIVERY_ASSIGNED',data:{tripId:trip.rows[0].id,status:'ASSIGNED'}});
+    sendRiderAssignmentSms({businessId:order.business_id,riderId,orderId:order.id}).catch(error=>console.error('Rider assignment SMS failed:',error.message));
     res.json({ok:true,tripId:trip.rows[0].id});
   }catch(error){try{await client.query('rollback')}catch{}res.status(500).json({error:error.message||'Unable to assign rider'});}finally{client.release();}
 });
@@ -1294,6 +1430,7 @@ app.post('/api/station/orders/:id/assign-rider',requireStation,async(req,res)=>{
     if(riderConnected){
       broadcastRider({businessId:order.business_id,riderId:riderId,orderId:order.id,action:'DELIVERY_ASSIGNED',data:{tripId:trip.rows[0].id,status:'ASSIGNED'}});
     }
+    sendRiderAssignmentSms({businessId:order.business_id,riderId,orderId:order.id}).catch(error=>console.error('Rider assignment SMS failed:',error.message));
     res.json({ok:true,tripId:trip.rows[0].id,riderConnected});
   }catch(e){try{await client.query('rollback')}catch{}res.status(500).json({error:e.message||'Unable to dispatch rider'});}
   finally{client.release();}
@@ -1695,6 +1832,7 @@ app.get('/api/public/integrations/:token.js',(req,res)=>{
 
 async function startServer(){
   await ensureIntegrationSchema();
+  await ensureSmsSchema();
   app.listen(port, () => console.log(`Ordering API listening on ${port}`));
 }
 startServer().catch(error => { console.error('Unable to start ordering API', error); process.exit(1); });

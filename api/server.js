@@ -253,6 +253,23 @@ async function ensureSmsSchema() {
   `);
 }
 
+async function ensureDeliveryTrackingSchema() {
+  await pool.query(`
+    create table if not exists rider_live_locations (
+      rider_id uuid primary key references riders(id) on delete cascade,
+      trip_id uuid not null unique references rider_trips(id) on delete cascade,
+      order_id uuid not null unique references orders(id) on delete cascade,
+      latitude numeric(10,7) not null,
+      longitude numeric(10,7) not null,
+      accuracy_meters numeric(10,2),
+      heading numeric(7,2),
+      speed_mps numeric(10,2),
+      updated_at timestamptz not null default now()
+    );
+    create index if not exists rider_live_locations_order_idx on rider_live_locations(order_id,updated_at desc);
+  `);
+}
+
 function smsEnvironment() {
   return String(process.env.AFRICASTALKING_ENVIRONMENT || 'production').toLowerCase() === 'sandbox' ? 'sandbox' : 'production';
 }
@@ -633,6 +650,54 @@ app.get('/api/businesses/:id', async (req,res)=>{
     res.json(result.rows[0]);
   }catch{res.status(500).json({error:'Unable to load business'});}
 });
+app.post('/api/riders/:id/deliveries/:tripId/location',requireRiderModule,requireRiderAuth,async(req,res)=>{
+  try{
+    const lat=Number(req.body.latitude), lng=Number(req.body.longitude);
+    if(!Number.isFinite(lat)||!Number.isFinite(lng)||lat<-90||lat>90||lng<-180||lng>180){
+      return res.status(400).json({error:'Valid latitude and longitude are required'});
+    }
+    const accuracy=Number(req.body.accuracy);
+    const heading=Number(req.body.heading);
+    const speed=Number(req.body.speed);
+    const trip=await pool.query(`select t.id,t.order_id,o.business_id,o.status,o.delivery_status
+      from rider_trips t join orders o on o.id=t.order_id
+      where t.id=$1 and t.rider_id=$2 and t.completed_at is null limit 1`,[req.params.tripId,req.rider.id]);
+    if(!trip.rowCount)return res.status(404).json({error:'Active delivery not found'});
+    const row=trip.rows[0];
+    if(!['OUT_FOR_DELIVERY','ACCEPTED'].includes(String(row.status)) && String(row.delivery_status)!=='ASSIGNED'){
+      return res.status(409).json({error:'This delivery is no longer active'});
+    }
+    await ensureDeliveryTrackingSchema();
+    await pool.query(`insert into rider_live_locations(rider_id,trip_id,order_id,latitude,longitude,accuracy_meters,heading,speed_mps,updated_at)
+      values($1,$2,$3,$4,$5,$6,$7,$8,now())
+      on conflict(rider_id) do update set trip_id=excluded.trip_id,order_id=excluded.order_id,latitude=excluded.latitude,longitude=excluded.longitude,accuracy_meters=excluded.accuracy_meters,heading=excluded.heading,speed_mps=excluded.speed_mps,updated_at=now()`,
+      [req.rider.id,row.id,row.order_id,lat,lng,Number.isFinite(accuracy)?accuracy:null,Number.isFinite(heading)?heading:null,Number.isFinite(speed)?speed:null]);
+    broadcastRealtime({
+      businessId:row.business_id,
+      orderId:row.order_id,
+      riderId:req.rider.id,
+      event:'delivery.location',
+      data:{orderId:row.order_id,tripId:row.id,riderId:req.rider.id,latitude:lat,longitude:lng,accuracy:Number.isFinite(accuracy)?accuracy:null,heading:Number.isFinite(heading)?heading:null,speed:Number.isFinite(speed)?speed:null,updatedAt:new Date().toISOString()}
+    });
+    res.json({ok:true,latitude:lat,longitude:lng,updatedAt:new Date().toISOString()});
+  }catch(e){res.status(400).json({error:e.message||'Unable to update rider location'});}
+});
+
+app.get('/api/orders/:id/live-location',async(req,res)=>{
+  try{
+    await ensureDeliveryTrackingSchema();
+    const r=await pool.query(`select l.latitude,l.longitude,l.accuracy_meters,l.heading,l.speed_mps,l.updated_at,
+        t.id as trip_id,t.rider_id,r.name as rider_name
+      from rider_live_locations l
+      join rider_trips t on t.id=l.trip_id
+      join riders r on r.id=t.rider_id
+      where l.order_id=$1 and t.completed_at is null
+      limit 1`,[req.params.id]);
+    if(!r.rowCount)return res.status(404).json({error:'Live rider location not available'});
+    res.json(r.rows[0]);
+  }catch(e){res.status(500).json({error:'Unable to load live rider location'});}
+});
+
 app.get('/api/events', async (req, res) => {
   const businessId = String(req.query.businessId || '');
   const orderId = req.query.orderId ? String(req.query.orderId) : null;

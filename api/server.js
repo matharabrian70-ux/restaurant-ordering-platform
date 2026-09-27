@@ -258,7 +258,7 @@ async function ensureDeliveryTrackingSchema() {
     create table if not exists rider_live_locations (
       rider_id uuid primary key references riders(id) on delete cascade,
       trip_id uuid not null unique references rider_trips(id) on delete cascade,
-      order_id uuid not null unique references orders(id) on delete cascade,
+      order_id uuid not null references orders(id) on delete cascade,
       latitude numeric(10,7) not null,
       longitude numeric(10,7) not null,
       accuracy_meters numeric(10,2),

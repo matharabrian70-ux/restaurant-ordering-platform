@@ -202,7 +202,7 @@ function showDeliveryAssignmentPopup(job){
     '<div class="rider-assignment-order"><strong>'+esc(job.order_number)+'</strong><span>'+esc(job.restaurant_name||'Restaurant')+'</span></div>'+
     '<div class="rider-assignment-grid"><div><small>CUSTOMER</small><strong>'+esc(job.customer_name||'Customer')+'</strong></div><div><small>DELIVERY FEE</small><strong>'+riderMoney(job.delivery_fee)+'</strong></div><div><small>DISTANCE</small><strong>'+((Number(job.route_distance_meters||0)/1000).toFixed(1))+' km</strong></div><div><small>ETA</small><strong>'+((Number(job.route_duration_seconds||0)/60).toFixed(0))+' min</strong></div></div>'+
     '<div class="rider-assignment-route"><div><span class="route-dot pickup"></span><div><small>PICK UP</small><strong>'+esc(job.pickup_address||job.restaurant_name||'Restaurant')+'</strong></div></div><div class="route-line"></div><div><span class="route-dot dropoff"></span><div><small>DELIVER TO</small><strong>'+esc(job.delivery_address||'Customer location')+'</strong></div></div></div>'+
-    '<div class="rider-assignment-actions"><button type="button" class="rider-assignment-decline" onclick="declineAssignmentPopup(\\''+esc(job.trip_id||'')+'\\')">DECLINE</button><button type="button" class="rider-assignment-accept" onclick="acceptAssignmentPopup(\\''+esc(job.trip_id||'')+'\\')">ACCEPT ORDER</button></div>'+
+    '<div class="rider-assignment-actions"><button type="button" class="rider-assignment-decline" onclick="declineAssignmentPopup(\''+esc(job.trip_id||'')+'\')">DECLINE</button><button type="button" class="rider-assignment-accept" onclick="acceptAssignmentPopup(\''+esc(job.trip_id||'')+'\')">ACCEPT ORDER</button></div>'+
     '</section>';
   document.body.appendChild(el);playAssignmentSound();
 }
@@ -485,7 +485,7 @@ function activeCard(a){
   if(!a)return '<div class="empty" style="padding:30px 10px"><h3>No active delivery.</h3><p>When the restaurant assigns a job to you, it will appear here.</p></div>';
   const current=(a.delivery_status||'ASSIGNED');
   let action='';
-  if(current==='ASSIGNED') action='<div class="rider-assigned-actions"><button class="rider-decline-inline" onclick="declineTrip(\\''+a.trip_id+'\\')">DECLINE</button><button onclick="acceptTrip(\\''+a.trip_id+'\\')">ACCEPT DELIVERY</button></div>';
+  if(current==='ASSIGNED') action='<div class="rider-assigned-actions"><button class="rider-decline-inline" onclick="declineTrip(\''+a.trip_id+'\')">DECLINE</button><button onclick="acceptTrip(\''+a.trip_id+'\')">ACCEPT DELIVERY</button></div>';
   else if(current==='ACCEPTED') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'ARRIVED_AT_RESTAURANT\')">ARRIVED AT RESTAURANT</button>';
   else if(current==='ARRIVED_AT_RESTAURANT') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'PICKED_UP\')">PICKED UP</button>';
   else if(current==='PICKED_UP') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'ON_THE_WAY\')">ON THE WAY</button>';
@@ -622,7 +622,7 @@ async function bootRider(){
 }
 function startRiderRealtime(){
   if(riderEvents||!rider)return;
-  const token=localStorage.getItem(RIDER_TOKEN_KEY);
+  const token=sessionStorage.getItem(RIDER_TOKEN_KEY);
   if(!token)return;
   const connect=()=>{
     if(!rider)return;

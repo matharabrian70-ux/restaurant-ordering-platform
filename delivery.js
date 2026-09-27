@@ -32,9 +32,37 @@ function decodeGooglePolyline(encoded){
   }
   return points;
 }
+async function publishRiderLocation(pos,tripId){
+  if(!rider||!tripId||riderLocationSending)return;
+  const now=Date.now();
+  const lat=Number(pos.coords.latitude),lng=Number(pos.coords.longitude);
+  if(!Number.isFinite(lat)||!Number.isFinite(lng))return;
+  const previous=riderLocationLastPoint;
+  const movedEnough=!previous||Math.abs(previous.lat-lat)+Math.abs(previous.lng-lng)>0.00012;
+  if(riderLocationTripId===tripId&&!movedEnough&&now-riderLocationLastSentAt<5000)return;
+  riderLocationSending=true;
+  try{
+    await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/deliveries/'+encodeURIComponent(tripId)+'/location',{
+      method:'POST',
+      body:JSON.stringify({
+        latitude:lat,longitude:lng,
+        accuracy:Number.isFinite(Number(pos.coords.accuracy))?Number(pos.coords.accuracy):null,
+        heading:Number.isFinite(Number(pos.coords.heading))?Number(pos.coords.heading):null,
+        speed:Number.isFinite(Number(pos.coords.speed))?Number(pos.coords.speed):null
+      })
+    });
+    riderLocationLastSentAt=now;
+    riderLocationLastPoint={lat,lng};
+    riderLocationTripId=tripId;
+  }catch{}
+  finally{riderLocationSending=false;}
+}
 function stopRiderMapTracking(){
   if(riderMapWatchId!==null&&navigator.geolocation){navigator.geolocation.clearWatch(riderMapWatchId);}
   riderMapWatchId=null;
+  riderLocationLastPoint=null;
+  riderLocationTripId=null;
+  riderLocationLastSentAt=0;
 }
 function destroyRiderMap(){
   setRiderMapFullscreen(false);
@@ -72,6 +100,7 @@ function startRiderLocationTracking(L){
   riderMapWatchId=navigator.geolocation.watchPosition(pos=>{
     if(!riderMap)return;
     const point=[pos.coords.latitude,pos.coords.longitude];
+    publishRiderLocation(pos,riderMapTripId);
     if(!riderMapRiderMarker){
       riderMapRiderMarker=L.marker(point,{title:'Your live location'}).addTo(riderMap);
       riderMapRiderMarker.bindPopup('<strong>You are here</strong><br>Live rider location');

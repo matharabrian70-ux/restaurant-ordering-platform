@@ -194,3 +194,81 @@
 .dispatch-current small{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
 .dispatch-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:8px}
 @media(max-width:650px){.dispatch-actions{display:grid;grid-template-columns:1fr}.dispatch-actions .btn{width:100%}}
+
+
+/* Phase 4 — Restaurant Operations OS / Dispatch */
+.dispatch-page{display:grid;gap:18px}
+.dispatch-hero{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:24px;border:1px solid var(--line);border-radius:20px;background:linear-gradient(135deg,#fff,#f5faf6)}
+.dispatch-hero h2{margin:4px 0 6px;font-size:38px;letter-spacing:-.04em}
+.dispatch-hero p{margin:0;color:var(--muted);max-width:680px}
+.dispatch-connection{display:inline-flex;align-items:center;gap:8px;white-space:nowrap;padding:10px 13px;border-radius:999px;border:1px solid #d9e4da;background:#fff;font-size:9px;font-weight:950;letter-spacing:.08em}
+.dispatch-connection i,.dispatch-rider-state i{width:8px;height:8px;border-radius:50%;display:block;background:#8b9890}
+.dispatch-connection.connected i,.dispatch-rider-state.available i{background:#1d8b42;box-shadow:0 0 0 5px #1d8b4215}
+.dispatch-connection.manual i,.dispatch-rider-state.online i{background:#b47a1d}
+.dispatch-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--line);border-radius:18px;overflow:hidden;background:#fff}
+.dispatch-summary article{padding:18px;border-right:1px solid var(--line)}
+.dispatch-summary article:last-child{border-right:0}
+.dispatch-summary article.attention{background:#fff9f4}
+.dispatch-summary span,.dispatch-rider-card small,.dispatch-active-grid small,.dispatch-order-value small{display:block;color:var(--muted);font-size:8px;font-weight:950;letter-spacing:.09em}
+.dispatch-summary strong{display:block;margin:4px 0;font-size:28px}
+.dispatch-summary small{color:var(--muted);font-size:10px}
+.dispatch-section{padding:20px}
+.dispatch-queue,.dispatch-active-list{display:grid;gap:10px}
+.dispatch-order-card,.dispatch-active-card{border:1px solid var(--line);border-radius:14px;padding:14px;background:#fff}
+.dispatch-order-main,.dispatch-active-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.dispatch-order-main b,.dispatch-active-head b{display:block;font-size:14px}
+.dispatch-order-main span,.dispatch-active-head span{display:block;color:var(--muted);font-size:10px;margin-top:3px}
+.dispatch-order-main small{display:block;color:var(--muted);font-size:9px;margin-top:7px;overflow-wrap:anywhere}
+.dispatch-order-value{text-align:right;min-width:90px}
+.dispatch-order-value strong{display:block;font-size:14px}
+.dispatch-order-actions{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;margin-top:12px}
+.dispatch-order-actions select{min-width:0;border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:#fff;font:inherit;font-size:10px;font-weight:800}
+.dispatch-active-head .status-chip{white-space:nowrap}
+.dispatch-active-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}
+.dispatch-active-grid span{min-width:0;padding:10px;border:1px solid var(--line);border-radius:10px;background:#fbfcfa}
+.dispatch-active-grid b{display:block;margin-top:4px;font-size:10px;overflow-wrap:anywhere}
+.dispatch-active-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}
+.dispatch-rider-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.dispatch-rider-card{display:grid;grid-template-columns:42px minmax(0,1fr);gap:10px;padding:12px;border:1px solid var(--line);border-radius:13px;background:#fff}
+.dispatch-rider-avatar{width:42px;height:42px;border-radius:50%;overflow:hidden;display:grid;place-items:center;background:#edf7ef;color:#176b32;font-weight:950}
+.dispatch-rider-avatar img{width:100%;height:100%;object-fit:cover}
+.dispatch-rider-body{min-width:0}
+.dispatch-rider-body>div{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+.dispatch-rider-body b{font-size:11px;overflow-wrap:anywhere}
+.dispatch-rider-body>div span{color:var(--muted);font-size:8px}
+.dispatch-rider-state{display:inline-flex;align-items:center;gap:6px;margin-top:5px;font-size:8px;font-weight:950;letter-spacing:.06em}
+.dispatch-rider-state.busy i{background:#c87b27}
+.dispatch-rider-state.offline i{background:#9ba39e}
+.dispatch-rider-body small{margin-top:6px;overflow-wrap:anywhere}
+.refunds-page .panel-title{margin-bottom:14px}
+.refund-list{display:grid;gap:9px}
+.refund-card{display:flex;justify-content:space-between;gap:16px;padding:14px;border:1px solid var(--line);border-radius:13px;background:#fff}
+.refund-card>div:last-child{text-align:right}
+.refund-card b,.refund-card strong{display:block;font-size:12px}
+.refund-card span,.refund-card small{display:block;color:var(--muted);font-size:9px;margin-top:3px}
+.refund-status{font-weight:950;letter-spacing:.06em}
+.refund-status.processed{color:#176b32}.refund-status.failed,.refund-status.needs-attention{color:#9a3b3b}.refund-status.pending,.refund-status.processing{color:#9b6a1c}
+@media(max-width:850px){
+  .dispatch-summary{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .dispatch-summary article:nth-child(2){border-right:0}
+  .dispatch-summary article:nth-child(-n+2){border-bottom:1px solid var(--line)}
+  .dispatch-active-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .dispatch-rider-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:600px){
+  .dispatch-hero{padding:16px;display:grid}
+  .dispatch-hero h2{font-size:28px}
+  .dispatch-connection{justify-self:start}
+  .dispatch-summary strong{font-size:23px}
+  .dispatch-summary article{padding:13px}
+  .dispatch-section{padding:14px}
+  .dispatch-order-main,.dispatch-active-head{display:grid}
+  .dispatch-order-value{text-align:left}
+  .dispatch-order-actions{grid-template-columns:1fr}
+  .dispatch-active-grid{grid-template-columns:1fr 1fr}
+  .dispatch-active-actions{display:grid;grid-template-columns:1fr}
+  .dispatch-active-actions button{width:100%}
+  .dispatch-rider-grid{grid-template-columns:1fr}
+  .refund-card{display:grid}
+  .refund-card>div:last-child{text-align:left}
+}

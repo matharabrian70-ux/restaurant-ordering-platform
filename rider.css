@@ -575,3 +575,58 @@ body.rider-map-fullscreen-open{overflow:hidden}
   .rider-profile-form input,.rider-profile-form select{min-height:50px!important;font-size:16px!important}
   .rider-profile-form label{gap:8px!important}
 }
+/* Mobile-first compact layout: keep the approved desktop design unchanged. */
+@media (max-width:650px){
+  .rider-shell{padding:0 10px 24px!important}
+  .rider-header{padding:10px 12px!important;min-height:54px!important}
+  .rider-header .brand{font-size:17px!important}
+  .rider-profile-nav{width:42px!important;height:42px!important;min-width:42px!important;padding:2px!important}
+  .rider-nav-avatar,.rider-nav-avatar-photo,.rider-nav-avatar-fallback{width:36px!important;height:36px!important}
+  .rider-identity-card{padding:14px 15px!important;gap:10px!important}
+  .rider-identity-card .eyebrow{font-size:8px!important}
+  .rider-identity-card h1,.rider-identity-card h2{font-size:25px!important;line-height:1.05!important;margin:2px 0 5px!important}
+  .rider-identity-card .muted,.rider-identity-card p{font-size:10px!important;line-height:1.35!important}
+  .rider-identity-avatar-photo,.rider-identity-avatar-fallback{width:58px!important;height:58px!important}
+  .rider-identity-main{gap:10px!important}
+  .rider-availability{padding-top:8px!important}
+  .rider-availability label,.rider-availability .eyebrow{font-size:8px!important;margin-bottom:5px!important}
+  .availability-button{min-height:46px!important;height:46px!important;font-size:13px!important;border-radius:14px!important}
+  .rider-availability small,.rider-identity-card small{font-size:8px!important;line-height:1.25!important}
+  .rider-stats-bar{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;border-radius:14px!important;overflow:hidden!important}
+  .rider-stat{min-width:0!important;padding:12px 8px!important;border-right:1px solid var(--line)!important;border-bottom:0!important}
+  .rider-stat:last-child{border-right:0!important}
+  .rider-stat .label,.rider-stat small{font-size:8px!important;white-space:nowrap!important}
+  .rider-stat strong{display:block!important;font-size:19px!important;line-height:1.05!important;margin:3px 0!important}
+  .rider-stat a,.rider-stat span{font-size:7px!important;white-space:nowrap!important}
+  .rider-delivery-stack{gap:12px!important;margin-top:12px!important}
+  .rider-delivery-panel{padding:14px!important;border-radius:16px!important}
+  .rider-delivery-panel header{margin-bottom:8px!important}
+  .rider-delivery-panel header h2{font-size:21px!important;line-height:1.05!important}
+  .rider-delivery-panel header .eyebrow{font-size:8px!important}
+  .rider-active-card{padding:11px!important;border-radius:12px!important}
+  .rider-active-top h3{font-size:16px!important}
+  .rider-active-info{grid-template-columns:1.2fr .8fr .8fr!important;gap:5px!important}
+  .rider-active-info>div{padding:7px!important}
+  .rider-active-info small{font-size:7px!important}
+  .rider-active-info strong{font-size:9px!important}
+  .rider-active-route{font-size:8px!important}
+  .rider-active-route strong{font-size:9px!important}
+  .rider-actions{gap:6px!important}
+  .rider-actions button,.rider-actions .rider-map-action{min-height:40px!important;font-size:9px!important;padding:8px 10px!important}
+  .rider-empty,.empty{padding:18px 8px!important}
+  .rider-empty h3,.empty h3{font-size:16px!important}
+  .rider-empty p,.empty p{font-size:9px!important}
+}
+@media (max-width:380px){
+  .rider-shell{padding-left:7px!important;padding-right:7px!important}
+  .rider-header{padding-left:9px!important;padding-right:9px!important}
+  .rider-identity-card{padding:12px!important}
+  .rider-identity-card h1,.rider-identity-card h2{font-size:22px!important}
+  .rider-identity-avatar-photo,.rider-identity-avatar-fallback{width:52px!important;height:52px!important}
+  .rider-stat{padding:10px 5px!important}
+  .rider-stat strong{font-size:17px!important}
+  .rider-stat .label,.rider-stat small{font-size:7px!important}
+  .rider-stat a,.rider-stat span{font-size:6.5px!important}
+  .rider-delivery-panel{padding:11px!important}
+  .rider-delivery-panel header h2{font-size:19px!important}
+}

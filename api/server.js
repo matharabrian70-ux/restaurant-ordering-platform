@@ -276,7 +276,7 @@ function normalizeSenderId(value) {
   return sender;
 }
 function renderSmsTemplate(template, vars={}) {
-  return String(template||'').replace(/\\{\\s*(restaurant|order|rider|dashboard)\\s*\\}/gi,(_,key)=>String(vars[String(key).toLowerCase()]||'')).trim();
+  return String(template||'').replace(/\{\s*(restaurant|order|rider|dashboard)\s*\}/gi,(_,key)=>String(vars[String(key).toLowerCase()]||'')).trim();
 }
 async function getBusinessSmsSettings(businessId) {
   await ensureSmsSchema();
@@ -320,7 +320,7 @@ async function sendRiderAssignmentSms({businessId,riderId,orderId}) {
   if(!rider.phone)return null;
   const settings=await getBusinessSmsSettings(businessId);
   if(!settings.enabled)return {skipped:true,reason:'disabled'};
-  const dashboard=`${FRONTEND_URL.replace(/\\/$/,'')}/rider.html?businessId=${encodeURIComponent(businessId)}`;
+  const dashboard=`${FRONTEND_URL.replace(/\/$/,'')}/rider.html?businessId=${encodeURIComponent(businessId)}`;
   const message=renderSmsTemplate(settings.assignment_template,{
     restaurant:rider.restaurant_name,
     order:rider.order_number,
@@ -485,7 +485,7 @@ async function getNairobiFuelPrice() {
   try {
     const response=await fetch(process.env.EPRA_FUEL_PRICE_URL||'https://www.epra.go.ke/EPRA%20Pump%20Prices',{headers:{'User-Agent':'RestaurantDeliveryPlatform/1.0'}});
     const html=await response.text();
-    const match=html.match(/Nairobi\\s+PMS\\s+([0-9]+(?:\\.[0-9]+)?)/i);
+    const match=html.match(/Nairobi\s+PMS\s+([0-9]+(?:\.[0-9]+)?)/i);
     if(match){
       const price=Number(match[1]);
       if(Number.isFinite(price)&&price>0){
@@ -612,7 +612,7 @@ app.post('/api/manager/sms-test',requireManager,async(req,res)=>{
     const settings=await getBusinessSmsSettings(req.manager.business_id);
     const message=String(req.body.message||'').trim() || renderSmsTemplate(settings.assignment_template,{
       restaurant:settings.name,order:'DEMO-0001',rider:req.manager.name||'Rider',
-      dashboard:`${FRONTEND_URL.replace(/\\/$/,'')}/rider.html?businessId=${encodeURIComponent(req.manager.business_id)}`
+      dashboard:`${FRONTEND_URL.replace(/\/$/,'')}/rider.html?businessId=${encodeURIComponent(req.manager.business_id)}`
     });
     if(message.length>918)return res.status(400).json({error:'SMS message is too long'});
     const result=await sendSms({businessId:req.manager.business_id,to:phone,message});

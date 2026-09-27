@@ -15,7 +15,7 @@ function startManagerRealtime(){
     const refresh=()=>{clearTimeout(window.managerRealtimeRetry);(Promise.resolve()).then(()=>load());};
     managerEvents.addEventListener('order.updated',e=>{try{const d=JSON.parse(e.data||'{}');if(d.status==='NEW'&&d.paymentStatus==='PAID'){const key=String(d.orderId||'');if(!alertedOrders.has(key)){alertedOrders.set(key,Date.now());playOrderAlert();setTimeout(()=>alertedOrders.delete(key),15000)}}refresh();}catch{}});
     managerEvents.addEventListener('rider.updated',()=>syncRiderListInPlace());
-    ['delivery.updated','refund.updated','station.updated','menu.updated','promotion.updated','branch.updated'].forEach(name=>managerEvents.addEventListener(name,refresh));
+    ['delivery.updated','refund.updated','payment.updated','station.updated','menu.updated','promotion.updated','branch.updated'].forEach(name=>managerEvents.addEventListener(name,refresh));
     managerEvents.onerror=()=>{if(managerEvents){managerEvents.close();managerEvents=null;}window.managerRealtimeRetry=setTimeout(connect,3000);};
   };
   connect();
@@ -31,8 +31,8 @@ async function load(){
   try{ currentManager=await api('/api/manager/me'); }catch(e){ return showLogin(); }
   root.innerHTML='<div class="manager-loading"><div class="manager-spinner"></div><h2>Loading control centre…</h2></div>';
   try{
-    const x=await Promise.all([api('/api/orders?businessId='+B),api('/api/riders?businessId='+B),api('/api/menu?businessId='+B),api('/api/businesses/'+B+'/branches'),api('/api/businesses/'+B+'/delivery-pricing'),api('/api/stations?businessId='+B),api('/api/businesses/'+B+'/branding'),api('/api/manager/receipt-settings'),api('/api/manager/dispatch'),api('/api/manager/refunds')]);
-    D={orders:x[0],riders:x[1],menu:x[2],branches:x[3],pricing:x[4],stations:x[5]||[],branding:x[6]?.branding||{},receiptConfig:x[7]?.config||{},dispatch:x[8]||{},refunds:x[9]||[],smsConfig:{}};
+    const x=await Promise.all([api('/api/orders?businessId='+B),api('/api/riders?businessId='+B),api('/api/menu?businessId='+B),api('/api/businesses/'+B+'/branches'),api('/api/businesses/'+B+'/delivery-pricing'),api('/api/stations?businessId='+B),api('/api/businesses/'+B+'/branding'),api('/api/manager/receipt-settings'),api('/api/manager/dispatch'),api('/api/manager/refunds'),api('/api/manager/payments')]);
+    D={orders:x[0],riders:x[1],menu:x[2],branches:x[3],pricing:x[4],stations:x[5]||[],branding:x[6]?.branding||{},receiptConfig:x[7]?.config||{},dispatch:x[8]||{},refunds:x[9]||[],payments:x[10]||[],smsConfig:{}};
     render();
     startManagerRealtime();
     startManagerLiveFallback();
@@ -167,6 +167,24 @@ function dispatch(){
     '<section class="manager-panel dispatch-section"><div class="panel-title"><div><span class="eyebrow">RIDER FLEET</span><h2>Availability</h2><p>Live status for every rider attached to this restaurant.</p></div></div><div class="dispatch-rider-grid">'+riderHtml+'</div></section>'+
   '</div>';
 }
+function payments(){
+  const rows=D.payments||[];
+  const paid=rows.filter(r=>String(r.status||'').toUpperCase()==='PAID');
+  const pending=rows.filter(r=>['PENDING','PROCESSING'].includes(String(r.status||'').toUpperCase()));
+  const refunded=rows.filter(r=>String(r.status||'').toUpperCase()==='REFUNDED');
+  const total=paid.reduce((s,r)=>s+Number(r.amount||0),0);
+  const statusChip=r=>'<span class="payment-status '+String(r.status||'').toLowerCase()+'">'+esc(r.status||'UNKNOWN')+'</span>';
+  return '<section class="payments-page"><div class="panel-title"><div><span class="eyebrow">PAYMENTS CONTROL</span><h2>Payments.</h2><p>Restaurant-scoped payment ledger. Provider references and statuses are read from the payment system; verification never trusts the browser alone.</p></div><button class="btn btn-small secondary" onclick="load()">↻ REFRESH</button></div>'+
+    '<div class="payment-summary"><article><span>CONFIRMED</span><strong>'+paid.length+'</strong><small>'+money(total)+'</small></article><article><span>AWAITING</span><strong>'+pending.length+'</strong><small>Pending / processing</small></article><article><span>REFUNDED</span><strong>'+refunded.length+'</strong><small>Provider-refunded payments</small></article><article><span>ALL TRANSACTIONS</span><strong>'+rows.length+'</strong><small>Latest 300</small></article></div>'+
+    '<section class="manager-panel payment-ledger-panel"><div class="panel-title"><div><span class="eyebrow">TRANSACTION LEDGER</span><h3>Latest payment activity</h3></div></div>'+
+    (rows.length?'<div class="payment-list">'+rows.map(r=>'<article class="payment-card"><div class="payment-main"><div><b>'+esc(r.order_number)+'</b><span>'+esc(r.customer_name||'Customer')+' · '+esc(r.payment_method||'Paystack')+'</span><small>'+esc(r.customer_phone||'')+' · '+new Date(r.created_at).toLocaleString('en-KE')+'</small></div><div class="payment-amount"><strong>'+money(r.amount)+'</strong>'+statusChip(r)+'</div></div><div class="payment-meta"><span>Provider <b>'+esc(r.provider||'PAYSTACK')+'</b></span><span>Reference <b>'+esc(r.provider_reference||'Not assigned')+'</b></span><span>Order <b>'+esc(r.order_status||'UNKNOWN')+'</b></span><span>Confirmed <b>'+esc(r.confirmed_at?new Date(r.confirmed_at).toLocaleString('en-KE'):'Not yet')+'</b></span></div><div class="payment-actions">'+(r.status!=='PAID'&&r.status!=='REFUNDED'&&r.provider_reference?'<button class="btn btn-small secondary" onclick="verifyManagerPayment(\''+r.id+'\',this)">VERIFY WITH PROVIDER</button>':'')+'</div></article>').join('')+'</div>':'<div class="empty-state">No payment transactions have been recorded yet.</div>')+
+    '</section></section>';
+}
+async function verifyManagerPayment(id,button){
+  const old=button.textContent;button.disabled=true;button.textContent='VERIFYING…';
+  try{const result=await api('/api/manager/payments/'+encodeURIComponent(id)+'/verify',{method:'POST'});await load();if(result.status!=='success')alert('Provider status: '+String(result.status||'pending').toUpperCase());}
+  catch(e){button.disabled=false;button.textContent=old;alert(e.message||'Unable to verify payment.');}
+}
 function refunds(){
   const rows=D.refunds||[];
   return '<section class="manager-panel refunds-page"><div class="panel-title"><div><span class="eyebrow">PAYMENTS CONTROL</span><h2>Refunds.</h2><p>Restaurant-scoped refund history from the payment system. Automatic refunds and their provider status appear here.</p></div><button class="btn btn-small secondary" onclick="load()">↻ REFRESH</button></div>'+
@@ -174,7 +192,7 @@ function refunds(){
   '</section>';
 }
 
-function render(){const o=D.orders||[],m=D.menu||{products:[]},paid=o.filter(x=>x.payment_status==='PAID'&&x.status!=='CANCELLED'),rev=paid.reduce((s,x)=>s+Number(x.total||0),0),today=o.filter(x=>new Date(x.created_at).toDateString()===new Date().toDateString());let body=T==='overview'?overview():T==='orders'?orders():T==='dispatch'?dispatch():T==='menu'?menu():T==='promotions'?promos():T==='branches'?branches():T==='delivery'?delivery():T==='riders'?riders():T==='receipts'?receipts():T==='refunds'?refunds():T==='sms'?smsSettings():station();root.innerHTML='<section class="manager-shell"><header class="manager-header"><div><span class="manager-kicker"><i></i> RESTAURANT CONTROL CENTRE</span><h1>'+esc(window.TenantTheme?.name?.()||'Restaurant')+'.</h1><p>Professional restaurant controls from phone, tablet, laptop or desktop.</p></div><div class="manager-header-actions"><span class="live-badge"><i></i> LIVE</span><span class="station-mini">'+esc(currentManager?.name||'MANAGER')+'</span><button class="btn btn-small" onclick="load()">REFRESH</button><button class="btn btn-small secondary" onclick="logoutManager()">SIGN OUT</button></div></header><nav class="manager-tabs">'+nav('overview','Overview')+nav('orders','Orders')+nav('dispatch','Dispatch')+nav('menu','Menu')+nav('promotions','Promotions')+nav('branches','Branches')+nav('delivery','Delivery')+nav('riders','Riders')+nav('receipts','Receipts')+nav('refunds','Refunds')+nav('sms','SMS')+nav('station','Order station')+'</nav><section class="manager-summary"><article><span>Today\'s orders</span><strong>'+today.length+'</strong></article><article><span>Revenue</span><strong>'+money(rev)+'</strong></article><article><span>Menu items</span><strong>'+m.products.length+'</strong></article><article><span>Riders available</span><strong>'+D.riders.filter(x=>x.available).length+'</strong></article></section><div class="manager-content">'+body+'</div></section>'}
+function render(){const o=D.orders||[],m=D.menu||{products:[]},paid=o.filter(x=>x.payment_status==='PAID'&&x.status!=='CANCELLED'),rev=paid.reduce((s,x)=>s+Number(x.total||0),0),today=o.filter(x=>new Date(x.created_at).toDateString()===new Date().toDateString());let body=T==='overview'?overview():T==='orders'?orders():T==='dispatch'?dispatch():T==='menu'?menu():T==='promotions'?promos():T==='branches'?branches():T==='delivery'?delivery():T==='riders'?riders():T==='receipts'?receipts():T==='payments'?payments():T==='refunds'?refunds():T==='sms'?smsSettings():station();root.innerHTML='<section class="manager-shell"><header class="manager-header"><div><span class="manager-kicker"><i></i> RESTAURANT CONTROL CENTRE</span><h1>'+esc(window.TenantTheme?.name?.()||'Restaurant')+'.</h1><p>Professional restaurant controls from phone, tablet, laptop or desktop.</p></div><div class="manager-header-actions"><span class="live-badge"><i></i> LIVE</span><span class="station-mini">'+esc(currentManager?.name||'MANAGER')+'</span><button class="btn btn-small" onclick="load()">REFRESH</button><button class="btn btn-small secondary" onclick="logoutManager()">SIGN OUT</button></div></header><nav class="manager-tabs">'+nav('overview','Overview')+nav('orders','Orders')+nav('dispatch','Dispatch')+nav('menu','Menu')+nav('promotions','Promotions')+nav('branches','Branches')+nav('delivery','Delivery')+nav('riders','Riders')+nav('receipts','Receipts')+nav('payments','Payments')+nav('refunds','Refunds')+nav('sms','SMS')+nav('station','Order station')+'</nav><section class="manager-summary"><article><span>Today\'s orders</span><strong>'+today.length+'</strong></article><article><span>Revenue</span><strong>'+money(rev)+'</strong></article><article><span>Menu items</span><strong>'+m.products.length+'</strong></article><article><span>Riders available</span><strong>'+D.riders.filter(x=>x.available).length+'</strong></article></section><div class="manager-content">'+body+'</div></section>'}
 
 async function saveSmsSettings(){
   const button=document.getElementById('sms-save-button');if(button)button.disabled=true;

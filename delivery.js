@@ -198,7 +198,7 @@ function showAcceptedRoutePopup(job){
   setTimeout(()=>{if(document.getElementById('rider-assignment-popup'))closeAssignmentPopup();},12000);
 }
 
-async async function renderRiderProfileModal(){
+async function renderRiderProfileModal(){
   if(!rider){
     try{rider=await riderApi('/api/riders/me');}
     catch(err){return;}
@@ -227,7 +227,7 @@ async async function renderRiderProfileModal(){
   document.body.insertAdjacentHTML('beforeend',html);
 }
 function openProfilePicturePicker(){document.getElementById('rider-profile-picture-input')?.click();}
-async async function openProfilePictureViewer(){
+async async async function openProfilePictureViewer(){
   if(!rider){
     try{rider=await riderApi('/api/riders/me');}
     catch(err){return;}

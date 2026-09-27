@@ -309,7 +309,10 @@ function riderAvatarMarkup(sizeClass){
 }
 function updateRiderProfileButton(){
   const button=document.getElementById('rider-profile-nav');if(!button||!rider)return;
-  button.innerHTML=riderAvatarMarkup('rider-nav-avatar');button.setAttribute('aria-label','Open rider profile');button.classList.remove('hidden');
+  button.innerHTML=riderAvatarMarkup('rider-nav-avatar');
+  button.setAttribute('aria-label','Open rider profile');
+  button.classList.remove('hidden');
+  button.onclick=()=>{renderRiderProfileModal().catch(err=>alert(err.message||'Unable to open rider profile.'));};
 }
 async function loginRider(e){
   e?.preventDefault();

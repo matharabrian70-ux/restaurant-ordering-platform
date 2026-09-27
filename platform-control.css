@@ -13,3 +13,26 @@
 .pc-code-label{display:block;font-size:9px;font-weight:950;letter-spacing:.12em;color:var(--pc-muted);margin-top:14px}
 .pc-integration-code{margin-top:6px}.pc-link-button{text-decoration:none;color:var(--pc-ink);display:inline-block}.pc-integration-dns{margin-top:14px;padding:12px;background:#f8f6ef;border:1px solid var(--pc-line);font-size:11px}.pc-integration-dns p{margin:6px 0}.pc-integration-dns code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}
 @media(max-width:700px){.pc-integration-options{grid-template-columns:1fr}.pc-integration-hero{display:block}.pc-integration-hero .pc-module{margin-top:10px}}
+
+/* SaaS foundation additions — existing Control Centre layout preserved. */
+.pc-health{margin-top:18px}
+.pc-health-actions{display:flex;align-items:center;gap:10px}
+.pc-health-status{font-size:11px;font-weight:800;letter-spacing:.08em;padding:8px 10px;border-radius:999px}
+.pc-health-status.ok{background:#eaf7ee;color:#177b3b}
+.pc-health-status.warn{background:#fff2e9;color:#a14c20}
+.pc-health-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-top:14px}
+.pc-health-card{border:1px solid #e5e5df;border-radius:14px;padding:14px;background:#fff;min-width:0}
+.pc-health-card span{display:block;font-size:10px;font-weight:800;letter-spacing:.08em;color:#70756f}
+.pc-health-card strong{display:block;margin-top:7px;font-size:14px}
+.pc-health-card strong.ok{color:#177b3b}.pc-health-card strong.warn{color:#a14c20}
+.pc-health-card small{display:block;margin-top:4px;color:#7b807a}
+.pc-health-foot{display:flex;justify-content:space-between;gap:10px;color:#858981;font-size:11px;margin-top:10px}
+.pc-audit{margin-top:14px;border-top:1px solid #ecece6;padding-top:12px}
+.pc-audit summary{cursor:pointer;font-weight:800;font-size:12px}
+.pc-audit-list{margin-top:10px;display:grid;gap:7px}
+.pc-audit-row{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;padding:9px 0;border-bottom:1px solid #f0f0eb;font-size:11px}
+.pc-audit-row span,.pc-audit-row small{color:#7a7f78}
+.pc-tenant-health-box{display:flex;justify-content:space-between;align-items:center;gap:12px;border:1px solid #e7e7e1;border-radius:12px;padding:12px;background:#fafaf7}
+.pc-health-ok{color:#177b3b}.pc-health-warn{color:#a14c20}
+@media(max-width:900px){.pc-health-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.pc-health-grid{grid-template-columns:1fr}.pc-health-actions{flex-wrap:wrap}.pc-audit-row{grid-template-columns:1fr}.pc-tenant-health-box{align-items:flex-start;flex-direction:column}}

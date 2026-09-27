@@ -4,7 +4,8 @@
 const API='https://restaurant-ordering-api-ow3p.onrender.com';
 const SITE='https://matharabrian70-ux.github.io/restaurant-ordering-platform';
 const root=document.getElementById('platform-view');
-const state={me:null,overview:{},businesses:[],packages:[],selected:null,showCreate:false};
+const state={me:null,overview:{},businesses:[],packages:[],selected:null,showCreate:false,health:null,audit:[]};
+let healthTimer=null;
 
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>new Intl.NumberFormat('en-KE',{style:'currency',currency:'KES',maximumFractionDigits:0}).format(Number(v||0));
@@ -137,12 +138,15 @@ async function googlePlatformLogin(){
 async function load(){
   try{
     state.me=await api('/api/platform/me');
-    const [overview,businesses,packages]=await Promise.all([
+    const [overview,businesses,packages,health,audit]=await Promise.all([
       api('/api/platform/overview'),
       api('/api/platform/businesses'),
-      api('/api/platform/packages')
+      api('/api/platform/packages'),
+      api('/api/platform/health').catch(()=>({ok:false,tenants:[],environment:{}})),
+      api('/api/platform/audit?limit=12').catch(()=>[])
     ]);
-    state.overview=overview;state.businesses=businesses;state.packages=packages;
+    state.overview=overview;state.businesses=businesses;state.packages=packages;state.health=health;state.audit=audit;
+    clearTimeout(healthTimer);healthTimer=setTimeout(()=>load(),30000);
     render();
   }catch(error){
     localStorage.removeItem('platform_admin_token');
@@ -175,6 +179,24 @@ function connectorCode(b){
 <\/script>`;
 }
 
+function healthPanel(){
+  const h=state.health||{},env=h.environment||{};
+  const envItems=[['DATABASE',env.database],['GOOGLE MAPS',env.googleMaps],['SMS',env.smsProvider],['PAYMENTS',env.payments]];
+  const tenantCount=(h.tenants||[]).length;
+  const broken=(h.tenants||[]).filter(t=>!t.ok&&t.status==='ACTIVE').length;
+  return `<section class="pc-panel pc-health" id="pc-health-panel">
+    <div class="pc-panel-head">
+      <div><span class="pc-kicker">AUTOMATIC HEALTH CHECK</span><h2>Platform health</h2></div>
+      <div class="pc-health-actions"><span class="pc-health-status ${h.ok?'ok':'warn'}">${h.ok?'HEALTHY':'ATTENTION NEEDED'}</span><button class="pc-mini" id="health-refresh">RUN CHECK</button></div>
+    </div>
+    <div class="pc-health-grid">
+      ${envItems.map(x=>`<div class="pc-health-card"><span>${x[0]}</span><strong class="${x[1]?'ok':'warn'}">${x[1]?'READY':'NOT CONFIGURED'}</strong></div>`).join('')}
+      <div class="pc-health-card"><span>TENANTS CHECKED</span><strong>${tenantCount}</strong><small>${broken?broken+' active tenant issue'+(broken===1?'':'s'):'No active tenant issues'}</small></div>
+    </div>
+    <div class="pc-health-foot"><span>Last check: ${h.checkedAt?new Date(h.checkedAt).toLocaleString():'Not run'}</span><span>${h.responseMs?Number(h.responseMs)+' ms':''}</span></div>
+    ${state.audit?.length?`<details class="pc-audit"><summary>Recent platform activity</summary><div class="pc-audit-list">${state.audit.map(a=>`<div class="pc-audit-row"><strong>${esc(a.action)}</strong><span>${esc(a.business_name||'Platform')}</span><small>${new Date(a.created_at).toLocaleString()}</small></div>`).join('')}</div></details>`:''}
+  </section>`;
+}
 function render(){
   const o=state.overview||{};
   root.innerHTML=`
@@ -212,6 +234,8 @@ function render(){
 
       ${state.showCreate?createPanel():''}
 
+      ${healthPanel()}
+
       <section class="pc-panel">
         <div class="pc-panel-head">
           <div><span class="pc-kicker">TENANTS</span><h2>Restaurant connections</h2></div>
@@ -233,6 +257,7 @@ function render(){
   document.getElementById('logout-btn').onclick=logout;
   document.getElementById('add-btn').onclick=()=>{state.showCreate=true;render();document.getElementById('new-name')?.focus();};
   document.getElementById('refresh-btn').onclick=load;
+  document.getElementById('health-refresh')?.addEventListener('click',load);
   bindCreate();
   bindRows();
   bindDetail();
@@ -346,6 +371,11 @@ function detailPanel(b){
       </div>
 
       <div class="pc-section">
+        <span class="pc-kicker">TENANT HEALTH</span>
+        <div class="pc-tenant-health-box"><span id="tenant-health-result">Run a health check for this restaurant.</span><button class="pc-mini" id="tenant-health-btn">RUN CHECK</button></div>
+      </div>
+
+      <div class="pc-section">
         <span class="pc-kicker">TENANT DETAILS</span>
         <div class="pc-code"><code>Tenant ID: ${esc(b.id)}
 Slug: ${esc(b.slug)}
@@ -369,6 +399,18 @@ function bindDetail(){
   document.getElementById('save-connection')?.addEventListener('click',saveConnection);
   document.getElementById('save-tenant')?.addEventListener('click',saveTenant);
   document.getElementById('generate-integration')?.addEventListener('click',generateIntegration);
+  document.getElementById('tenant-health-btn')?.addEventListener('click',runTenantHealth);
+}
+
+async function runTenantHealth(){
+  const b=state.selected;if(!b)return;
+  const btn=document.getElementById('tenant-health-btn'),out=document.getElementById('tenant-health-result');
+  if(btn){btn.disabled=true;btn.textContent='CHECKING…';}
+  try{
+    const data=await api('/api/platform/businesses/'+encodeURIComponent(b.id)+'/health');
+    out.innerHTML='<strong class="'+(data.ok?'pc-health-ok':'pc-health-warn')+'">'+(data.ok?'HEALTHY':'ATTENTION NEEDED')+'</strong> '+(data.issues?.length?esc(data.issues.join(' · ')):'All required tenant components are present.');
+  }catch(error){out.textContent=error.message;}
+  finally{if(btn){btn.disabled=false;btn.textContent='RUN CHECK';}}
 }
 
 function closeDetail(){state.selected=null;render();}

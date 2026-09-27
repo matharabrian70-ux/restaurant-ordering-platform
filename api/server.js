@@ -1943,6 +1943,69 @@ app.get('/api/platform/command-center',requirePlatformAdmin,async(req,res)=>{
   }catch(e){res.status(500).json({error:e.message||'Unable to load platform command centre'});}
 });
 
+app.get('/api/platform/system',requirePlatformAdmin,async(req,res)=>{
+  try{
+    const [audit,counts]=await Promise.all([
+      pool.query("select action,note,created_at from platform_audit_events order by created_at desc limit 20"),
+      pool.query(`select
+        (select count(*) from businesses)::int as restaurants,
+        (select count(*) from customers)::int as customers,
+        (select count(*) from orders)::int as orders,
+        (select count(*) from riders)::int as riders,
+        (select count(*) from refunds where status not in ('SUCCESS','FAILED'))::int as pending_refunds,
+        (select count(*) from restaurant_order_stations where active=true)::int as active_stations`)
+    ]);
+    res.json({
+      version:String(process.env.PLATFORM_VERSION||'2026.09.28-phase6'),
+      apiEnvironment:String(process.env.NODE_ENV||'production'),
+      node:String(process.version),
+      startedAt:process.env.RENDER_SERVICE_ID?null:null,
+      counts:counts.rows[0],
+      capabilities:{
+        database:true,
+        googleMaps:Boolean(String(process.env.GOOGLE_MAPS_API_KEY||'').trim()),
+        sms:Boolean(String(process.env.AFRICASTALKING_USERNAME||'').trim()&&String(process.env.AFRICASTALKING_API_KEY||'').trim()),
+        payments:Boolean(String(process.env.PAYSTACK_SECRET_KEY||'').trim())
+      },
+      recentActivity:audit.rows
+    });
+  }catch(e){res.status(500).json({error:e.message||'Unable to load system information'});}
+});
+
+app.get('/api/platform/businesses/:id/inspect',requirePlatformAdmin,async(req,res)=>{
+  try{
+    const id=req.params.id;
+    const [b,counts,orders,riders,audit,health]=await Promise.all([
+      pool.query("select b.id,b.name,b.slug,b.status,b.plan_key,b.website_url,b.domain,b.primary_color,b.created_at,coalesce(p.name,b.plan_key) as plan_name from businesses b left join platform_packages p on p.key=b.plan_key where b.id=$1",[id]),
+      pool.query(`select
+        (select count(*) from customers where business_id=$1)::int as customers,
+        (select count(*) from orders where business_id=$1)::int as orders,
+        (select count(*) from riders where business_id=$1)::int as riders,
+        (select count(*) from rider_trips t join riders r on r.id=t.rider_id where r.business_id=$1 and t.completed_at is null)::int as active_trips,
+        (select count(*) from restaurant_order_stations where business_id=$1 and active=true)::int as active_stations,
+        (select count(*) from business_integrations where business_id=$1 and status='ACTIVE')::int as active_integrations,
+        (select count(*) from refunds rf join orders o on o.id=rf.order_id where o.business_id=$1 and rf.status not in ('SUCCESS','FAILED'))::int as pending_refunds`,[id]),
+      pool.query(`select id,order_number,status,payment_status,delivery_status,total,created_at from orders where business_id=$1 order by created_at desc limit 10`,[id]),
+      pool.query(`select r.id,r.name,r.rider_status,coalesce(p.online,false) as online,t.order_id,t.assigned_at
+        from riders r left join rider_presence p on p.rider_id=r.id
+        left join lateral(select t.* from rider_trips t where t.rider_id=r.id and t.completed_at is null order by t.assigned_at desc limit 1)t on true
+        where r.business_id=$1 order by r.name limit 50`,[id]),
+      pool.query(`select action,note,created_at from platform_audit_events where business_id=$1 order by created_at desc limit 12`,[id]),
+      pool.query(`select b.status,
+        exists(select 1 from business_branches where business_id=b.id and active=true) as branch,
+        exists(select 1 from delivery_pricing_rules where business_id=b.id) as pricing,
+        exists(select 1 from manager_users where business_id=b.id and active=true) as manager,
+        exists(select 1 from business_connections where business_id=b.id) as connection,
+        exists(select 1 from business_integrations where business_id=b.id and status='ACTIVE') as integration
+        from businesses b where b.id=$1`,[id])
+    ]);
+    if(!b.rowCount)return res.status(404).json({error:'Restaurant not found'});
+    const h=health.rows[0]||{},issues=[];
+    for(const [key,label] of [['branch','MISSING_BRANCH'],['pricing','MISSING_PRICING'],['manager','MISSING_MANAGER'],['connection','MISSING_CONNECTION'],['integration','NO_ACTIVE_INTEGRATION']])if(!h[key])issues.push(label);
+    res.json({restaurant:b.rows[0],counts:counts.rows[0],orders:orders.rows.map(x=>({...x,total:Number(x.total||0)})),riders:riders.rows,audit:audit.rows,health:{ok:issues.length===0,issues}});
+  }catch(e){res.status(500).json({error:e.message||'Unable to inspect restaurant'});}
+});
+
 app.get('/api/platform/orders',requirePlatformAdmin,async(req,res)=>{
   try{
     const limit=Math.min(Math.max(Number(req.query.limit||50),1),200);

@@ -199,9 +199,14 @@ function showAcceptedRoutePopup(job){
 }
 
 async function renderRiderProfileModal(){
-  if(!rider){
+  if(!rider?.id){
     try{rider=await riderApi('/api/riders/me');}
-    catch(err){return;}
+    catch(err){
+      const token=localStorage.getItem(RIDER_TOKEN_KEY);
+      if(!token){document.getElementById('rider-login')?.classList.remove('hidden');return;}
+      alert(err.message||'Unable to load your rider profile.');
+      return;
+    }
   }
   const r=rider||{};
   closeRiderProfile();
@@ -312,7 +317,7 @@ function updateRiderProfileButton(){
   button.innerHTML=riderAvatarMarkup('rider-nav-avatar');
   button.setAttribute('aria-label','Open rider profile');
   button.classList.remove('hidden');
-  button.onclick=()=>{renderRiderProfileModal().catch(err=>alert(err.message||'Unable to open rider profile.'));};
+  button.onclick=(event)=>{event.preventDefault();event.stopPropagation();renderRiderProfileModal().catch(err=>alert(err.message||'Unable to open rider profile.'));};
 }
 async function loginRider(e){
   e?.preventDefault();

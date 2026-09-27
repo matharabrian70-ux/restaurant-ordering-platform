@@ -565,3 +565,13 @@ body.rider-map-fullscreen-open{overflow:hidden}
 .rider-picture-viewer-status{min-height:18px;margin-top:12px;color:#176b32;font-size:10px;font-weight:800}
 .rider-picture-viewer-status.error{color:#a33b3b}
 @media(max-width:600px){.rider-picture-viewer{padding:12px}.rider-picture-viewer-card{width:100%;padding:22px 18px;border-radius:18px}.rider-picture-viewer-image-wrap{width:min(290px,76vw);height:min(290px,76vw)}}
+
+@media(max-width:650px){
+  .rider-profile-nav{width:52px!important;height:52px!important;min-width:52px!important;padding:3px!important;border-radius:50%!important;display:grid!important;place-items:center!important;touch-action:manipulation!important}
+  .rider-nav-avatar,.rider-nav-avatar-photo,.rider-nav-avatar-fallback{width:44px!important;height:44px!important;border-radius:50%!important}
+  .availability-button,.rider-signin-btn,.rider-picture-change,.rider-picture-remove,.rider-profile-save{min-height:52px!important}
+  .rider-profile-close,.rider-assignment-close,.rider-picture-viewer-close{width:48px!important;height:48px!important;min-width:48px!important}
+  .rider-profile-modal{width:calc(100vw - 20px)!important;max-height:calc(100dvh - 20px)!important;border-radius:20px!important}
+  .rider-profile-form input,.rider-profile-form select{min-height:50px!important;font-size:16px!important}
+  .rider-profile-form label{gap:8px!important}
+}

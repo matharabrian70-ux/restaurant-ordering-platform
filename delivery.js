@@ -282,8 +282,9 @@ async function saveRiderProfile(e){
   finally{button.disabled=false;button.textContent='SAVE CHANGES';}
 }
 function riderAvatarMarkup(sizeClass){
-  const fallback='<span class="'+sizeClass+'-fallback">'+esc((rider?.name||'?')[0])+'</span>';
-  if(!rider?.profile_image_url)return fallback;
+  const hasPhoto=Boolean(rider?.profile_image_url);
+  const fallback='<span class="'+sizeClass+'-fallback" style="display:'+(hasPhoto?'none':'grid')+'">'+esc((rider?.name||'?')[0])+'</span>';
+  if(!hasPhoto)return fallback;
   return '<img class="'+sizeClass+'-photo" src="'+esc(rider.profile_image_url)+'" alt="'+esc(rider.name||'Rider')+'" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'grid\';">'+fallback;
 }
 function updateRiderProfileButton(){

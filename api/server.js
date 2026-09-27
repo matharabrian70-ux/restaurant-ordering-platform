@@ -1469,6 +1469,12 @@ async function requirePlatformAdmin(req,res,next){
     req.platformAdmin=admin;next();
   }catch(e){res.status(500).json({error:'Unable to verify platform owner session'});}
 }
+async function recordPlatformAudit(adminId,businessId,action,note='',metadata={}){
+  try{
+    await pool.query('insert into platform_audit_events(id,admin_id,business_id,action,note,metadata) values(gen_random_uuid(),$1,$2,$3,$4,$5)',[adminId||null,businessId||null,String(action||'UNKNOWN'),String(note||''),metadata||{}]);
+  }catch{}
+}
+
 function platformSlug(value){
   return String(value||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,80);
 }
@@ -1497,6 +1503,7 @@ app.post('/api/platform/login',async(req,res)=>{
     const token=crypto.randomBytes(32).toString('hex');
     await pool.query("insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval '30 days')",[admin.id,hashSessionToken(token)]);
     await pool.query('update platform_admin_users set last_login_at=now() where id=$1',[admin.id]);
+    await recordPlatformAudit(admin.id,null,'PLATFORM_LOGIN','Platform owner signed in',{});
     res.json({token,admin:{id:admin.id,name:admin.name,email:admin.email}});
   }catch(e){res.status(500).json({error:e.message||'Unable to sign in platform owner'});}
 });
@@ -1539,6 +1546,81 @@ app.get('/api/platform/packages',requirePlatformAdmin,async(req,res)=>{
   try{const r=await pool.query('select key,name,description,monthly_price_kes,active,features from platform_packages where active=true order by monthly_price_kes,key');res.json(r.rows);}
   catch(e){res.status(500).json({error:e.message||'Unable to load packages'});}
 });
+app.get('/api/platform/health',requirePlatformAdmin,async(req,res)=>{
+  try{
+    const started=Date.now();
+    await pool.query('select 1');
+    const [tenants,counts]=await Promise.all([
+      pool.query(`select b.id,b.name,b.slug,b.status,b.plan_key,
+        exists(select 1 from business_branches bb where bb.business_id=b.id and bb.active=true) as has_branch,
+        exists(select 1 from delivery_pricing_rules dp where dp.business_id=b.id) as has_pricing,
+        exists(select 1 from manager_users mu where mu.business_id=b.id and mu.active=true) as has_manager,
+        exists(select 1 from business_connections bc where bc.business_id=b.id) as has_connection,
+        exists(select 1 from business_integrations bi where bi.business_id=b.id and bi.status='ACTIVE') as has_integration,
+        coalesce((p.features->>'riderModule')::boolean,false) as package_rider,
+        coalesce(bf.rider_module_enabled,false) as feature_rider
+        from businesses b left join platform_packages p on p.key=b.plan_key left join business_features bf on bf.business_id=b.id order by b.created_at desc`),
+      pool.query(`select
+        (select count(*)::int from businesses) as restaurants,
+        (select count(*)::int from businesses where status='ACTIVE') as active,
+        (select count(*)::int from businesses b where not exists(select 1 from business_branches bb where bb.business_id=b.id and bb.active=true)) as missing_branches,
+        (select count(*)::int from businesses b where not exists(select 1 from delivery_pricing_rules dp where dp.business_id=b.id)) as missing_pricing,
+        (select count(*)::int from businesses b where not exists(select 1 from manager_users mu where mu.business_id=b.id and mu.active=true)) as missing_managers`)
+    ]);
+    const environment={database:true,googleMaps:Boolean(String(process.env.GOOGLE_MAPS_API_KEY||'').trim()),smsProvider:Boolean(String(process.env.AFRICASTALKING_USERNAME||'').trim() && String(process.env.AFRICASTALKING_API_KEY||'').trim()),payments:Boolean(String(process.env.PAYSTACK_SECRET_KEY||'').trim())};
+    const tenantHealth=tenants.rows.map(t=>{
+      const issues=[];
+      if(!t.has_branch)issues.push('MISSING_BRANCH');
+      if(!t.has_pricing)issues.push('MISSING_PRICING');
+      if(!t.has_manager)issues.push('MISSING_MANAGER');
+      if(!t.has_connection)issues.push('MISSING_CONNECTION');
+      if(!t.has_integration)issues.push('NO_ACTIVE_INTEGRATION');
+      if(t.package_rider&&!t.feature_rider)issues.push('RIDER_FEATURE_MISMATCH');
+      if(t.status!=='ACTIVE')issues.push('TENANT_SUSPENDED');
+      return {id:t.id,name:t.name,slug:t.slug,status:t.status,planKey:t.plan_key,issues,ok:issues.length===0};
+    });
+    const critical=tenantHealth.filter(t=>t.status==='ACTIVE'&&!t.ok).map(t=>t.id);
+    if(!environment.googleMaps)critical.push('GOOGLE_MAPS_NOT_CONFIGURED');
+    if(!environment.smsProvider)critical.push('SMS_PROVIDER_NOT_CONFIGURED');
+    res.json({ok:critical.length===0,checkedAt:new Date().toISOString(),responseMs:Date.now()-started,environment,counts:counts.rows[0],tenants:tenantHealth});
+  }catch(e){
+    res.status(503).json({ok:false,error:e.message||'Platform health check failed',environment:{database:false,googleMaps:Boolean(String(process.env.GOOGLE_MAPS_API_KEY||'').trim()),smsProvider:Boolean(String(process.env.AFRICASTALKING_USERNAME||'').trim() && String(process.env.AFRICASTALKING_API_KEY||'').trim()),payments:Boolean(String(process.env.PAYSTACK_SECRET_KEY||'').trim())}});
+  }
+});
+
+app.get('/api/platform/businesses/:id/health',requirePlatformAdmin,async(req,res)=>{
+  try{
+    const r=await pool.query(`select b.id,b.name,b.slug,b.status,b.plan_key,
+      exists(select 1 from business_branches bb where bb.business_id=b.id and bb.active=true) as has_branch,
+      exists(select 1 from delivery_pricing_rules dp where dp.business_id=b.id) as has_pricing,
+      exists(select 1 from manager_users mu where mu.business_id=b.id and mu.active=true) as has_manager,
+      exists(select 1 from business_connections bc where bc.business_id=b.id) as has_connection,
+      exists(select 1 from business_integrations bi where bi.business_id=b.id and bi.status='ACTIVE') as has_integration,
+      coalesce((p.features->>'riderModule')::boolean,false) as package_rider,
+      coalesce(bf.rider_module_enabled,false) as feature_rider
+      from businesses b left join platform_packages p on p.key=b.plan_key left join business_features bf on bf.business_id=b.id where b.id=$1 limit 1`,[req.params.id]);
+    if(!r.rowCount)return res.status(404).json({error:'Restaurant not found'});
+    const t=r.rows[0],issues=[];
+    if(!t.has_branch)issues.push('MISSING_BRANCH');
+    if(!t.has_pricing)issues.push('MISSING_PRICING');
+    if(!t.has_manager)issues.push('MISSING_MANAGER');
+    if(!t.has_connection)issues.push('MISSING_CONNECTION');
+    if(!t.has_integration)issues.push('NO_ACTIVE_INTEGRATION');
+    if(t.package_rider&&!t.feature_rider)issues.push('RIDER_FEATURE_MISMATCH');
+    res.json({ok:issues.length===0,restaurant:{id:t.id,name:t.name,slug:t.slug,status:t.status,planKey:t.plan_key},issues,checkedAt:new Date().toISOString()});
+  }catch(e){res.status(500).json({error:e.message||'Tenant health check failed'});}
+});
+
+app.get('/api/platform/audit',requirePlatformAdmin,async(req,res)=>{
+  try{
+    const limit=Math.min(Math.max(Number(req.query.limit||50),1),200);
+    const r=await pool.query(`select ae.id,ae.action,ae.note,ae.metadata,ae.created_at,a.name as admin_name,b.name as business_name
+      from platform_audit_events ae left join platform_admin_users a on a.id=ae.admin_id left join businesses b on b.id=ae.business_id
+      order by ae.created_at desc limit $1`,[limit]);
+    res.json(r.rows);
+  }catch(e){res.status(500).json({error:e.message||'Unable to load platform audit'});}
+});
+
 app.get('/api/platform/overview',requirePlatformAdmin,async(req,res)=>{
   try{
     const [b,o]=await Promise.all([
@@ -1581,6 +1663,7 @@ app.post('/api/platform/businesses',requirePlatformAdmin,async(req,res)=>{
     await client.query('insert into business_branches(id,business_id,name,address,latitude,longitude,active,accepting_orders) values(gen_random_uuid(),$1,$2,$3,-1.286389,36.817223,true,true)',[b.id,'Main Branch',address]);
     for(const [category,sort] of [['Mains',10],['Sides',20],['Drinks',30],['Desserts',40]]) await client.query('insert into menu_categories(id,business_id,name,sort_order) values(gen_random_uuid(),$1,$2,$3)',[b.id,category,sort]);
     await client.query('commit');
+    await recordPlatformAudit(req.platformAdmin.id,b.id,'TENANT_CREATED','Restaurant tenant provisioned',{planKey,websiteUrl,domain});
     res.status(201).json({id:b.id,name:b.name,slug:b.slug,status:b.status,planKey});
   }catch(e){try{await client.query('rollback')}catch{}res.status(400).json({error:e.message||'Unable to provision restaurant'});}
   finally{client.release();}

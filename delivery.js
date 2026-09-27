@@ -198,7 +198,11 @@ function showAcceptedRoutePopup(job){
   setTimeout(()=>{if(document.getElementById('rider-assignment-popup'))closeAssignmentPopup();},12000);
 }
 
-function renderRiderProfileModal(){
+async function renderRiderProfileModal(){
+  if(!rider){
+    try{rider=await riderApi('/api/riders/me');}
+    catch(err){return;}
+  }
   const r=rider||{};
   closeRiderProfile();
   const avatar=r.profile_image_url
@@ -223,7 +227,11 @@ function renderRiderProfileModal(){
   document.body.insertAdjacentHTML('beforeend',html);
 }
 function openProfilePicturePicker(){document.getElementById('rider-profile-picture-input')?.click();}
-function openProfilePictureViewer(){
+async function openProfilePictureViewer(){
+  if(!rider){
+    try{rider=await riderApi('/api/riders/me');}
+    catch(err){return;}
+  }
   document.getElementById('rider-picture-viewer')?.remove();
   const hasPhoto=Boolean(rider?.profile_image_url);
   const visual=hasPhoto
@@ -256,18 +264,30 @@ async function saveProfilePictureNow(src){
     setTimeout(()=>openProfilePictureViewer(),350);
   }catch(err){setPictureViewerStatus(err.message||'Could not save profile picture.',true);}
 }
-function handleProfilePicture(event){
+async function handleProfilePicture(event){
   const file=event.target.files?.[0];if(!file)return;
-  if(!file.type.startsWith('image/')){setPictureViewerStatus('Please choose an image file.',true);return;}
-  if(file.size>8*1024*1024){setPictureViewerStatus('Please choose an image smaller than 8 MB.',true);return;}
-  const reader=new FileReader();
-  reader.onload=()=>{const img=new Image();img.onload=()=>{
-    const max=900,scale=Math.min(1,max/Math.max(img.width,img.height)),canvas=document.createElement('canvas');
-    canvas.width=Math.max(1,Math.round(img.width*scale));canvas.height=Math.max(1,Math.round(img.height*scale));
-    const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0,canvas.width,canvas.height);
-    saveProfilePictureNow(canvas.toDataURL('image/jpeg',.82));
-  };img.onerror=()=>setPictureViewerStatus('That image could not be read. Please choose another photo.',true);img.src=String(reader.result||'');};
-  reader.readAsDataURL(file);
+  if(!file.type.startsWith('image/')){setPictureViewerStatus('Please choose a photo (JPG, PNG or WEBP).',true);return;}
+  if(file.size>12*1024*1024){setPictureViewerStatus('Please choose a photo smaller than 12 MB.',true);return;}
+  setPictureViewerStatus('Preparing your photo…');
+  try{
+    let bitmap=null;
+    if('createImageBitmap' in window){try{bitmap=await createImageBitmap(file,{imageOrientation:'from-image'});}catch{}}
+    if(bitmap){
+      const max=1000,scale=Math.min(1,max/Math.max(bitmap.width,bitmap.height));
+      const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(bitmap.width*scale));canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+      const ctx=canvas.getContext('2d');ctx.drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();
+      await saveProfilePictureNow(canvas.toDataURL('image/jpeg',.84));return;
+    }
+    const reader=new FileReader();
+    reader.onload=()=>{const img=new Image();img.onload=()=>{
+      const max=1000,scale=Math.min(1,max/Math.max(img.naturalWidth||img.width,img.naturalHeight||img.height));
+      const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round((img.naturalWidth||img.width)*scale));canvas.height=Math.max(1,Math.round((img.naturalHeight||img.height)*scale));
+      const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0,canvas.width,canvas.height);
+      saveProfilePictureNow(canvas.toDataURL('image/jpeg',.84));
+    };img.onerror=()=>setPictureViewerStatus('This phone photo format is not supported by the browser. Please choose a JPG or PNG photo.',true);img.src=String(reader.result||'');};
+    reader.onerror=()=>setPictureViewerStatus('The phone could not read that photo. Please choose another one.',true);
+    reader.readAsDataURL(file);
+  }catch(err){setPictureViewerStatus('Could not prepare that photo. Please choose a JPG or PNG photo.',true);}
 }
 function removeProfilePictureNow(){saveProfilePictureNow('');}
 function closeRiderProfile(){document.getElementById('rider-profile-overlay')?.remove();document.getElementById('rider-picture-viewer')?.remove();}

@@ -168,8 +168,20 @@ function picker(id){
   return '<div class="rider-picker compact">'+sortRiders(D.riders).map((r,i)=>'<button type="button" class="rider-square compact '+(r.available?'is-available':'is-unavailable')+(selected===r.id?' selected':'')+'" '+(r.available?'onclick="selectRider(&quot;'+id+'&quot;,&quot;'+r.id+'&quot;)"':'disabled')+'><div class="rider-avatar">'+(r.profile_image_url?'<img src="'+esc(r.profile_image_url)+'" alt="">':esc((r.name||'?')[0]))+'</div><div class="rider-square-main"><b>'+esc(r.name)+'</b><span>'+esc(r.vehicle_type||'Vehicle')+'</span><small>'+esc(r.number_plate||'')+'</small></div><div class="availability"><i></i>'+(r.available?'AVAILABLE':'UNAVAILABLE')+'</div>'+(r.available&&i===0?'<em>PRIORITY</em>':'')+'</button>').join('')+'</div><div class="assign-bar"><span>'+(selected?'Selected: '+esc(D.riders.find(r=>r.id===selected)?.name||'Rider'):'Tap a rider square to select')+'</span><button type="button" class="btn btn-small '+(selected?'':'disabled')+'" '+(selected?'onclick="assignSelected(&quot;'+id+'&quot;,this)"':'disabled')+'>ASSIGN RIDER</button></div>';
 }
 function selectRider(orderId,riderId){selectedRiders[orderId]=riderId;render();}
+function activeAssignmentActions(o){
+  const canChange=['ASSIGNED','ACCEPTED','ARRIVED_AT_RESTAURANT'].includes(String(o.rider_delivery_status||''));
+  if(!o.rider_name)return '';
+  return '<div class="dispatch-current"><span class="eyebrow">CURRENT RIDER</span><b>'+esc(o.rider_name)+'</b><small>'+esc(String(o.rider_delivery_status||'ASSIGNED').replaceAll('_',' '))+'</small></div>'+
+    (canChange?'<div class="dispatch-actions"><button type="button" class="btn btn-small" onclick="reassignOrder(\''+o.id+'\',this)">REASSIGN</button><button type="button" class="btn btn-small secondary" onclick="cancelRiderAssignment(\''+o.id+'\',this)">CANCEL ASSIGNMENT</button></div>':'');
+}
 function orderCard(o){
-  let a=o.status==='NEW'&&o.payment_status==='PAID'?'<button class="btn" onclick="accept(\''+o.id+'\',this)">✓ ACCEPT ORDER</button>':o.status==='ACCEPTED'?'<div class="dispatch-panel"><div class="dispatch-label">Available riders — longest wait since last delivery gets priority</div>'+picker(o.id)+'</div>':o.status==='OUT_FOR_DELIVERY'?'<div class="completed-action"><i></i> DELIVERY IN PROGRESS</div>':o.status==='DELIVERED'?'<div class="completed-action done">✓ COMPLETED</div>':o.status==='CANCELLED'?'<div class="completed-action done">CANCELLED</div>':'<div class="waiting-action">Awaiting payment</div>';
+  let a='';
+  if(o.status==='NEW'&&o.payment_status==='PAID') a='<button class="btn" onclick="accept(\''+o.id+'\',this)">✓ ACCEPT ORDER</button>';
+  else if(o.status==='ACCEPTED') a=o.rider_name?activeAssignmentActions(o):'<div class="dispatch-panel"><div class="dispatch-label">Available riders — longest wait since last delivery gets priority</div>'+picker(o.id)+'</div>';
+  else if(o.status==='OUT_FOR_DELIVERY') a=activeAssignmentActions(o)+'<div class="completed-action"><i></i> DELIVERY IN PROGRESS</div>';
+  else if(o.status==='DELIVERED') a='<div class="completed-action done">✓ COMPLETED</div>';
+  else if(o.status==='CANCELLED') a='<div class="completed-action done">CANCELLED</div>';
+  else a='<div class="waiting-action">Awaiting payment</div>';
   return '<article class="manager-order '+(o.status==='NEW'&&o.payment_status==='PAID'?'new':'')+'"><div class="manager-order-main"><div class="order-top"><div><b>'+esc(o.order_number)+'</b><span>'+new Date(o.created_at).toLocaleString('en-KE',{dateStyle:'medium',timeStyle:'short'})+'</span></div><span class="status-chip '+o.status.toLowerCase()+'">'+esc(o.status)+'</span></div>'+(o.payment_status==='PAID'?'<div class="payment-confirmed"><span>✓ PAYMENT CONFIRMED</span><span>'+esc(o.payment_method||'Paystack')+'</span></div>':'')+'<div class="customer-line"><div class="customer-avatar">'+esc((o.name||'?')[0])+'</div><div><b>'+esc(o.name)+'</b><span>'+esc(o.phone)+'</span></div></div>'+(o.delivery_note?'<div class="order-note"><b>Customer note</b><span>'+esc(o.delivery_note)+'</span></div>':'')+'</div><div class="manager-order-side"><span>ORDER TOTAL</span><strong>'+money(o.total)+'</strong><small>'+esc(o.payment_status)+' · '+esc(o.payment_method||'Paystack')+'</small>'+a+'</div></article>';
 }
 async function accept(id,b){b.disabled=true;b.classList.add('done');b.textContent='ACCEPTED';try{await api('/api/orders/'+id+'/status',{method:'POST',body:JSON.stringify({status:'ACCEPTED'})});await load()}catch(e){b.disabled=false;b.classList.remove('done');b.textContent='✓ ACCEPT ORDER';alert(e.message)}}
@@ -178,6 +190,24 @@ async function assignSelected(id,b){
   b.disabled=true;b.classList.add('done');b.textContent='ASSIGNING…';
   try{await api('/api/orders/'+id+'/assign-rider',{method:'POST',body:JSON.stringify({riderId})});b.textContent='✓ ASSIGNED';delete selectedRiders[id];await (Promise.resolve()).then(()=>load());}
   catch(e){b.disabled=false;b.classList.remove('done');b.textContent='ASSIGN RIDER';alert(e.message);}
+}
+async function cancelRiderAssignment(id,b){
+  if(!confirm('Cancel this rider assignment? The order will return to the reassignment stage.'))return;
+  b.disabled=true;b.textContent='CANCELLING…';
+  try{await api('/api/orders/'+id+'/cancel-rider-assignment',{method:'POST',body:JSON.stringify({})});await load();}
+  catch(e){b.disabled=false;b.textContent='CANCEL ASSIGNMENT';alert(e.message);}
+}
+async function reassignOrder(id,b){
+  const available=sortRiders(D.riders||[]).filter(r=>r.available);
+  if(!available.length){alert('No other rider is currently available.');return;}
+  const names=available.map((r,i)=>`${i+1}. ${r.name} — ${r.vehicle_type||'Vehicle'}`).join('\n');
+  const choice=prompt('Enter the number of the rider to assign:\n\n'+names);
+  const index=Number(choice)-1;
+  const selected=available[index];
+  if(!selected)return;
+  b.disabled=true;b.textContent='REASSIGNING…';
+  try{await api('/api/orders/'+id+'/reassign-rider',{method:'POST',body:JSON.stringify({riderId:selected.id})});await load();}
+  catch(e){b.disabled=false;b.textContent='REASSIGN';alert(e.message);}
 }
 function menu(){const m=D.menu;return '<div class="manager-grid two"><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">MENU STRUCTURE</span><h2>Categories</h2></div></div><form class="inline-form" onsubmit="category(event)"><input id="cat" required placeholder="Breakfast"><button class="btn">ADD CATEGORY</button></form><div class="category-list">'+m.categories.map(c=>'<div><b>'+esc(c.name)+'</b><span>'+esc(c.active?'ACTIVE':'HIDDEN')+'</span></div>').join('')+'</div></section><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">ADD ITEM</span><h2>New menu item</h2><p>Upload a photo or paste an image URL.</p></div></div><form onsubmit="addItem(event)"><div class="form-grid"><label>Name<input id="mn" required></label><label>Price (KES)<input id="mp" type="number" min="0" required></label></div><label>Description<textarea id="md"></textarea></label><div class="form-grid"><label>Category<select id="mc">'+m.categories.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('')+'</select></label><label>Photo<input id="mf" type="file" accept="image/*" onchange="pickPhoto(event)"></label></div><input id="mu" placeholder="Or paste an image URL"><div id="preview" class="photo-preview"></div><label class="check"><input id="mfeat" type="checkbox"> Featured item</label><button class="btn wide">PUBLISH MENU ITEM</button></form></section></div><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">LIVE MENU</span><h2>'+m.products.length+' items</h2></div></div><div class="menu-admin-grid">'+(m.products.map(itemCard).join('')||'<div class="empty-state">No menu items yet.</div>')+'</div></section>'}
 function itemCard(p){return '<article class="menu-admin-card"><div class="menu-admin-image">'+(p.image_url?'<img src="'+esc(p.image_url)+'" alt="">':'<span>NO PHOTO</span>')+'</div><div class="menu-admin-body"><span class="eyebrow">'+esc(p.category_name||p.category||'UNCATEGORIZED')+'</span><h3>'+esc(p.name)+'</h3><p>'+esc(p.description||'No description')+'</p><div class="menu-admin-bottom"><strong>'+money(p.price)+'</strong><span class="status-chip '+(p.active?'active':'inactive')+'">'+(p.active?'AVAILABLE':'HIDDEN')+'</span>'+(p.featured?'<span class="feature-chip">FEATURED</span>':'')+'</div><div class="button-row"><button class="btn btn-small" onclick="toggleItem(\''+p.id+'\','+(!p.active)+')">'+(p.active?'HIDE':'PUBLISH')+'</button><button class="btn btn-small secondary" onclick="feature(\''+p.id+'\','+(!p.featured)+')">'+(p.featured?'REMOVE FEATURED':'MAKE FEATURED')+'</button></div></div></article>'}

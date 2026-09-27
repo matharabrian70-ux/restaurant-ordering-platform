@@ -2,13 +2,16 @@
 'use strict';
 
 const API='https://restaurant-ordering-api-ow3p.onrender.com';
-const SITE='https://matharabrian70-ux.github.io/restaurant-ordering-platform';
 const root=document.getElementById('platform-view');
-const state={me:null,overview:{},businesses:[],packages:[],selected:null,showCreate:false,health:null,audit:[]};
-let healthTimer=null;
+const state={
+  me:null,overview:{},command:null,businesses:[],packages:[],health:null,orders:[],riders:[],incidents:[],system:null,
+  selected:null,selectedInspect:null,showCreate:false,section:'overview',menu:false,loading:false
+};
+let refreshTimer=null;
 
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>new Intl.NumberFormat('en-KE',{style:'currency',currency:'KES',maximumFractionDigits:0}).format(Number(v||0));
+const dt=v=>v?new Date(v).toLocaleString('en-KE',{dateStyle:'medium',timeStyle:'short'}):'—';
 const token=()=>localStorage.getItem('platform_admin_token')||'';
 
 async function api(path,opt={}){
@@ -26,22 +29,19 @@ function login(message=''){
       <div class="pc-login-card">
         <span class="pc-kicker">PLATFORM OWNER</span>
         <h1>Control Centre.</h1>
-        <p>One place to provision restaurants, connect their websites and control which ordering services are active.</p>
+        <p>Operate the entire restaurant platform from one independent command centre.</p>
         ${message?`<div class="pc-message pc-error">${esc(message)}</div>`:''}
         <form id="login-form">
           <label>Email<input id="pa-email" type="email" autocomplete="username" required></label>
           <label>Password
-            <span class="pc-password-field">
-              <input id="pa-password" type="password" autocomplete="current-password" required>
-              <button type="button" class="pc-password-toggle" id="pa-password-toggle" aria-label="Show password">SHOW</button>
-            </span>
+            <span class="pc-password-field"><input id="pa-password" type="password" autocomplete="current-password" required><button type="button" class="pc-password-toggle" id="pa-password-toggle">SHOW</button></span>
           </label>
           <button type="submit" class="pc-btn pc-signin-btn">SIGN IN</button>
         </form>
         <div class="pc-login-divider"><span>OR</span></div>
-        <div class="pc-google-btn" id="platform-google-btn" aria-label="Continue with Google"></div>
+        <div class="pc-google-btn" id="platform-google-btn"></div>
         <p class="pc-google-note">Google will ask which account you want to use before continuing.</p>
-        <p class="pc-note">Uses the platform owner credentials already configured on Render.</p>
+        <p class="pc-note">Platform owner access only. Restaurant dashboards remain independent.</p>
       </div>
     </section>`;
   document.getElementById('login-form').addEventListener('submit',loginSubmit);
@@ -51,437 +51,255 @@ function login(message=''){
 
 async function loginSubmit(e){
   e.preventDefault();
-  const button=e.submitter;
-  button.disabled=true;button.textContent='SIGNING IN…';
+  const button=e.submitter;button.disabled=true;button.textContent='SIGNING IN…';
   try{
-    const data=await api('/api/platform/login',{method:'POST',body:JSON.stringify({
-      email:document.getElementById('pa-email').value.trim(),
-      password:document.getElementById('pa-password').value
-    })});
-    localStorage.setItem('platform_admin_token',data.token);
-    await load();
+    const data=await api('/api/platform/login',{method:'POST',body:JSON.stringify({email:document.getElementById('pa-email').value.trim(),password:document.getElementById('pa-password').value})});
+    localStorage.setItem('platform_admin_token',data.token);await load();
   }catch(error){button.disabled=false;button.textContent='SIGN IN';login(error.message);}
 }
-
 function togglePlatformPassword(){
   const input=document.getElementById('pa-password'),button=document.getElementById('pa-password-toggle');
   if(!input||!button)return;
-  input.type=input.type==='password'?'text':'password';
-  button.textContent=input.type==='password'?'SHOW':'HIDE';
-  button.setAttribute('aria-label',input.type==='password'?'Show password':'Hide password');
+  input.type=input.type==='password'?'text':'password';button.textContent=input.type==='password'?'SHOW':'HIDE';
 }
 
-let googlePlatformClientId='';
 let googlePlatformInitialized=false;
 async function loadGoogleIdentity(){
   if(window.google?.accounts?.id)return;
   await new Promise((resolve,reject)=>{
     const existing=document.querySelector('script[data-google-identity]');
-    if(existing){
-      existing.addEventListener('load',resolve,{once:true});
-      existing.addEventListener('error',()=>reject(new Error('Google sign-in could not load.')),{once:true});
-      return;
-    }
-    const script=document.createElement('script');
-    script.src='https://accounts.google.com/gsi/client';
-    script.async=true;
-    script.defer=true;
-    script.dataset.googleIdentity='true';
-    script.onload=resolve;
-    script.onerror=()=>reject(new Error('Google sign-in could not load.'));
-    document.head.appendChild(script);
+    if(existing){existing.addEventListener('load',resolve,{once:true});existing.addEventListener('error',()=>reject(new Error('Google sign-in could not load.')),{once:true});return;}
+    const script=document.createElement('script');script.src='https://accounts.google.com/gsi/client';script.async=true;script.defer=true;script.dataset.googleIdentity='true';script.onload=resolve;script.onerror=()=>reject(new Error('Google sign-in could not load.'));document.head.appendChild(script);
   });
 }
 async function googlePlatformLogin(){
-  const container=document.getElementById('platform-google-btn');
-  if(!container)return;
+  const container=document.getElementById('platform-google-btn');if(!container)return;
   try{
-    container.setAttribute('aria-busy','true');
-    const cfg=await api('/api/platform/google/config');
-    if(!cfg.clientId)throw new Error('Google sign-in is not configured on the server yet.');
-    googlePlatformClientId=cfg.clientId;
+    const cfg=await api('/api/platform/google/config');if(!cfg.clientId)throw new Error('Google sign-in is not configured on the server yet.');
     await loadGoogleIdentity();
     if(!googlePlatformInitialized){
-      google.accounts.id.initialize({
-        client_id:googlePlatformClientId,
-        callback:async response=>{
-          try{
-            const data=await api('/api/platform/google',{method:'POST',body:JSON.stringify({credential:response.credential})});
-            localStorage.setItem('platform_admin_token',data.token);
-            await load();
-          }catch(error){
-            const note=document.querySelector('.pc-google-note');
-            if(note)note.textContent=error.message;
-          }
-        }
-      });
-      googlePlatformInitialized=true;
+      google.accounts.id.initialize({client_id:cfg.clientId,callback:async response=>{
+        try{const data=await api('/api/platform/google',{method:'POST',body:JSON.stringify({credential:response.credential})});localStorage.setItem('platform_admin_token',data.token);await load();}
+        catch(error){const note=document.querySelector('.pc-google-note');if(note)note.textContent=error.message;}
+      }});googlePlatformInitialized=true;
     }
-    container.innerHTML='';
-    google.accounts.id.renderButton(container,{
-      type:'standard',
-      theme:'outline',
-      size:'large',
-      text:'continue_with',
-      shape:'rectangular',
-      width:356,
-      logo_alignment:'center'
-    });
-    container.setAttribute('aria-busy','false');
-  }catch(error){
-    container.setAttribute('aria-busy','false');
-    const note=document.querySelector('.pc-google-note');
-    if(note)note.textContent=error.message;
-  }
+    container.innerHTML='';google.accounts.id.renderButton(container,{type:'standard',theme:'outline',size:'large',text:'continue_with',shape:'rectangular',width:356,logo_alignment:'center'});
+  }catch(error){const note=document.querySelector('.pc-google-note');if(note)note.textContent=error.message;}
 }
 
 async function load(){
+  state.loading=true;
   try{
     state.me=await api('/api/platform/me');
-    const [overview,businesses,packages,health,audit]=await Promise.all([
+    const results=await Promise.all([
       api('/api/platform/overview'),
       api('/api/platform/businesses'),
       api('/api/platform/packages'),
       api('/api/platform/health').catch(()=>({ok:false,tenants:[],environment:{}})),
-      api('/api/platform/audit?limit=12').catch(()=>[])
+      api('/api/platform/command-center').catch(()=>null),
+      api('/api/platform/orders?limit=100').catch(()=>[]),
+      api('/api/platform/riders?limit=200').catch(()=>[]),
+      api('/api/platform/incidents?limit=100').catch(()=>[]),
+      api('/api/platform/system').catch(()=>null),
+      api('/api/platform/audit?limit=30').catch(()=>[])
     ]);
-    state.overview=overview;state.businesses=businesses;state.packages=packages;state.health=health;state.audit=audit;
-    clearTimeout(healthTimer);healthTimer=setTimeout(()=>load(),30000);
+    [state.overview,state.businesses,state.packages,state.health,state.command,state.orders,state.riders,state.incidents,state.system,state.audit]=results;
+    state.loading=false;
     render();
+    clearTimeout(refreshTimer);refreshTimer=setTimeout(load,30000);
   }catch(error){
-    localStorage.removeItem('platform_admin_token');
-    login(error.message);
+    state.loading=false;localStorage.removeItem('platform_admin_token');login(error.message);
   }
 }
 
-function packageFor(b){
-  return state.packages.find(p=>p.key===b.plan_key);
-}
-function riderEnabled(b){
-  return Boolean(packageFor(b)?.features?.riderModule);
-}
-function customerUrl(b){return SITE+'/menu.html?businessId='+encodeURIComponent(b.id);}
-function managerUrl(b){return SITE+'/manager.html?businessId='+encodeURIComponent(b.id);}
-function riderUrl(b){return SITE+'/rider.html?businessId='+encodeURIComponent(b.id);}
+function packageFor(b){return state.packages.find(p=>p.key===b.plan_key);}
+function riderEnabled(b){return Boolean(packageFor(b)?.features?.riderModule);}
+function incidentClass(s){return String(s||'').toLowerCase();}
+function currentSectionLabel(){return ({overview:'Command Centre',restaurants:'Restaurants',orders:'Orders',delivery:'Riders & Delivery',health:'System Health',issues:'Issues & Alerts',activity:'Activity Log',updates:'System Updates'}[state.section]||'Command Centre');}
 
-function connectorCode(b){
-  const menu=customerUrl(b);
-  return `<script>
-(function(){
-  var customerMenu="${menu}";
-  document.querySelectorAll('[data-restaurant-menu],[data-restaurant-order]').forEach(function(el){
-    el.addEventListener('click',function(event){
-      event.preventDefault();
-      window.location.href=customerMenu;
-    });
-  });
-})();
-<\/script>`;
-}
-
-function healthPanel(){
-  const h=state.health||{},env=h.environment||{};
-  const envItems=[['DATABASE',env.database],['GOOGLE MAPS',env.googleMaps],['SMS',env.smsProvider],['PAYMENTS',env.payments]];
-  const tenantCount=(h.tenants||[]).length;
-  const broken=(h.tenants||[]).filter(t=>!t.ok&&t.status==='ACTIVE').length;
-  return `<section class="pc-panel pc-health" id="pc-health-panel">
-    <div class="pc-panel-head">
-      <div><span class="pc-kicker">AUTOMATIC HEALTH CHECK</span><h2>Platform health</h2></div>
-      <div class="pc-health-actions"><span class="pc-health-status ${h.ok?'ok':'warn'}">${h.ok?'HEALTHY':'ATTENTION NEEDED'}</span><button class="pc-mini" id="health-refresh">RUN CHECK</button></div>
-    </div>
-    <div class="pc-health-grid">
-      ${envItems.map(x=>`<div class="pc-health-card"><span>${x[0]}</span><strong class="${x[1]?'ok':'warn'}">${x[1]?'READY':'NOT CONFIGURED'}</strong></div>`).join('')}
-      <div class="pc-health-card"><span>TENANTS CHECKED</span><strong>${tenantCount}</strong><small>${broken?broken+' active tenant issue'+(broken===1?'':'s'):'No active tenant issues'}</small></div>
-    </div>
-    <div class="pc-health-foot"><span>Last check: ${h.checkedAt?new Date(h.checkedAt).toLocaleString():'Not run'}</span><span>${h.responseMs?Number(h.responseMs)+' ms':''}</span></div>
-    ${state.audit?.length?`<details class="pc-audit"><summary>Recent platform activity</summary><div class="pc-audit-list">${state.audit.map(a=>`<div class="pc-audit-row"><strong>${esc(a.action)}</strong><span>${esc(a.business_name||'Platform')}</span><small>${new Date(a.created_at).toLocaleString()}</small></div>`).join('')}</div></details>`:''}
-  </section>`;
-}
 function render(){
-  const o=state.overview||{};
+  const o=state.overview||{},c=state.command||{},m=c.metrics||{},t=c.tenants||{};
   root.innerHTML=`
-  <div class="pc-page">
+  <div class="pc-shell">
     <header class="pc-nav">
-      <div class="pc-brand">
-        <span>PLATFORM OWNER</span>
-        RESTAURANT ORDERING PLATFORM
-      </div>
-      <div class="pc-nav-right">
-        <span class="pc-admin">${esc(state.me?.name||'Platform Owner')}</span>
-        <button class="pc-btn secondary" id="logout-btn">SIGN OUT</button>
-      </div>
+      <div class="pc-brand"><span>PLATFORM OWNER</span><strong>RESTAURANT ORDERING PLATFORM</strong></div>
+      <div class="pc-nav-right"><span class="pc-live-dot"></span><span class="pc-admin">${esc(state.me?.name||'Platform Owner')}</span><button class="pc-menu-btn" id="pc-menu-btn">☰ MENU</button></div>
     </header>
 
-    <main class="pc-main">
-      <header class="pc-head">
-        <div>
-          <span class="pc-kicker">MASTER CONTROL CENTRE</span>
-          <h1>Every restaurant.<br>One system.</h1>
-          <p>Provision a tenant, choose its services, connect its website and hand over the branded ordering experience.</p>
-        </div>
-        <div class="pc-actions">
-          <button class="pc-btn" id="add-btn">+ ADD RESTAURANT</button>
-          <button class="pc-btn secondary" id="refresh-btn">REFRESH</button>
-        </div>
-      </header>
+    <div class="pc-body">
+      <aside class="pc-sidebar">
+        ${navItems()}
+        <div class="pc-sidebar-foot"><span>BUILD</span><strong>${esc(state.system?.version||'PHASE 6')}</strong><small>Independent platform control</small></div>
+      </aside>
 
-      <section class="pc-grid">
-        <article class="pc-stat"><span>RESTAURANTS</span><strong>${Number(o.restaurants||0)}</strong><small>Tenants on platform</small></article>
-        <article class="pc-stat"><span>ACTIVE</span><strong>${Number(o.active||0)}</strong><small>Active accounts</small></article>
-        <article class="pc-stat"><span>ORDERS</span><strong>${Number(o.orders||0)}</strong><small>Across all tenants</small></article>
-        <article class="pc-stat"><span>PAID VALUE</span><strong>${money(o.revenue)}</strong><small>Paid order value</small></article>
-      </section>
+      <main class="pc-main">
+        <div class="pc-mobile-section"><span class="pc-kicker">CONTROL CENTRE</span><strong>${esc(currentSectionLabel())}</strong></div>
+        ${sectionContent()}
+      </main>
+    </div>
 
-      ${state.showCreate?createPanel():''}
+    ${state.menu?menuDrawer():''}
+    ${state.showCreate?createPanel():''}
+    ${state.selected?tenantPanel(state.selected):''}
+  </div>`;
 
-      ${healthPanel()}
-
-      <section class="pc-panel">
-        <div class="pc-panel-head">
-          <div><span class="pc-kicker">TENANTS</span><h2>Restaurant connections</h2></div>
-          <span class="pc-count">${state.businesses.length} restaurant${state.businesses.length===1?'':'s'}</span>
-        </div>
-        <div class="pc-table-wrap">
-          <table class="pc-table">
-            <thead><tr><th>RESTAURANT</th><th>WEBSITE</th><th>PACKAGE</th><th>RIDER</th><th>STATUS</th><th></th></tr></thead>
-            <tbody>
-              ${state.businesses.length?state.businesses.map(row).join(''):`<tr><td colspan="6" class="pc-empty">No restaurants have been provisioned yet.</td></tr>`}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    </main>
-  </div>
-  ${state.selected?detailPanel(state.selected):''}`;
-
-  document.getElementById('logout-btn').onclick=logout;
-  document.getElementById('add-btn').onclick=()=>{state.showCreate=true;render();document.getElementById('new-name')?.focus();};
-  document.getElementById('refresh-btn').onclick=load;
+  document.getElementById('pc-menu-btn').onclick=()=>{state.menu=!state.menu;render();};
+  bindNav();
+  document.getElementById('refresh-btn')?.addEventListener('click',load);
   document.getElementById('health-refresh')?.addEventListener('click',load);
+  document.getElementById('add-btn')?.addEventListener('click',()=>{state.showCreate=true;render();document.getElementById('new-name')?.focus();});
   bindCreate();
   bindRows();
-  bindDetail();
+  bindTenant();
+  bindIncidentActions();
+  bindOrderFilter();
 }
 
+function navItems(){
+  const items=[['overview','⌂','Command Centre'],['restaurants','▦','Restaurants'],['orders','▤','Orders'],['delivery','◉','Riders & Delivery'],['health','✓','System Health'],['issues','!','Issues & Alerts'],['activity','≡','Activity Log'],['updates','↻','System Updates']];
+  return '<nav class="pc-nav-menu">'+items.map(([id,icon,label])=>`<button class="${state.section===id?'active':''}" data-section="${id}"><span>${icon}</span>${label}${id==='issues'&&state.incidents.length?`<b class="pc-nav-badge">${state.incidents.length}</b>`:''}</button>`).join('')+'</nav>';
+}
+function bindNav(){document.querySelectorAll('[data-section]').forEach(b=>b.onclick=()=>{state.section=b.dataset.section;state.menu=false;render();});}
+function menuDrawer(){
+  return '<div class="pc-drawer-backdrop" id="pc-drawer-backdrop"><aside class="pc-drawer"><div class="pc-drawer-head"><div><span class="pc-kicker">MASTER MENU</span><h2>Control Centre</h2></div><button class="pc-modal-close" id="pc-drawer-close">×</button></div>'+navItems()+'<div class="pc-drawer-rule"></div><button class="pc-drawer-signout" id="logout-btn">SIGN OUT</button><p class="pc-drawer-note">This control centre monitors and operates the platform without connecting restaurant dashboards to one another.</p></aside></div>';
+}
+
+function sectionContent(){
+  if(state.section==='restaurants')return restaurantsSection();
+  if(state.section==='orders')return ordersSection();
+  if(state.section==='delivery')return deliverySection();
+  if(state.section==='health')return healthSection();
+  if(state.section==='issues')return issuesSection();
+  if(state.section==='activity')return activitySection();
+  if(state.section==='updates')return updatesSection();
+  return overviewSection();
+}
+
+function overviewSection(){
+  const c=state.command||{},m=c.metrics||{},t=c.tenants||{},issues=c.openIssues||[];
+  return `
+  <header class="pc-head">
+    <div><span class="pc-kicker">MASTER CONTROL CENTRE</span><h1>Everything under control.</h1><p>Monitor restaurants, orders, delivery, devices, integrations, health and platform activity from one independent owner view.</p></div>
+    <div class="pc-actions"><button class="pc-btn" id="add-btn">+ ADD RESTAURANT</button><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></div>
+  </header>
+  <section class="pc-grid pc-grid-6">
+    ${stat('RESTAURANTS',t.active||0,'active of '+(t.total||0))}${stat('ORDERS TODAY',m.ordersToday||0,'all restaurants')}${stat('PAID VALUE',money(m.paidValue),'paid order value')}${stat('ACTIVE TRIPS',m.activeTrips||0,(m.onlineRiders||0)+' riders online')}${stat('CUSTOMERS',m.customers||0,'customer records')}${stat('OPEN ISSUES',c.incidents?.total||0,(c.incidents?.critical||0)+' critical')}
+  </section>
+  ${healthPanel()}
+  <div class="pc-two-col">
+    <section class="pc-panel"><div class="pc-panel-head"><div><span class="pc-kicker">LIVE OPERATIONS</span><h2>Recent orders</h2></div><button class="pc-mini" data-section="orders">VIEW ALL</button></div>${recentOrders(c.recentOrders||[])}</section>
+    <section class="pc-panel"><div class="pc-panel-head"><div><span class="pc-kicker">ATTENTION</span><h2>Open issues</h2></div><button class="pc-mini" data-section="issues">ISSUE CENTRE</button></div>${issueRows(issues.slice(0,6))}</section>
+  </div>`;
+}
+function stat(label,value,note){return '<article class="pc-stat"><span>'+label+'</span><strong>'+esc(value)+'</strong><small>'+esc(note)+'</small></article>';}
+
+function healthPanel(){
+  const h=state.health||{},env=h.environment||{},tenants=h.tenants||[];
+  const envItems=[['DATABASE',env.database],['GOOGLE MAPS',env.googleMaps],['SMS',env.smsProvider],['PAYMENTS',env.payments]];
+  const broken=tenants.filter(t=>!t.ok&&t.status==='ACTIVE').length;
+  return `<section class="pc-panel pc-health"><div class="pc-panel-head"><div><span class="pc-kicker">AUTOMATIC HEALTH</span><h2>System health</h2><p class="pc-panel-sub">The platform checks its infrastructure and every active restaurant.</p></div><div class="pc-health-actions"><span class="pc-health-status ${h.ok?'ok':'warn'}">${h.ok?'HEALTHY':'ATTENTION NEEDED'}</span><button class="pc-mini" id="health-refresh">RUN CHECK</button></div></div><div class="pc-health-grid">${envItems.map(x=>'<div class="pc-health-card"><span>'+x[0]+'</span><strong class="'+(x[1]?'ok':'warn')+'">'+(x[1]?'READY':'NOT CONFIGURED')+'</strong></div>').join('')}<div class="pc-health-card"><span>RESTAURANTS</span><strong>'+tenants.length+'</strong><small>'+broken+' active issue'+(broken===1?'':'s')+'</small></div></div><div class="pc-health-foot"><span>Checked '+(h.checkedAt?dt(h.checkedAt):'not yet')+'</span><span>'+((h.responseMs||0)?h.responseMs+' ms':'')+'</span></div></section>`;
+}
+
+function restaurantsSection(){
+  return `
+  <header class="pc-head compact"><div><span class="pc-kicker">TENANT OPERATIONS</span><h1>Restaurants.</h1><p>Every tenant, package, integration and operational state is visible here without opening another dashboard.</p></div><div class="pc-actions"><button class="pc-btn" id="add-btn">+ ADD RESTAURANT</button><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></div></header>
+  <section class="pc-panel"><div class="pc-panel-head"><div><span class="pc-kicker">TENANTS</span><h2>Restaurant registry</h2></div><span class="pc-count">${state.businesses.length} tenant${state.businesses.length===1?'':'s'}</span></div><div class="pc-table-wrap"><table class="pc-table"><thead><tr><th>RESTAURANT</th><th>PACKAGE</th><th>WEBSITE</th><th>RIDER</th><th>ORDERS</th><th>REVENUE</th><th>STATUS</th><th></th></tr></thead><tbody>${state.businesses.length?state.businesses.map(row).join(''):'<tr><td colspan="8" class="pc-empty">No restaurants have been provisioned.</td></tr>'}</tbody></table></div></section>`;
+}
 function row(b){
   const advanced=riderEnabled(b);
-  return `<tr>
-    <td><div class="pc-tenant-name"><span class="pc-logo-dot" style="background:${esc(b.primary_color||'#c96b3b')}"></span><div><strong>${esc(b.name)}</strong><small>${esc(b.slug)}</small></div></div></td>
-    <td><div class="pc-site">${b.website_url?`<a href="${esc(b.website_url)}" target="_blank" rel="noopener">${esc(b.website_url)}</a>`:'<span class="pc-muted">Not connected</span>'}</div></td>
-    <td><strong>${esc(b.plan_name||b.plan_key||'STARTER')}</strong></td>
-    <td><span class="pc-module ${advanced?'on':'off'}">${advanced?'CONNECTED':'NOT CONNECTED'}</span></td>
-    <td><span class="pc-pill ${b.status==='ACTIVE'?'active':'suspended'}">${esc(b.status)}</span></td>
-    <td><button class="pc-mini pc-open" data-id="${esc(b.id)}">MANAGE</button></td>
-  </tr>`;
+  return '<tr><td><div class="pc-tenant-name"><span class="pc-logo-dot" style="background:'+esc(b.primary_color||'#c96b3b')+'"></span><div><strong>'+esc(b.name)+'</strong><small>'+esc(b.slug)+'</small></div></div></td><td><strong>'+esc(b.plan_name||b.plan_key||'STARTER')+'</strong></td><td><span class="pc-site">'+esc(b.website_url||'Not connected')+'</span></td><td><span class="pc-module '+(advanced?'on':'off')+'">'+(advanced?'ENABLED':'NOT INCLUDED')+'</span></td><td>'+Number(b.order_count||0)+'</td><td>'+money(b.revenue)+'</td><td><span class="pc-pill '+(b.status==='ACTIVE'?'active':'suspended')+'">'+esc(b.status)+'</span></td><td><button class="pc-mini pc-open" data-id="'+esc(b.id)+'">INSPECT</button></td></tr>';
+}
+
+function ordersSection(){
+  const filtered=state.orders;
+  return `<header class="pc-head compact"><div><span class="pc-kicker">PLATFORM ORDERS</span><h1>Orders.</h1><p>Read-only platform-wide order visibility. Order controls remain in the restaurant manager and order station workflows.</p></div><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></header>
+  <section class="pc-panel"><div class="pc-toolbar"><input id="order-filter" placeholder="Filter by order number or restaurant…"><span>${filtered.length} recent orders</span></div><div class="pc-table-wrap"><table class="pc-table" id="orders-table"><thead><tr><th>ORDER</th><th>RESTAURANT</th><th>STATUS</th><th>PAYMENT</th><th>DELIVERY</th><th>VALUE</th><th>CREATED</th></tr></thead><tbody>${orderRows(filtered)}</tbody></table></div></section>`;
+}
+function orderRows(rows){return rows.length?rows.map(o=>'<tr><td><strong>'+esc(o.order_number)+'</strong></td><td>'+esc(o.business_name)+'</td><td><span class="pc-status-text">'+esc(o.status||'—')+'</span></td><td>'+esc(o.payment_status||'—')+'</td><td>'+esc(o.delivery_status||'—')+'</td><td>'+money(o.total)+'</td><td>'+dt(o.created_at)+'</td></tr>').join(''):'<tr><td colspan="7" class="pc-empty">No orders found.</td></tr>';}
+function bindOrderFilter(){const input=document.getElementById('order-filter');if(!input)return;input.oninput=()=>{const q=input.value.trim().toLowerCase();const rows=state.orders.filter(o=>!q||String(o.order_number||'').toLowerCase().includes(q)||String(o.business_name||'').toLowerCase().includes(q));document.querySelector('#orders-table tbody').innerHTML=orderRows(rows);};}
+
+function deliverySection(){
+  return `<header class="pc-head compact"><div><span class="pc-kicker">DELIVERY OPERATIONS</span><h1>Riders & delivery.</h1><p>Monitor every restaurant's riders and active delivery state without opening a rider dashboard.</p></div><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></header>
+  <section class="pc-panel"><div class="pc-table-wrap"><table class="pc-table"><thead><tr><th>RIDER</th><th>RESTAURANT</th><th>STATUS</th><th>AVAILABILITY</th><th>ACTIVE ORDER</th><th>LAST PRESENCE</th></tr></thead><tbody>${state.riders.length?state.riders.map(r=>'<tr><td><strong>'+esc(r.name)+'</strong><small class="pc-cell-sub">'+esc(r.phone||'')+'</small></td><td>'+esc(r.business_name)+'</td><td><span class="pc-pill '+(r.rider_status==='ACTIVE'?'active':'suspended')+'">'+esc(r.rider_status||'—')+'</span></td><td><span class="pc-module '+(r.online?'on':'off')+'">'+(r.online?'ONLINE':'OFFLINE')+'</span></td><td>'+esc(r.order_number||'—')+'</td><td>'+dt(r.presence_updated_at)+'</td></tr>').join(''):'<tr><td colspan="6" class="pc-empty">No riders registered.</td></tr>'}</tbody></table></div></section>`;
+}
+
+function healthSection(){
+  const h=state.health||{},tenants=h.tenants||[];
+  return `<header class="pc-head compact"><div><span class="pc-kicker">DIAGNOSTICS</span><h1>System health.</h1><p>Infrastructure readiness plus a tenant-by-tenant diagnostic view.</p></div><button class="pc-btn" id="health-refresh">RUN FULL CHECK</button></header>
+  <section class="pc-panel">${healthPanel().replace(/^<section[^>]*>|<\\/section>$/g,'')}</section>
+  <section class="pc-panel"><div class="pc-panel-head"><div><span class="pc-kicker">TENANT DIAGNOSTICS</span><h2>Restaurant health matrix</h2></div></div><div class="pc-table-wrap"><table class="pc-table"><thead><tr><th>RESTAURANT</th><th>STATUS</th><th>PACKAGE</th><th>ISSUES</th><th></th></tr></thead><tbody>${tenants.map(t=>'<tr><td><strong>'+esc(t.name)+'</strong><small class="pc-cell-sub">'+esc(t.slug)+'</small></td><td><span class="pc-pill '+(t.status==='ACTIVE'?'active':'suspended')+'">'+esc(t.status)+'</span></td><td>'+esc(t.planKey||'—')+'</td><td>'+esc(t.issues?.join(' · ')||'NONE')+'</td><td><button class="pc-mini pc-open" data-id="'+esc(t.id)+'">INSPECT</button></td></tr>').join('')}</tbody></table></div></section>`;
+}
+
+function issuesSection(){
+  return `<header class="pc-head compact"><div><span class="pc-kicker">OBSERVABILITY</span><h1>Issues & alerts.</h1><p>Frontend and platform errors are collected here by restaurant and dashboard source so you can identify where a failure occurred.</p></div><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></header>
+  <section class="pc-panel"><div class="pc-table-wrap"><table class="pc-table"><thead><tr><th>SEVERITY</th><th>DASHBOARD</th><th>RESTAURANT</th><th>ERROR</th><th>OCCURRENCES</th><th>LAST SEEN</th><th></th></tr></thead><tbody>${issueRows(state.incidents,true)}</tbody></table></div></section>`;
+}
+function issueRows(rows,table=false){
+  if(!rows.length)return table?'<tr><td colspan="7" class="pc-empty">No open issues. The platform is clear.</td></tr>':'<div class="pc-empty-card">No open issues.</div>';
+  if(table)return rows.map(i=>'<tr><td><span class="pc-severity '+incidentClass(i.severity)+'">'+esc(i.severity)+'</span></td><td>'+esc(i.dashboard||i.source||'UNKNOWN')+'</td><td>'+esc(i.business_name||'Platform')+'</td><td class="pc-issue-message">'+esc(i.message)+'</td><td>'+Number(i.occurrences||1)+'</td><td>'+dt(i.last_seen_at)+'</td><td><button class="pc-mini pc-resolve" data-id="'+esc(i.id)+'">RESOLVE</button></td></tr>').join('');
+  return rows.map(i=>'<div class="pc-issue-row"><span class="pc-severity '+incidentClass(i.severity)+'">'+esc(i.severity)+'</span><div><strong>'+esc(i.message)+'</strong><small>'+esc(i.business_name||'Platform')+' · '+esc(i.dashboard||i.source||'UNKNOWN')+' · '+Number(i.occurrences||1)+' occurrence'+(Number(i.occurrences||1)===1?'':'s')+'</small></div></div>').join('');
+}
+function bindIncidentActions(){document.querySelectorAll('.pc-resolve').forEach(b=>b.onclick=async()=>{b.disabled=true;b.textContent='…';try{await api('/api/platform/incidents/'+encodeURIComponent(b.dataset.id)+'/resolve',{method:'POST',body:'{}'});await load();}catch(e){alert(e.message);b.disabled=false;b.textContent='RESOLVE';}});}
+
+function activitySection(){
+  return `<header class="pc-head compact"><div><span class="pc-kicker">AUDIT TRAIL</span><h1>Activity log.</h1><p>A chronological record of platform-owner and system activity.</p></div><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></header>
+  <section class="pc-panel"><div class="pc-activity-list">${(state.audit||[]).length?(state.audit||[]).map(a=>'<article><span class="pc-activity-dot"></span><div><strong>'+esc(a.action)+'</strong><p>'+esc(a.note||'System event')+'</p></div><time>'+dt(a.created_at)+'</time></article>').join(''):'<div class="pc-empty-card">No activity recorded yet.</div>'}</div></section>`;
+}
+
+function updatesSection(){
+  const s=state.system||{};
+  return `<header class="pc-head compact"><div><span class="pc-kicker">PLATFORM OS</span><h1>System updates.</h1><p>The platform owner controls the system as a product. Releases can be versioned, audited and rolled forward without connecting restaurant dashboards to one another.</p></div></header>
+  <div class="pc-two-col"><section class="pc-panel"><span class="pc-kicker">CURRENT BUILD</span><h2>${esc(s.version||'Unknown')}</h2><div class="pc-update-grid"><div><span>API</span><strong>ONLINE</strong></div><div><span>NODE</span><strong>${esc(s.node||'—')}</strong></div><div><span>DATABASE</span><strong>CONNECTED</strong></div><div><span>CHANGE CONTROL</span><strong>GIT + RENDER</strong></div></div></section>
+  <section class="pc-panel"><span class="pc-kicker">CAPABILITIES</span><h2>Platform services</h2><div class="pc-cap-list">${Object.entries(s.capabilities||{}).map(([k,v])=>'<div><span>'+esc(k.replace(/([A-Z])/g,' $1').toUpperCase())+'</span><strong class="'+(v?'ok':'warn')+'">'+(v?'READY':'NOT CONFIGURED')+'</strong></div>').join('')}</div></section></div>
+  <section class="pc-panel pc-update-note"><span class="pc-kicker">UPDATE ARCHITECTURE</span><h2>Ready for future OS releases</h2><p>Future platform releases can be introduced as versioned backend/frontend changes, recorded in the audit trail and surfaced here. Restaurant dashboards remain independent; the Control Centre is the owner-level operations layer.</p><div class="pc-release-flow"><span>CODE</span><b>→</b><span>BUILD</span><b>→</b><span>DEPLOY</span><b>→</b><span>HEALTH CHECK</span><b>→</b><span>RELEASE</span></div></section>`;
+}
+
+function recentOrders(rows){
+  return rows.length?'<div class="pc-list">'+rows.map(o=>'<div class="pc-list-row"><div><strong>'+esc(o.order_number)+'</strong><small>'+esc(o.business_name)+' · '+esc(o.status||'—')+'</small></div><strong>'+money(o.total)+'</strong></div>').join('')+'</div>':'<div class="pc-empty-card">No orders yet.</div>';
 }
 
 function createPanel(){
-  return `<section class="pc-panel pc-create">
-    <div class="pc-panel-head"><div><span class="pc-kicker">NEW TENANT</span><h2>Provision restaurant</h2></div><button class="pc-mini" id="close-create">CLOSE</button></div>
-    <form id="create-form" class="pc-form">
-      <label>Restaurant name<input id="new-name" required placeholder="Ghiovaniz Restaurant"></label>
-      <label>Homepage URL<input id="new-website" type="url" placeholder="https://restaurant.com"></label>
-      <label>Pickup address<input id="new-address" required placeholder="Restaurant address"></label>
-      <label>Package<select id="new-plan">${state.packages.map(p=>`<option value="${esc(p.key)}">${esc(p.name)} — ${esc(p.description||'')}${Number(p.monthly_price_kes)?' · '+money(p.monthly_price_kes)+'/month':''}</option>`).join('')}</select></label>
-      <label>Restaurant domain (optional)<input id="new-domain" placeholder="orders.restaurant.com"></label>
-      <label>Primary colour (optional)<input id="new-color" value="#c96b3b"></label>
-      <div class="pc-form-note"><strong>Package rule:</strong> Digital Ordering gives the customer menu + checkout + manager dashboard. Packages with the rider module add the rider dashboard and advanced delivery services.</div>
-      <div class="pc-form-actions"><button type="button" class="pc-btn secondary" id="cancel-create">CANCEL</button><button class="pc-btn">PROVISION RESTAURANT</button></div>
-    </form>
-  </section>`;
+  return `<div class="pc-modal-backdrop" id="create-backdrop"><section class="pc-modal pc-create-modal"><button class="pc-modal-close" id="close-create">×</button><div class="pc-modal-head"><div><span class="pc-kicker">NEW TENANT</span><h2>Provision restaurant</h2><p>Create the tenant and its core platform services.</p></div></div><form id="create-form" class="pc-form"><label>Restaurant name<input id="new-name" required placeholder="Restaurant name"></label><label>Homepage URL<input id="new-website" type="url" placeholder="https://restaurant.com"></label><label>Pickup address<input id="new-address" required placeholder="Restaurant address"></label><label>Package<select id="new-plan">${state.packages.map(p=>'<option value="'+esc(p.key)+'">'+esc(p.name)+' — '+esc(p.description||'')+'</option>').join('')}</select></label><label>Restaurant domain<input id="new-domain" placeholder="orders.restaurant.com"></label><label>Primary colour<input id="new-color" value="#c96b3b"></label><div class="pc-form-note"><strong>Isolation rule:</strong> provisioning creates tenant infrastructure. Dashboards remain independently accessed.</div><div class="pc-form-actions"><button type="button" class="pc-btn secondary" id="cancel-create">CANCEL</button><button class="pc-btn">PROVISION RESTAURANT</button></div></form></section></div>`;
 }
-
 function bindCreate(){
   document.getElementById('close-create')?.addEventListener('click',()=>{state.showCreate=false;render();});
   document.getElementById('cancel-create')?.addEventListener('click',()=>{state.showCreate=false;render();});
   document.getElementById('create-form')?.addEventListener('submit',createTenant);
+  document.getElementById('pc-drawer-close')?.addEventListener('click',()=>{state.menu=false;render();});
+  document.getElementById('pc-drawer-backdrop')?.addEventListener('click',e=>{if(e.target.id==='pc-drawer-backdrop'){state.menu=false;render();}});
+  document.getElementById('logout-btn')?.addEventListener('click',logout);
 }
-
 async function createTenant(e){
-  e.preventDefault();
-  const button=e.submitter;button.disabled=true;button.textContent='PROVISIONING…';
-  try{
-    await api('/api/platform/businesses',{method:'POST',body:JSON.stringify({
-      name:document.getElementById('new-name').value.trim(),
-      websiteUrl:document.getElementById('new-website').value.trim(),
-      slug:document.getElementById('new-name').value.trim(),
-      address:document.getElementById('new-address').value.trim(),
-      planKey:document.getElementById('new-plan').value,
-      domain:document.getElementById('new-domain').value.trim(),
-      primaryColor:document.getElementById('new-color').value.trim()
-    })});
-    state.showCreate=false;
-    await load();
-  }catch(error){button.disabled=false;button.textContent='PROVISION RESTAURANT';alert(error.message);}
+  e.preventDefault();const button=e.submitter;button.disabled=true;button.textContent='PROVISIONING…';
+  try{await api('/api/platform/businesses',{method:'POST',body:JSON.stringify({name:document.getElementById('new-name').value.trim(),websiteUrl:document.getElementById('new-website').value.trim(),slug:document.getElementById('new-name').value.trim(),address:document.getElementById('new-address').value.trim(),planKey:document.getElementById('new-plan').value,domain:document.getElementById('new-domain').value.trim(),primaryColor:document.getElementById('new-color').value.trim()})});state.showCreate=false;await load();}
+  catch(error){button.disabled=false;button.textContent='PROVISION RESTAURANT';alert(error.message);}
 }
 
-function bindRows(){
-  document.querySelectorAll('.pc-open').forEach(btn=>btn.onclick=()=>{
-    state.selected=state.businesses.find(b=>String(b.id)===String(btn.dataset.id))||null;
-    render();
+function tenantPanel(b){
+  return '<div class="pc-modal-backdrop" id="tenant-backdrop"><section class="pc-modal pc-tenant-modal"><button class="pc-modal-close" id="tenant-close">×</button><div class="pc-modal-head"><div><span class="pc-kicker">TENANT INSPECTOR</span><h2>'+esc(b.name)+'</h2><p>'+esc(b.slug)+' · '+esc(b.plan_name||b.plan_key||'STARTER')+'</p></div><span class="pc-pill '+(b.status==='ACTIVE'?'active':'suspended')+'">'+esc(b.status)+'</span></div>'+tenantInspectorContent()+'<div class="pc-section"><span class="pc-kicker">CONTROL</span><div class="pc-two"><label>PACKAGE<select id="edit-plan">'+state.packages.map(p=>'<option value="'+esc(p.key)+'" '+(p.key===b.plan_key?'selected':'')+'>'+esc(p.name)+'</option>').join('')+'</select></label><label>STATUS<select id="edit-status"><option value="ACTIVE" '+(b.status==='ACTIVE'?'selected':'')+'>ACTIVE</option><option value="SUSPENDED" '+(b.status==='SUSPENDED'?'selected':'')+'>SUSPENDED</option></select></label></div><div class="pc-inline-actions"><button class="pc-btn" id="save-tenant">SAVE TENANT SETTINGS</button></div></div></section></div>';
+}
+function tenantInspectorContent(){
+  if(!state.selectedInspect)return '<div class="pc-loading">Loading tenant system data…</div>';
+  const x=state.selectedInspect,c=x.counts||{},h=x.health||{};
+  return '<div class="pc-tenant-overview"><div><span>STATUS</span><strong>'+esc(x.restaurant.status)+'</strong></div><div><span>CUSTOMERS</span><strong>'+Number(c.customers||0)+'</strong></div><div><span>ORDERS</span><strong>'+Number(c.orders||0)+'</strong></div><div><span>RIDERS</span><strong>'+Number(c.riders||0)+'</strong></div><div><span>ACTIVE TRIPS</span><strong>'+Number(c.active_trips||0)+'</strong></div><div><span>STATIONS</span><strong>'+Number(c.active_stations||0)+'</strong></div></div><div class="pc-section"><span class="pc-kicker">SERVICE HEALTH</span><div class="pc-service-health">'+(h.ok?'<strong class="pc-health-ok">ALL CORE SERVICES READY</strong>':'<strong class="pc-health-warn">'+esc(h.issues?.join(' · ')||'ATTENTION NEEDED')+'</strong>')+'</div></div><div class="pc-section"><span class="pc-kicker">RECENT TENANT ORDERS</span><div class="pc-table-wrap"><table class="pc-table"><thead><tr><th>ORDER</th><th>STATUS</th><th>PAYMENT</th><th>VALUE</th><th>CREATED</th></tr></thead><tbody>'+((x.orders||[]).length?x.orders.map(o=>'<tr><td>'+esc(o.order_number)+'</td><td>'+esc(o.status)+'</td><td>'+esc(o.payment_status)+'</td><td>'+money(o.total)+'</td><td>'+dt(o.created_at)+'</td></tr>').join(''):'<tr><td colspan="5" class="pc-empty">No orders yet.</td></tr>')+'</tbody></table></div></div><div class="pc-section"><span class="pc-kicker">TENANT ACTIVITY</span><div class="pc-list">'+((x.audit||[]).length?x.audit.map(a=>'<div class="pc-list-row"><div><strong>'+esc(a.action)+'</strong><small>'+esc(a.note||'System event')+'</small></div><small>'+dt(a.created_at)+'</small></div>').join(''):'<div class="pc-empty-card">No tenant activity yet.</div>')+'</div></div>';
+}
+async function bindRows(){
+  document.querySelectorAll('.pc-open').forEach(btn=>btn.onclick=async()=>{
+    state.selected=state.businesses.find(b=>String(b.id)===String(btn.dataset.id))||null;state.selectedInspect=null;render();
+    try{state.selectedInspect=await api('/api/platform/businesses/'+encodeURIComponent(btn.dataset.id)+'/inspect');render();}catch(e){alert(e.message);}
   });
 }
-
-function detailPanel(b){
-  const advanced=riderEnabled(b);
-  return `<div class="pc-modal-backdrop" id="detail-backdrop">
-    <section class="pc-modal">
-      <button class="pc-modal-close" id="detail-close">×</button>
-      <div class="pc-modal-head">
-        <div><span class="pc-kicker">TENANT CONTROL</span><h2>${esc(b.name)}</h2><p>${esc(b.slug)} · ${esc(b.plan_name||b.plan_key||'STARTER')}</p></div>
-        <span class="pc-pill ${b.status==='ACTIVE'?'active':'suspended'}">${esc(b.status)}</span>
-      </div>
-
-      <div class="pc-section">
-        <span class="pc-kicker">WEBSITE CONNECTION</span>
-        <div class="pc-connect-grid">
-          <label>Homepage URL<input id="edit-website" value="${esc(b.website_url||'')}" placeholder="https://restaurant.com"></label>
-          <label>Domain<input id="edit-domain" value="${esc(b.domain||'')}" placeholder="orders.restaurant.com"></label>
-        </div>
-        <div class="pc-inline-actions"><button class="pc-btn" id="save-connection">SAVE CONNECTION</button><span id="save-state" class="pc-muted"></span></div>
-        <p class="pc-help">The URL identifies the restaurant website. The integration below is what connects its existing site to this tenant's ordering system. A public URL alone does not grant permission to edit a third-party website.</p>
-      </div>
-
-      <div class="pc-section">
-        <span class="pc-kicker">INTEGRATION</span>
-        <div class="pc-integration-hero">
-          <div><strong>Connect this restaurant to your ordering platform</strong><span>Generate the exact integration the restaurant needs without rebuilding its website.</span></div>
-          <span class="pc-module on">TENANT ${esc(b.slug)}</span>
-        </div>
-        <div class="pc-integration-options">
-          <label><input type="radio" name="integration-type" value="ORDER_BUTTON" checked><span><strong>Order button</strong><small>Turn an existing Menu / Order button into the tenant's ordering link.</small></span></label>
-          <label><input type="radio" name="integration-type" value="EMBEDDED_MENU"><span><strong>Embedded menu</strong><small>Place the live ordering menu inside the existing website.</small></span></label>
-          <label><input type="radio" name="integration-type" value="FULL_ORDERING_PAGE"><span><strong>Full ordering page</strong><small>Use a complete customer ordering page while keeping the main website intact.</small></span></label>
-          <label><input type="radio" name="integration-type" value="FULL_ORDERING_SUBDOMAIN"><span><strong>Full ordering subdomain</strong><small>Serve ordering from a restaurant subdomain such as orders.restaurant.com.</small></span></label>
-        </div>
-        <div class="pc-integration-actions">
-          <button class="pc-btn" id="generate-integration">GENERATE INTEGRATION</button>
-          <span id="integration-status" class="pc-muted">Nothing generated yet.</span>
-        </div>
-        <div id="integration-result" class="pc-integration-result" hidden></div>
-      </div>
-
-      <div class="pc-section">
-        <span class="pc-kicker">CONNECTED SERVICES</span>
-        <div class="pc-service-grid">
-          <div class="pc-service"><strong>CUSTOMER</strong><span>Menu + cart + checkout</span><button class="pc-mini copy-link" data-copy="${esc(customerUrl(b))}">COPY CUSTOMER LINK</button></div>
-          <div class="pc-service"><strong>MANAGER</strong><span>Restaurant operations</span><button class="pc-mini copy-link" data-copy="${esc(managerUrl(b))}">COPY MANAGER LINK</button></div>
-          <div class="pc-service ${advanced?'':'disabled'}"><strong>RIDER</strong><span>${advanced?'Advanced delivery operations':'Not included in this package'}</span>${advanced?`<button class="pc-mini copy-link" data-copy="${esc(riderUrl(b))}">COPY RIDER LINK</button>`:'<span class="pc-module off">NOT CONNECTED</span>'}</div>
-        </div>
-      </div>
-
-      <div class="pc-section">
-        <span class="pc-kicker">TENANT HEALTH</span>
-        <div class="pc-tenant-health-box"><span id="tenant-health-result">Run a health check for this restaurant.</span><button class="pc-mini" id="tenant-health-btn">RUN CHECK</button></div>
-      </div>
-
-      <div class="pc-section">
-        <span class="pc-kicker">TENANT DETAILS</span>
-        <div class="pc-code"><code>Tenant ID: ${esc(b.id)}
-Slug: ${esc(b.slug)}
-Customer ordering URL: ${esc(customerUrl(b))}</code></div>
-      </div>
-
-      <div class="pc-section pc-two">
-        <div><span class="pc-kicker">PACKAGE</span><select id="edit-plan">${state.packages.map(p=>`<option value="${esc(p.key)}" ${p.key===b.plan_key?'selected':''}>${esc(p.name)}</option>`).join('')}</select></div>
-        <div><span class="pc-kicker">STATUS</span><select id="edit-status"><option value="ACTIVE" ${b.status==='ACTIVE'?'selected':''}>ACTIVE</option><option value="SUSPENDED" ${b.status==='SUSPENDED'?'selected':''}>SUSPENDED</option></select></div>
-      </div>
-      <div class="pc-inline-actions"><button class="pc-btn" id="save-tenant">SAVE TENANT SETTINGS</button><button class="pc-btn secondary" id="close-detail-2">CLOSE</button></div>
-    </section>
-  </div>`;
-}
-function bindDetail(){
-  document.getElementById('detail-close')?.addEventListener('click',closeDetail);
-  document.getElementById('close-detail-2')?.addEventListener('click',closeDetail);
-  document.getElementById('detail-backdrop')?.addEventListener('click',e=>{if(e.target.id==='detail-backdrop')closeDetail();});
-  document.querySelectorAll('.copy-link').forEach(btn=>btn.onclick=()=>copyText(btn.dataset.copy,btn));
-  document.getElementById('copy-connector')?.addEventListener('click',()=>copyText(connectorCode(state.selected),document.getElementById('copy-connector')));
-  document.getElementById('save-connection')?.addEventListener('click',saveConnection);
+function bindTenant(){
+  document.getElementById('tenant-close')?.addEventListener('click',()=>{state.selected=null;state.selectedInspect=null;render();});
+  document.getElementById('tenant-backdrop')?.addEventListener('click',e=>{if(e.target.id==='tenant-backdrop'){state.selected=null;state.selectedInspect=null;render();}});
   document.getElementById('save-tenant')?.addEventListener('click',saveTenant);
-  document.getElementById('generate-integration')?.addEventListener('click',generateIntegration);
-  document.getElementById('tenant-health-btn')?.addEventListener('click',runTenantHealth);
 }
-
-async function runTenantHealth(){
-  const b=state.selected;if(!b)return;
-  const btn=document.getElementById('tenant-health-btn'),out=document.getElementById('tenant-health-result');
-  if(btn){btn.disabled=true;btn.textContent='CHECKING…';}
-  try{
-    const data=await api('/api/platform/businesses/'+encodeURIComponent(b.id)+'/health');
-    out.innerHTML='<strong class="'+(data.ok?'pc-health-ok':'pc-health-warn')+'">'+(data.ok?'HEALTHY':'ATTENTION NEEDED')+'</strong> '+(data.issues?.length?esc(data.issues.join(' · ')):'All required tenant components are present.');
-  }catch(error){out.textContent=error.message;}
-  finally{if(btn){btn.disabled=false;btn.textContent='RUN CHECK';}}
-}
-
-function closeDetail(){state.selected=null;render();}
-
-async function generateIntegration(){
-  const b=state.selected;if(!b)return;
-  const button=document.getElementById('generate-integration');
-  const status=document.getElementById('integration-status');
-  const result=document.getElementById('integration-result');
-  const type=document.querySelector('input[name="integration-type"]:checked')?.value||'ORDER_BUTTON';
-  button.disabled=true;button.textContent='GENERATING…';status.textContent='Creating tenant integration…';result.hidden=true;
-  try{
-    const data=await api('/api/platform/businesses/'+encodeURIComponent(b.id)+'/integration',{method:'POST',body:JSON.stringify({type})});
-    result.innerHTML=renderIntegrationResult(data);
-    result.hidden=false;
-    status.textContent=data.typeLabel+' is active.';
-    bindIntegrationResult(data);
-  }catch(error){status.textContent=error.message;result.hidden=false;result.innerHTML=`<div class="pc-message pc-error">${esc(error.message)}</div>`;}
-  finally{button.disabled=false;button.textContent='GENERATE INTEGRATION';}
-}
-function renderIntegrationResult(data){
-  const code=String(data.code||'');
-  const instructions=(data.instructions||[]).map((x,i)=>`<li><span>${i+1}</span>${esc(x)}</li>`).join('');
-  const dns=data.dns?`<div class="pc-integration-dns"><strong>DNS / subdomain setup</strong><p>Host: <code>${esc(data.dns.host)}</code></p><p>Target: <code>${esc(data.dns.target)}</code></p><small>${esc(data.dns.note)}</small></div>`:'';
-  return `<div class="pc-integration-result-head"><div><strong>${esc(data.typeLabel)}</strong><span>Generated for ${esc(data.websiteUrl||'this tenant')}</span></div><span class="pc-pill active">ACTIVE</span></div>
-  <div class="pc-integration-steps"><strong>What to do next</strong><ol>${instructions}</ol></div>
-  <label class="pc-code-label">Generated integration</label>
-  <div class="pc-code pc-integration-code"><code>${esc(code)}</code></div>
-  <div class="pc-inline-actions"><button class="pc-mini" id="copy-generated-integration">COPY INTEGRATION</button><a class="pc-mini pc-link-button" href="${esc(data.customerUrl)}" target="_blank" rel="noopener">OPEN CUSTOMER ORDERING</a></div>
-  ${dns}
-  <p class="pc-help"><strong>Important:</strong> generating the integration creates the connection for this tenant. It does not silently rewrite a third-party website. The restaurant must install the generated snippet or authorize a supported CMS/repository connection.</p>`;
-}
-function bindIntegrationResult(data){
-  document.getElementById('copy-generated-integration')?.addEventListener('click',()=>copyText(data.code,document.getElementById('copy-generated-integration')));
-}
-
-async function saveConnection(){
-  const b=state.selected;if(!b)return;
-  const button=document.getElementById('save-connection');const status=document.getElementById('save-state');
-  button.disabled=true;button.textContent='SAVING…';
-  try{
-    const updated=await api('/api/platform/businesses/'+encodeURIComponent(b.id),{method:'PATCH',body:JSON.stringify({
-      websiteUrl:document.getElementById('edit-website').value.trim(),
-      domain:document.getElementById('edit-domain').value.trim()
-    })});
-    Object.assign(b,updated);status.textContent='Saved';render();
-  }catch(error){status.textContent=error.message;button.disabled=false;button.textContent='SAVE CONNECTION';}
-}
-
 async function saveTenant(){
-  const b=state.selected;if(!b)return;
-  const button=document.getElementById('save-tenant');button.disabled=true;button.textContent='SAVING…';
-  try{
-    await api('/api/platform/businesses/'+encodeURIComponent(b.id),{method:'PATCH',body:JSON.stringify({
-      planKey:document.getElementById('edit-plan').value,
-      status:document.getElementById('edit-status').value
-    })});
-    state.selected=null;await load();
-  }catch(error){button.disabled=false;button.textContent='SAVE TENANT SETTINGS';alert(error.message);}
+  const b=state.selected;if(!b)return;const button=document.getElementById('save-tenant');button.disabled=true;button.textContent='SAVING…';
+  try{await api('/api/platform/businesses/'+encodeURIComponent(b.id),{method:'PATCH',body:JSON.stringify({planKey:document.getElementById('edit-plan').value,status:document.getElementById('edit-status').value})});state.selected=null;state.selectedInspect=null;await load();}
+  catch(e){button.disabled=false;button.textContent='SAVE TENANT SETTINGS';alert(e.message);}
 }
-
-async function copyText(value,button){
-  try{await navigator.clipboard.writeText(value);const old=button.textContent;button.textContent='COPIED';setTimeout(()=>button.textContent=old,1200);}
-  catch{window.prompt('Copy this value:',value);}
-}
-
-async function logout(){
-  try{await api('/api/platform/logout',{method:'POST'});}catch{}
-  localStorage.removeItem('platform_admin_token');
-  login('You have been signed out.');
-}
+async function logout(){try{await api('/api/platform/logout',{method:'POST'});}catch{}localStorage.removeItem('platform_admin_token');login('You have been signed out.');}
 
 load();
 })();

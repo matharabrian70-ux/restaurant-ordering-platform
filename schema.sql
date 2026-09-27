@@ -646,3 +646,22 @@ create table if not exists business_integrations (
   updated_at timestamptz not null default now()
 );
 create index if not exists business_integrations_business_idx on business_integrations(business_id,status);
+
+
+-- SaaS platform foundation: platform-owner audit trail and package capability flags.
+create table if not exists platform_audit_events (
+  id uuid primary key,
+  admin_id uuid references platform_admin_users(id) on delete set null,
+  business_id uuid references businesses(id) on delete set null,
+  action text not null,
+  note text,
+  metadata jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists platform_audit_business_idx on platform_audit_events(business_id,created_at desc);
+create index if not exists platform_audit_admin_idx on platform_audit_events(admin_id,created_at desc);
+create index if not exists platform_audit_action_idx on platform_audit_events(action,created_at desc);
+
+update platform_packages set features=features || '{"digitalOrdering":true,"tenantIsolation":true,"websiteIntegration":true,"auditTrail":true}'::jsonb,updated_at=now() where key='STARTER';
+update platform_packages set features=features || '{"digitalOrdering":true,"advancedDelivery":true,"branchRouting":true,"riderModule":true,"riderTracking":true,"smsNotifications":true,"advancedAnalytics":true,"customDomain":true,"apiIntegrations":true,"auditTrail":true,"tenantIsolation":true,"websiteIntegration":true}'::jsonb,updated_at=now() where key='GROWTH';
+update platform_packages set features=features || '{"digitalOrdering":true,"advancedDelivery":true,"branchRouting":true,"riderModule":true,"riderTracking":true,"smsNotifications":true,"advancedAnalytics":true,"customDomain":true,"apiIntegrations":true,"auditTrail":true,"tenantIsolation":true,"websiteIntegration":true,"multiBranch":true,"prioritySupport":true,"automation":true}'::jsonb,updated_at=now() where key='PRO';

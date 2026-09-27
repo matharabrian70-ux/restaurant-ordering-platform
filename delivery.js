@@ -202,8 +202,8 @@ async function renderRiderProfileModal(){
   if(!rider?.id){
     try{rider=await riderApi('/api/riders/me');}
     catch(err){
-      const token=localStorage.getItem(RIDER_TOKEN_KEY);
-      if(!token){document.getElementById('rider-login')?.classList.remove('hidden');return;}
+      const token=sessionStorage.getItem(RIDER_TOKEN_KEY);
+      if(!token){document.getElementById('rider-app')?.classList.add('hidden');document.getElementById('rider-login')?.classList.remove('hidden');return;}
       alert(err.message||'Unable to load your rider profile.');
       return;
     }
@@ -317,7 +317,11 @@ function updateRiderProfileButton(){
   button.innerHTML=riderAvatarMarkup('rider-nav-avatar');
   button.setAttribute('aria-label','Open rider profile');
   button.classList.remove('hidden');
-  button.onclick=(event)=>{event.preventDefault();event.stopPropagation();renderRiderProfileModal().catch(err=>alert(err.message||'Unable to open rider profile.'));};
+  button.onclick=async(event)=>{
+    event.preventDefault();event.stopPropagation();
+    try{await renderRiderProfileModal();}
+    catch(err){alert(err.message||'Unable to open rider profile.');}
+  };
 }
 async function loginRider(e){
   e?.preventDefault();
@@ -349,7 +353,13 @@ async function setOnline(online){
   unlockRiderAudio();
   if(!rider?.id){
     try{rider=await riderApi('/api/riders/me');updateRiderProfileButton();}
-    catch(err){alert(err.message||'Your rider session has expired. Please sign in again.');return;}
+    catch(err){
+      clearRiderSession();
+      document.getElementById('rider-app')?.classList.add('hidden');
+      document.getElementById('rider-login')?.classList.remove('hidden');
+      alert('Your rider session has expired. Please sign in again.');
+      return;
+    }
   }
   const actionVersion=++availabilityActionVersion;
   // Update the interface immediately. The rider should never have to wait
@@ -402,9 +412,18 @@ function maybeNotify(job){
   const shouldPopup=riderDashboardInitialized;
   lastTripId=job.id;
   if(shouldPopup){showDeliveryAssignmentPopup(job);}
-  if('Notification' in window&&Notification.permission==='granted') new Notification('New delivery assignment',{body:job.order_number+' · '+job.customer_name});
+  if('Notification' in window&&Notification.permission==='granted'){
+    try{
+      if(navigator.serviceWorker?.ready){
+        navigator.serviceWorker.ready.then(reg=>reg.showNotification('New delivery assignment',{body:job.order_number+' · '+job.customer_name,tag:'rider-assignment'})).catch(()=>{});
+      }
+    }catch{}
+  }
 }
-async function requestNotifications(){if('Notification' in window&&Notification.permission==='default')try{await Notification.requestPermission();}catch{}}
+async function requestNotifications(){
+  if(!('Notification' in window))return;
+  try{if(Notification.permission==='default')await Notification.requestPermission();}catch{}
+}
 function statusSteps(current){
   const steps=['ASSIGNED','ACCEPTED','ARRIVED_AT_RESTAURANT','PICKED_UP','ON_THE_WAY','DELIVERED'];
   const index=steps.indexOf(current);

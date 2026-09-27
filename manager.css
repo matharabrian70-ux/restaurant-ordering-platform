@@ -186,3 +186,11 @@
 .sms-test-grid{display:grid;grid-template-columns:1fr 1.5fr auto;gap:10px;align-items:end}
 .sms-test-grid label{margin:0}.sms-test-grid button{min-height:44px;white-space:nowrap}
 @media(max-width:800px){.sms-settings-grid{grid-template-columns:1fr}.sms-test-grid{grid-template-columns:1fr}.sms-test-grid button{width:100%}.sms-effective-badge{max-width:100%;overflow:hidden;text-overflow:ellipsis}}
+
+
+/* Phase 2 rider assignment controls */
+.dispatch-current{display:grid;gap:3px;margin-top:12px;padding:11px 12px;background:#f6f8f3;border:1px solid var(--line);border-radius:10px}
+.dispatch-current b{font-size:13px}
+.dispatch-current small{color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.06em}
+.dispatch-actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:8px}
+@media(max-width:650px){.dispatch-actions{display:grid;grid-template-columns:1fr}.dispatch-actions .btn{width:100%}}

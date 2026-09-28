@@ -67,6 +67,7 @@ async function renderCheckoutUpgrade(){
         items:c,subtotal,total:subtotal+Number(quote.deliveryFee),quoteId:quote.quoteId
       });
       write('doe_last_order',order.id);
+      setCustomerOrderToken(order.customerAccessToken);
       error.textContent='Starting secure payment…';
       const payment=await initializePaystackPayment(order.id);
       if(payment.mode==='redirect'&&payment.authorizationUrl){localStorage.removeItem('doe_cart');location.href=payment.authorizationUrl;return;}

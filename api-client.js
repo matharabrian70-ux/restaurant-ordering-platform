@@ -2,6 +2,7 @@ const API_BASE_URL = 'https://restaurant-ordering-api-ow3p.onrender.com';
 const DEFAULT_BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
 const BUSINESS_ID = new URLSearchParams(location.search).get('businessId') || DEFAULT_BUSINESS_ID;
 const MANAGER_TOKEN_KEY = 'savanna_manager_session';
+const CUSTOMER_ORDER_TOKEN_KEY = 'savanna_customer_order_token';
 function getManagerToken(){ return sessionStorage.getItem(MANAGER_TOKEN_KEY) || ''; }
 function setManagerToken(token){ if(token) sessionStorage.setItem(MANAGER_TOKEN_KEY,token); else sessionStorage.removeItem(MANAGER_TOKEN_KEY); }
 function managerLogoutLocal(){ setManagerToken(''); }
@@ -24,7 +25,7 @@ async function createRemoteOrder({ customer, phone, email, note, payment, items,
     body: JSON.stringify({
       businessId: BUSINESS_ID,
       customer: { name: customer, phone, email },
-      items: items.map(item => ({ productId: null, name: item.name, quantity: item.qty, unitPrice: item.unit, options: item.options || {} })),
+      items: items.map(item => ({ productId: item.id, quantity: item.qty, options: item.options || {} })),
       paymentMethod: payment,
       subtotal,
       total,
@@ -36,16 +37,16 @@ async function createRemoteOrder({ customer, phone, email, note, payment, items,
 }
 
 async function initializePaystackPayment(orderId) {
-  return apiRequest('/api/payments/paystack/initialize', { method: 'POST', body: JSON.stringify({ orderId }) });
+  return apiRequest('/api/payments/paystack/initialize', { method: 'POST', body: JSON.stringify({ orderId, orderToken:getCustomerOrderToken() }), headers:{Authorization:'Bearer '+getCustomerOrderToken()} });
 }
-async function verifyPaystackPayment(reference) {
-  return apiRequest('/api/payments/paystack/verify', { method: 'POST', body: JSON.stringify({ reference }) });
+async function verifyPaystackPayment(reference,orderId) {
+  return apiRequest('/api/payments/paystack/verify', { method: 'POST', body: JSON.stringify({ reference, orderId, orderToken:getCustomerOrderToken() }), headers:{Authorization:'Bearer '+getCustomerOrderToken()} });
 }
 async function getRemoteOrder(orderId) {
-  return apiRequest('/api/orders/' + encodeURIComponent(orderId));
+  return apiRequest('/api/orders/' + encodeURIComponent(orderId), {headers:{Authorization:'Bearer '+getCustomerOrderToken()}});
 }
 async function cancelRemoteOrder(orderId) {
-  return apiRequest('/api/orders/' + encodeURIComponent(orderId) + '/cancel', { method: 'POST', body: JSON.stringify({}) });
+  return apiRequest('/api/orders/' + encodeURIComponent(orderId) + '/cancel', { method: 'POST', body: JSON.stringify({}), headers:{Authorization:'Bearer '+getCustomerOrderToken()} });
 }
 async function getRemoteRiders() {
   return apiRequest('/api/riders?businessId=' + encodeURIComponent(BUSINESS_ID));
@@ -62,3 +63,6 @@ async function completeRiderDelivery(riderId) {
 
 async function getAdminRiders() { return apiRequest('/api/admin/riders?businessId='+encodeURIComponent(BUSINESS_ID)); }
 async function getAdminRiderTrips(riderId) { return apiRequest('/api/admin/riders/'+encodeURIComponent(riderId)+'/trips'); }
+
+function getCustomerOrderToken(){ return sessionStorage.getItem(CUSTOMER_ORDER_TOKEN_KEY) || localStorage.getItem(CUSTOMER_ORDER_TOKEN_KEY) || ''; }
+function setCustomerOrderToken(token){ if(token) localStorage.setItem(CUSTOMER_ORDER_TOKEN_KEY,token); else localStorage.removeItem(CUSTOMER_ORDER_TOKEN_KEY); }

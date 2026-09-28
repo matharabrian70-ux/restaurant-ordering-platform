@@ -53,7 +53,8 @@ create table if not exists orders (
   accepted_at timestamptz,
   out_for_delivery_at timestamptz,
   delivered_at timestamptz,
-  unique (business_id, order_number)
+  unique (business_id, order_number),
+  customer_access_token_hash text
 );
 
 create table if not exists order_items (
@@ -110,7 +111,8 @@ create table if not exists refunds (
   customer_note text,
   merchant_note text,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  idempotency_key text
 );
 
 create table if not exists receipts (
@@ -130,6 +132,8 @@ create index if not exists trips_rider_idx on rider_trips(rider_id, completed_at
 create unique index if not exists rider_active_trip_idx on rider_trips(rider_id) where completed_at is null;
 create unique index if not exists payments_provider_reference_idx on payments(provider_reference) where provider_reference is not null;
 create unique index if not exists refunds_provider_refund_id_idx on refunds(provider_refund_id) where provider_refund_id is not null;
+create unique index if not exists refunds_idempotency_key_idx on refunds(idempotency_key) where idempotency_key is not null;
+create unique index if not exists orders_customer_access_token_idx on orders(customer_access_token_hash) where customer_access_token_hash is not null;
 create index if not exists refunds_order_idx on refunds(order_id, created_at desc);
 alter table receipts add column if not exists receipt_access_token text;
 create unique index if not exists receipts_access_token_idx on receipts(receipt_access_token) where receipt_access_token is not null;
@@ -562,6 +566,7 @@ create table if not exists platform_admin_users (
   name text not null,
   email text not null unique,
   password_hash text not null,
+  role text not null default 'PLATFORM_OWNER' check (role in ('PLATFORM_OWNER','SUPPORT')),
   active boolean not null default true,
   last_login_at timestamptz,
   created_at timestamptz not null default now()
@@ -574,6 +579,29 @@ create table if not exists platform_admin_sessions (
   created_at timestamptz not null default now()
 );
 create index if not exists platform_admin_sessions_admin_idx on platform_admin_sessions(admin_id,expires_at desc);
+
+-- Phase 3 tenant and authorization invariants.
+alter table platform_admin_users add column if not exists role text not null default 'PLATFORM_OWNER';
+alter table platform_admin_users drop constraint if exists platform_admin_users_role_check;
+alter table platform_admin_users add constraint platform_admin_users_role_check check (role in ('PLATFORM_OWNER','SUPPORT'));
+
+create unique index if not exists customers_business_id_id_uidx on customers(business_id,id);
+create unique index if not exists products_business_id_id_uidx on products(business_id,id);
+create unique index if not exists orders_business_id_id_uidx on orders(business_id,id);
+
+alter table orders drop constraint if exists orders_customer_tenant_fk;
+alter table orders add constraint orders_customer_tenant_fk
+  foreign key (business_id,customer_id) references customers(business_id,id) not valid;
+
+alter table products drop constraint if exists products_price_nonnegative;
+alter table products add constraint products_price_nonnegative check (price >= 0) not valid;
+
+alter table orders drop constraint if exists orders_amounts_nonnegative;
+alter table orders add constraint orders_amounts_nonnegative
+  check (subtotal >= 0 and total >= 0 and delivery_fee >= 0 and coalesce(food_subtotal,0) >= 0) not valid;
+
+alter table order_items drop constraint if exists order_items_amount_nonnegative;
+alter table order_items add constraint order_items_amount_nonnegative check (unit_price >= 0) not valid;
 create table if not exists platform_packages (
   key text primary key,
   name text not null,

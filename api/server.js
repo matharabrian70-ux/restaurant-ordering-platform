@@ -15,10 +15,123 @@ const port = Number(process.env.PORT || 3000);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false });
 const PAYSTACK_API = 'https://api.paystack.co';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://matharabrian70-ux.github.io/restaurant-ordering-platform';
-// Temporary prototype mode: keep the rider module available for end-to-end testing.
+// Phase 2 security controls are intentionally backend-only; dashboard structure is unchanged.
 const RIDER_MODULE_ENABLED = String(process.env.RIDER_MODULE_ENABLED || 'true').toLowerCase() === 'true';
 
-app.use(cors());
+function parsePositiveInt(value, fallback, min, max) {
+  const n = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback;
+}
+
+const SESSION_TTLS = {
+  managerHours: parsePositiveInt(process.env.MANAGER_SESSION_HOURS, 12, 1, 72),
+  riderHours: parsePositiveInt(process.env.RIDER_SESSION_HOURS, 168, 1, 720),
+  stationHours: parsePositiveInt(process.env.STATION_SESSION_HOURS, 168, 1, 720),
+  controlHours: parsePositiveInt(process.env.CONTROL_SESSION_HOURS, 12, 1, 72),
+};
+
+const allowedCorsOrigins = new Set(
+  [FRONTEND_URL, ...(String(process.env.CORS_ALLOWED_ORIGINS || '').split(',').map(v => v.trim()).filter(Boolean))]
+    .map(v => { try { return new URL(v).origin; } catch { return ''; } })
+    .filter(Boolean)
+);
+
+app.set('trust proxy', 1);
+
+const rateLimitBuckets = new Map();
+function clientIp(req) {
+  return String(req.ip || req.socket?.remoteAddress || 'unknown');
+}
+function rateLimit({ windowMs = 60_000, max = 60, keyFn = clientIp, message = 'Too many requests. Please try again later.' } = {}) {
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = String(keyFn(req));
+    let bucket = rateLimitBuckets.get(key);
+    if (!bucket || now >= bucket.resetAt) {
+      bucket = { count: 0, resetAt: now + windowMs };
+      rateLimitBuckets.set(key, bucket);
+    }
+    bucket.count += 1;
+    const remaining = Math.max(0, max - bucket.count);
+    res.setHeader('X-RateLimit-Limit', String(max));
+    res.setHeader('X-RateLimit-Remaining', String(remaining));
+    res.setHeader('X-RateLimit-Reset', String(Math.ceil(bucket.resetAt / 1000)));
+    if (bucket.count > max) {
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))));
+      return res.status(429).json({ error: message });
+    }
+    next();
+  };
+}
+
+// Prevent an unbounded in-memory limiter map on a long-running Render instance.
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of rateLimitBuckets) {
+    if (now >= bucket.resetAt) rateLimitBuckets.delete(key);
+  }
+}, 60_000).unref?.();
+
+const apiRateLimit = rateLimit({
+  windowMs: 60_000,
+  max: parsePositiveInt(process.env.API_RATE_LIMIT_PER_MINUTE, 180, 60, 600),
+  keyFn: req => `${clientIp(req)}:${req.method}:${req.path}`,
+});
+const authRateLimit = rateLimit({
+  windowMs: 10 * 60_000,
+  max: parsePositiveInt(process.env.AUTH_RATE_LIMIT_PER_10_MIN, 8, 3, 30),
+  keyFn: req => `auth:${clientIp(req)}`,
+  message: 'Too many login attempts. Please wait before trying again.',
+});
+const googleRateLimit = rateLimit({
+  windowMs: 10 * 60_000,
+  max: parsePositiveInt(process.env.GOOGLE_RATE_LIMIT_PER_10_MIN, 5, 2, 20),
+  keyFn: req => `google:${clientIp(req)}`,
+  message: 'Too many Google sign-in attempts. Please wait before trying again.',
+});
+const quoteRateLimit = rateLimit({
+  windowMs: 60_000,
+  max: parsePositiveInt(process.env.DELIVERY_QUOTE_RATE_LIMIT_PER_MIN, 20, 5, 60),
+  keyFn: req => `quote:${clientIp(req)}:${String(req.body?.businessId || '')}`,
+  message: 'Too many delivery quote requests. Please wait before requesting another quote.',
+});
+const smsTestRateLimit = rateLimit({
+  windowMs: 10 * 60_000,
+  max: parsePositiveInt(process.env.SMS_TEST_RATE_LIMIT_PER_10_MIN, 3, 1, 10),
+  keyFn: req => `sms-test:${clientIp(req)}`,
+  message: 'Too many SMS test requests. Please wait before trying again.',
+});
+const stationPairRateLimit = rateLimit({
+  windowMs: 10 * 60_000,
+  max: 5,
+  keyFn: req => `station-pair:${clientIp(req)}`,
+  message: 'Too many device-pairing attempts. Please wait and try again.',
+});
+
+const corsOptions = {
+  origin(origin, callback) {
+    // Non-browser clients and same-origin requests do not send Origin.
+    if (!origin) return callback(null, true);
+    let normalized = '';
+    try { normalized = new URL(origin).origin; } catch {}
+    if (allowedCorsOrigins.has(normalized)) return callback(null, normalized);
+    return callback(null, false);
+  },
+  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Refund-Admin-Key'],
+  optionsSuccessStatus: 204,
+  maxAge: 600,
+};
+
+app.use(cors(corsOptions));
+app.use('/api', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'geolocation=(self), camera=(), microphone=()');
+  next();
+});
+app.use('/api', apiRateLimit);
 app.use(express.json({ limit: '2mb', verify: (req, _res, buf) => { req.rawBody = Buffer.from(buf); } }));
 
 // Optional advanced module flag. The core ordering system remains usable when disabled.
@@ -238,7 +351,112 @@ function verifyPassword(password, stored) {
 function hashSessionToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
+function createCustomerOrderToken() {
+  const token = crypto.randomBytes(32).toString('hex');
+  return { token, hash: hashSessionToken(token) };
+}
+async function getCustomerOrderAccess(req) {
+  const auth = String(req.headers.authorization || '');
+  const bearer = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+  const queryToken = String(req.query.orderToken || '').trim();
+  const token = bearer || queryToken;
+  if (!token) return null;
+  const hash = hashSessionToken(token);
+  const result = await pool.query(
+    'select o.*,c.phone as customer_phone,c.email as customer_email from orders o join customers c on c.id=o.customer_id where o.id=$1 and o.customer_access_token_hash=$2 limit 1',
+    [req.params.id, hash]
+  );
+  return result.rows[0] || null;
+}
+async function requireCustomerOrder(req,res,next) {
+  try {
+    const order = await getCustomerOrderAccess(req);
+    if (!order) return res.status(401).json({error:'Order access authorization required'});
+    req.customerOrder = order;
+    next();
+  } catch {
+    res.status(500).json({error:'Unable to verify order access'});
+  }
+}
+async function requireCustomerOrderBody(req,res,next) {
+  try {
+    const id=String(req.body?.orderId||'').trim();
+    const token=String(req.headers.authorization||'').startsWith('Bearer ')
+      ? String(req.headers.authorization).slice(7).trim()
+      : String(req.body?.orderToken||'').trim();
+    if(!id||!token) return res.status(401).json({error:'Order access authorization required'});
+    const result=await pool.query(
+      'select o.*,c.phone as customer_phone,c.email as customer_email from orders o join customers c on c.id=o.customer_id where o.id=$1 and o.customer_access_token_hash=$2 limit 1',
+      [id,hashSessionToken(token)]
+    );
+    if(!result.rowCount)return res.status(401).json({error:'Order access authorization required'});
+    req.customerOrder=result.rows[0];
+    next();
+  }catch{res.status(500).json({error:'Unable to verify order access'});}
+}
+async function ensurePhase1SecuritySchema() {
+  await pool.query(`
+    alter table orders add column if not exists customer_access_token_hash text;
+    create unique index if not exists orders_customer_access_token_idx
+      on orders(customer_access_token_hash)
+      where customer_access_token_hash is not null;
+    alter table refunds add column if not exists idempotency_key text;
+    create unique index if not exists refunds_idempotency_key_idx
+      on refunds(idempotency_key)
+      where idempotency_key is not null;
+  `);
+}
 
+async function ensurePhase3SecuritySchema() {
+  await pool.query(`
+    alter table manager_users add column if not exists role text not null default 'MANAGER';
+    alter table platform_admin_users add column if not exists role text not null default 'PLATFORM_OWNER';
+    update manager_users set role=upper(coalesce(role,'MANAGER'));
+    update platform_admin_users set role=upper(coalesce(role,'PLATFORM_OWNER'));
+
+    create unique index if not exists customers_business_id_id_uidx on customers(business_id,id);
+    create unique index if not exists products_business_id_id_uidx on products(business_id,id);
+    create unique index if not exists orders_business_id_id_uidx on orders(business_id,id);
+  `);
+
+  const constraints = await pool.query(
+    `select conname from pg_constraint where conname = any($1::text[])`,
+    [[
+      'manager_users_role_check',
+      'platform_admin_users_role_check',
+      'orders_customer_tenant_fk',
+      'products_price_nonnegative',
+      'orders_amounts_nonnegative',
+      'order_items_amount_nonnegative'
+    ]]
+  );
+  const existing = new Set(constraints.rows.map(row => row.conname));
+
+  if (!existing.has('manager_users_role_check')) {
+    await pool.query(`alter table manager_users add constraint manager_users_role_check
+      check (role in ('OWNER','MANAGER')) not valid`);
+  }
+  if (!existing.has('platform_admin_users_role_check')) {
+    await pool.query(`alter table platform_admin_users add constraint platform_admin_users_role_check
+      check (role in ('PLATFORM_OWNER','SUPPORT')) not valid`);
+  }
+  if (!existing.has('orders_customer_tenant_fk')) {
+    await pool.query(`alter table orders add constraint orders_customer_tenant_fk
+      foreign key (business_id,customer_id) references customers(business_id,id) not valid`);
+  }
+  if (!existing.has('products_price_nonnegative')) {
+    await pool.query(`alter table products add constraint products_price_nonnegative
+      check (price >= 0) not valid`);
+  }
+  if (!existing.has('orders_amounts_nonnegative')) {
+    await pool.query(`alter table orders add constraint orders_amounts_nonnegative
+      check (subtotal >= 0 and total >= 0 and delivery_fee >= 0 and coalesce(food_subtotal,0) >= 0) not valid`);
+  }
+  if (!existing.has('order_items_amount_nonnegative')) {
+    await pool.query(`alter table order_items add constraint order_items_amount_nonnegative
+      check (unit_price >= 0) not valid`);
+  }
+}
 
 async function ensureSmsSchema() {
   await pool.query(`
@@ -275,6 +493,10 @@ async function ensureSmsSchema() {
 
 async function ensureDeliveryTrackingSchema() {
   await pool.query(`
+    alter table rider_presence add column if not exists latitude numeric(10,7);
+    alter table rider_presence add column if not exists longitude numeric(10,7);
+    alter table rider_presence add column if not exists accuracy_meters numeric(10,2);
+    alter table rider_presence add column if not exists location_updated_at timestamptz;
     create table if not exists rider_live_locations (
       rider_id uuid primary key references riders(id) on delete cascade,
       trip_id uuid not null unique references rider_trips(id) on delete cascade,
@@ -330,9 +552,27 @@ async function getBusinessSmsSettings(businessId) {
   if(!r.rowCount) throw new Error('Restaurant not found');
   return r.rows[0];
 }
+const smsSpendBuckets = new Map();
+function consumeSmsBudget(key, windowMs, max) {
+  const now=Date.now();
+  let bucket=smsSpendBuckets.get(key);
+  if(!bucket || now>=bucket.resetAt){ bucket={count:0,resetAt:now+windowMs}; smsSpendBuckets.set(key,bucket); }
+  if(bucket.count>=max) return false;
+  bucket.count += 1;
+  return true;
+}
+setInterval(() => {
+  const now=Date.now();
+  for(const [key,bucket] of smsSpendBuckets) if(now>=bucket.resetAt) smsSpendBuckets.delete(key);
+},60_000).unref?.();
+
 async function sendSms({businessId,to,message,senderId=null,riderId=null,orderId=null,purpose='ASSIGNMENT'}) {
   const config=requireSmsConfig();
   const recipient=normalizeKenyanPhone(to);
+  // Protect the paid provider from accidental retry loops and repeated assignment spam.
+  const recipientBudget = consumeSmsBudget(`recipient:${recipient}`, 10*60_000, parsePositiveInt(process.env.SMS_MAX_PER_RECIPIENT_PER_10_MIN, 3, 1, 10));
+  const businessBudget = consumeSmsBudget(`business:${businessId}`, 10*60_000, parsePositiveInt(process.env.SMS_MAX_PER_BUSINESS_PER_10_MIN, 30, 5, 200));
+  if(!recipientBudget || !businessBudget) throw new Error('SMS sending is temporarily rate limited for this recipient or restaurant');
   const settings=await getBusinessSmsSettings(businessId);
 
   // Sandbox deliberately omits the Sender ID. Production requires a Sender ID
@@ -446,8 +686,14 @@ async function getControlAdminFromSession(req){
   return r.rows[0]||null;
 }
 async function requireControl(req,res,next){
-  try{const admin=await getControlAdminFromSession(req);if(!admin)return res.status(401).json({error:'Platform control login required'});req.controlAdmin=admin;next();}
-  catch(e){res.status(500).json({error:'Unable to verify control session'});}
+  try{
+    const admin=await getControlAdminFromSession(req);
+    if(!admin)return res.status(401).json({error:'Platform control login required'});
+    if(!['PLATFORM_OWNER','SUPPORT'].includes(String(admin.role||'').toUpperCase())) return res.status(403).json({error:'Platform control role is not permitted'});
+    req.controlAdmin=admin;
+    req.platformAdmin=admin;
+    next();
+  }catch(e){res.status(500).json({error:'Unable to verify control session'});}
 }
 async function getManagerFromSession(req) {
   const raw = String(req.headers.authorization || '');
@@ -469,6 +715,15 @@ async function requireManager(req, res, next) {
     req.manager = manager;
     next();
   } catch { res.status(500).json({ error: 'Unable to verify manager session' }); }
+}
+
+function requireManagerRole(...allowedRoles) {
+  const roles = new Set(allowedRoles.map(role => String(role).toUpperCase()));
+  return (req, res, next) => {
+    const role = String(req.manager?.role || '').toUpperCase();
+    if (!roles.has(role)) return res.status(403).json({ error: 'This manager role is not permitted to perform this action' });
+    next();
+  };
 }
 async function requireManagerOrder(req, res, next) {
   return requireManager(req, res, async () => {
@@ -593,7 +848,7 @@ async function calculateDeliveryQuote({businessId,pickupAddress,deliveryAddress}
 }
 
 
-app.post('/api/manager/login', async (req,res)=>{
+app.post('/api/manager/login', authRateLimit, async (req,res)=>{
   try{
     const businessId=String(req.body.businessId||process.env.MANAGER_BUSINESS_ID||'11111111-1111-4111-8111-111111111111');
     const email=String(req.body.email||'').trim().toLowerCase();
@@ -619,13 +874,13 @@ app.post('/api/manager/login', async (req,res)=>{
       await pool.query('update manager_users set password_hash=$1 where id=$2',[hashManagerPassword(password),manager.id]);
     }
     const token=crypto.randomBytes(32).toString('hex');
-    await pool.query('insert into manager_sessions(id,manager_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval \'30 days\')',[manager.id,hashSessionToken(token)]);
+    await pool.query('insert into manager_sessions(id,manager_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))',[manager.id,hashSessionToken(token),SESSION_TTLS.managerHours]);
     await pool.query('update manager_users set last_login_at=now() where id=$1',[manager.id]);
     res.json({token,manager:{id:manager.id,businessId:manager.business_id,name:manager.name,email:manager.email,role:manager.role}});
   }catch(error){res.status(500).json({error:error.message||'Unable to sign in manager'});}
 });
 app.get('/api/manager/google/config',(req,res)=>res.json({clientId:String(process.env.GOOGLE_CLIENT_ID||'')}));
-app.post('/api/manager/google', async (req,res)=>{
+app.post('/api/manager/google', googleRateLimit, async (req,res)=>{
   try{
     const businessId=String(req.body.businessId||process.env.MANAGER_BUSINESS_ID||'11111111-1111-4111-8111-111111111111');
     const credential=String(req.body.credential||'').trim();
@@ -649,7 +904,7 @@ app.post('/api/manager/google', async (req,res)=>{
     const manager=result.rows[0];
     if(!manager) return res.status(403).json({error:'Manager account is not configured'});
     const token=crypto.randomBytes(32).toString('hex');
-    await pool.query('insert into manager_sessions(id,manager_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval \'30 days\')',[manager.id,hashSessionToken(token)]);
+    await pool.query('insert into manager_sessions(id,manager_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))',[manager.id,hashSessionToken(token),SESSION_TTLS.managerHours]);
     await pool.query('update manager_users set last_login_at=now() where id=$1',[manager.id]);
     res.json({token,manager:{id:manager.id,businessId:manager.business_id,name:manager.name,email:manager.email,role:manager.role}});
   }catch(error){res.status(500).json({error:error.message||'Unable to sign in with Google'});}
@@ -660,6 +915,7 @@ app.post('/api/manager/google', async (req,res)=>{
 app.get('/api/manager/dispatch', requireManager, async (req, res) => {
   try {
     await ensureDeliveryTrackingSchema();
+    await ensurePhase1SecuritySchema();
     const businessId = req.manager.business_id;
     const [connection, riders, unassigned, active] = await Promise.all([
       pool.query('select coalesce(rider_connected,false) as rider_connected from business_connections where business_id=$1 limit 1', [businessId]),
@@ -687,7 +943,7 @@ app.get('/api/manager/dispatch', requireManager, async (req, res) => {
       pool.query(`
         select o.id,o.order_number,o.status,o.payment_status,o.total,o.delivery_fee,o.delivery_address,
           o.route_distance_meters,o.route_duration_seconds,o.created_at,c.name as customer_name,c.phone as customer_phone,
-          o.branch_id,bb.name as branch_name
+          o.branch_id,bb.name as branch_name,bb.latitude as branch_latitude,bb.longitude as branch_longitude
         from orders o
         join customers c on c.id=o.customer_id
         left join business_branches bb on bb.id=o.branch_id
@@ -803,7 +1059,7 @@ app.get('/api/manager/sms-settings',requireManager,async(req,res)=>{
     });
   }catch(e){res.status(500).json({error:e.message||'Unable to load SMS settings'});}
 });
-app.put('/api/manager/sms-settings',requireManager,async(req,res)=>{
+app.put('/api/manager/sms-settings',requireManager,requireManagerRole('OWNER'),async(req,res)=>{
   try{
     await ensureSmsSchema();
     const senderId=normalizeSenderId(req.body.senderId);
@@ -818,7 +1074,7 @@ app.put('/api/manager/sms-settings',requireManager,async(req,res)=>{
     res.json(await getBusinessSmsSettings(req.manager.business_id));
   }catch(e){res.status(400).json({error:e.message||'Unable to save SMS settings'});}
 });
-app.post('/api/manager/sms-test',requireManager,async(req,res)=>{
+app.post('/api/manager/sms-test', smsTestRateLimit,requireManager,requireManagerRole('OWNER'),async(req,res)=>{
   try{
     const phone=normalizeKenyanPhone(req.body.phone);
     const settings=await getBusinessSmsSettings(req.manager.business_id);
@@ -894,7 +1150,7 @@ app.post('/api/riders/:id/deliveries/:tripId/location',requireRiderModule,requir
   }catch(e){res.status(400).json({error:e.message||'Unable to update rider location'});}
 });
 
-app.get('/api/orders/:id/live-location',async(req,res)=>{
+app.get('/api/orders/:id/live-location',requireCustomerOrder,async(req,res)=>{
   try{
     await ensureDeliveryTrackingSchema();
     const r=await pool.query(`select l.latitude,l.longitude,l.accuracy_meters,l.heading,l.speed_mps,l.updated_at,
@@ -912,7 +1168,13 @@ app.get('/api/orders/:id/live-location',async(req,res)=>{
 app.get('/api/events', async (req, res) => {
   const businessId = String(req.query.businessId || '');
   const orderId = req.query.orderId ? String(req.query.orderId) : null;
+  const orderToken = String(req.query.orderToken || '').trim();
   if (!businessId) return res.status(400).json({ error: 'businessId is required' });
+  if (orderId) {
+    if (!orderToken) return res.status(401).json({error:'Order access authorization required'});
+    const access=await pool.query('select id from orders where id=$1 and business_id=$2 and customer_access_token_hash=$3 limit 1',[orderId,businessId,hashSessionToken(orderToken)]);
+    if(!access.rowCount)return res.status(401).json({error:'Order access authorization required'});
+  }
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -926,6 +1188,9 @@ app.get('/api/events', async (req, res) => {
 });
 
 async function initiateRefundForOrder(orderId, customerNote = 'Customer cancelled before restaurant acceptance', merchantNote = 'Automatic cancellation refund') {
+  const idempotencyKey='AUTO-CANCEL-'+String(orderId);
+  const existing=await pool.query('select * from refunds where idempotency_key=$1 limit 1',[idempotencyKey]);
+  if(existing.rowCount)return existing.rows[0];
   const orderResult = await pool.query(`select o.id,o.business_id,o.total,o.payment_status,p.id as payment_id,p.provider_reference,p.amount as paid_amount from orders o join payments p on p.order_id=o.id and p.provider='PAYSTACK' where o.id=$1`, [orderId]);
   if (!orderResult.rowCount) throw new Error('Paid Paystack order not found');
   const order = orderResult.rows[0];
@@ -936,7 +1201,7 @@ async function initiateRefundForOrder(orderId, customerNote = 'Customer cancelle
   if (remaining <= 0.0001) return null;
   const refund = await paystackRequest('/refund', { method: 'POST', body: JSON.stringify({ transaction: order.provider_reference, amount: String(Math.round(remaining * 100)), currency: 'KES', customer_note: customerNote, merchant_note: merchantNote }) });
   const data = refund.data || {};
-  const insert = await pool.query(`insert into refunds (id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,customer_note,merchant_note) values (gen_random_uuid(),$1,$2,'PAYSTACK',$3,$4,$5,'KES',$6,$7,$8) returning *`, [order.id, order.payment_id, data.id ? String(data.id) : null, order.provider_reference, remaining, String(data.status || 'pending').toUpperCase(), customerNote, merchantNote]);
+  const insert = await pool.query(`insert into refunds (id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,customer_note,merchant_note,idempotency_key) values (gen_random_uuid(),$1,$2,'PAYSTACK',$3,$4,$5,'KES',$6,$7,$8,$9) returning *`, [order.id, order.payment_id, data.id ? String(data.id) : null, order.provider_reference, remaining, String(data.status || 'pending').toUpperCase(), customerNote, merchantNote, idempotencyKey]);
   broadcastRealtime({ businessId: order.business_id, orderId: order.id, event: 'refund.updated', data: { orderId: order.id, refund: insert.rows[0] } });
   return insert.rows[0];
 }
@@ -1101,17 +1366,17 @@ app.get('/api/customers/:id/record', requireManager, async (req,res)=>{
     res.json({customer:customer.rows[0],summary,orders:orders.rows,addresses:addresses.rows,audit:audit.rows});
   }catch(error){res.status(500).json({error:error.message||'Unable to load customer record'});}
 });
-app.post('/api/orders/:id/confirm-delivery', async (req,res)=>{
+app.post('/api/orders/:id/confirm-delivery', requireCustomerOrder, async (req,res)=>{
   try{
     const result=await completeOrderByConfirmation(req.params.id,'customer');
     if(result.error) return res.status(result.status).json({error:result.error});
     res.json(result.order);
   }catch(error){res.status(500).json({error:error.message||'Unable to confirm delivery'});}
 });
-app.get('/api/orders/:id', async (req, res) => { try { const result = await pool.query(`select o.*, c.name as customer_name, c.phone, c.email, r.name as rider_name, r.vehicle_type, r.number_plate, r.phone as rider_phone from orders o join customers c on c.id=o.customer_id left join riders r on r.id=(select rider_id from rider_trips t where t.order_id=o.id order by assigned_at desc limit 1) where o.id=$1`, [req.params.id]); if (!result.rowCount) return res.status(404).json({ error: 'Order not found' }); res.json(result.rows[0]); } catch { res.status(500).json({ error: 'Unable to load order' }); } });
-app.get('/api/orders/:id/refunds', async (req, res) => { try { const result = await pool.query(`select id,amount,currency,status,created_at,updated_at,customer_note,merchant_note from refunds where order_id=$1 order by created_at desc`, [req.params.id]); res.json(result.rows); } catch { res.status(500).json({ error: 'Unable to load refunds' }); } });
-app.get('/api/orders', requireManager, async (req, res) => { try { const { businessId, q = '' } = req.query; if (!businessId) return res.status(400).json({ error: 'businessId is required' }); const result = await pool.query(`select o.id,o.business_id,o.order_number,o.status,o.payment_status,o.payment_method,o.total,o.created_at,o.delivery_note,c.name,c.phone,c.email,coalesce((select r.name from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_name,coalesce((select r.vehicle_type from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_vehicle,coalesce((select r.number_plate from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_plate,
-      coalesce((select de.status from delivery_events de join rider_trips rt on rt.id=de.trip_id where rt.order_id=o.id order by de.created_at desc limit 1),'') as rider_delivery_status from orders o join customers c on c.id=o.customer_id where o.business_id=$1 and ($2='' or c.name ilike '%'||$2||'%' or c.phone ilike '%'||$2||'%' or coalesce(c.email,'') ilike '%'||$2||'%' or o.order_number ilike '%'||$2||'%') order by o.created_at desc limit 200`, [businessId, String(q).trim()]); res.json(result.rows); } catch { res.status(500).json({ error: 'Unable to load orders' }); } });
+app.get('/api/orders/:id', requireCustomerOrder, async (req, res) => { try { const result = await pool.query(`select o.*, c.name as customer_name, c.phone, c.email, r.name as rider_name, r.vehicle_type, r.number_plate, r.phone as rider_phone from orders o join customers c on c.id=o.customer_id left join riders r on r.id=(select rider_id from rider_trips t where t.order_id=o.id order by assigned_at desc limit 1) where o.id=$1`, [req.params.id]); if (!result.rowCount) return res.status(404).json({ error: 'Order not found' }); res.json(result.rows[0]); } catch { res.status(500).json({ error: 'Unable to load order' }); } });
+app.get('/api/orders/:id/refunds', requireCustomerOrder, async (req, res) => { try { const result = await pool.query(`select id,amount,currency,status,created_at,updated_at,customer_note,merchant_note from refunds where order_id=$1 order by created_at desc`, [req.params.id]); res.json(result.rows); } catch { res.status(500).json({ error: 'Unable to load refunds' }); } });
+app.get('/api/orders', requireManager, async (req, res) => { try { const { businessId, q = '' } = req.query; if (!businessId) return res.status(400).json({ error: 'businessId is required' }); const result = await pool.query(`select o.id,o.business_id,o.order_number,o.status,o.payment_status,o.payment_method,o.total,o.created_at,o.delivery_note,o.branch_id,bb.latitude as branch_latitude,bb.longitude as branch_longitude,c.name,c.phone,c.email,coalesce((select r.name from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_name,coalesce((select r.vehicle_type from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_vehicle,coalesce((select r.number_plate from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_plate,
+      coalesce((select de.status from delivery_events de join rider_trips rt on rt.id=de.trip_id where rt.order_id=o.id order by de.created_at desc limit 1),'') as rider_delivery_status from orders o join customers c on c.id=o.customer_id left join business_branches bb on bb.id=o.branch_id where o.business_id=$1 and ($2='' or c.name ilike '%'||$2||'%' or c.phone ilike '%'||$2||'%' or coalesce(c.email,'') ilike '%'||$2||'%' or o.order_number ilike '%'||$2||'%') order by o.created_at desc limit 200`, [businessId, String(q).trim()]); res.json(result.rows); } catch { res.status(500).json({ error: 'Unable to load orders' }); } });
 app.get('/api/riders/:id/profile', requireManager, async(req,res)=>{
   try{
     const riderId=String(req.params.id);
@@ -1134,8 +1399,8 @@ app.post('/api/orders/:id/status', requireManagerOrder, async (req, res) => { tr
     const result = await pool.query(`update orders set status='ACCEPTED',accepted_at=coalesce(accepted_at,now()) where id=$1 returning *`, [req.params.id]);
     broadcastOrder(result.rows[0], { reason: 'restaurant.accepted' });
     res.json(result.rows[0]); } catch { res.status(500).json({ error: 'Unable to update order status' }); } });
-app.post('/api/orders/:id/cancel', async (req, res) => { const client = await pool.connect(); try { let order; try { await client.query('begin'); const result = await client.query(`select * from orders where id=$1 for update`, [req.params.id]); if (!result.rowCount) { await client.query('rollback'); return res.status(404).json({ error: 'Order not found' }); } order = result.rows[0]; if (order.status !== 'NEW') { await client.query('rollback'); return res.status(409).json({ error: 'This order can no longer be cancelled because the restaurant has accepted it.' }); } await client.query(`update orders set status='CANCELLED' where id=$1`, [order.id]); const updated = await client.query(`select * from orders where id=$1`, [order.id]); await client.query('commit'); order = updated.rows[0]; broadcastOrder(order, { reason: 'customer.cancelled' }); } catch (error) { try { await client.query('rollback'); } catch {} throw error; } let refund = null; if (order.payment_status === 'PAID') refund = await initiateRefundForOrder(order.id, 'Customer cancelled before restaurant acceptance', 'Automatic cancellation refund'); const latest = await pool.query(`select * from orders where id=$1`, [order.id]); res.json({ order: latest.rows[0], refund }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to cancel order' }); } finally { client.release(); } });
-app.post('/api/delivery/quote', async (req,res)=>{
+app.post('/api/orders/:id/cancel', requireCustomerOrder, async (req, res) => { const client = await pool.connect(); try { let order; try { await client.query('begin'); const result = await client.query(`select * from orders where id=$1 for update`, [req.params.id]); if (!result.rowCount) { await client.query('rollback'); return res.status(404).json({ error: 'Order not found' }); } order = result.rows[0]; if (order.status !== 'NEW') { await client.query('rollback'); return res.status(409).json({ error: 'This order can no longer be cancelled because the restaurant has accepted it.' }); } await client.query(`update orders set status='CANCELLED' where id=$1`, [order.id]); const updated = await client.query(`select * from orders where id=$1`, [order.id]); await client.query('commit'); order = updated.rows[0]; broadcastOrder(order, { reason: 'customer.cancelled' }); } catch (error) { try { await client.query('rollback'); } catch {} throw error; } let refund = null; if (order.payment_status === 'PAID') refund = await initiateRefundForOrder(order.id, 'Customer cancelled before restaurant acceptance', 'Automatic cancellation refund'); const latest = await pool.query(`select * from orders where id=$1`, [order.id]); res.json({ order: latest.rows[0], refund }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to cancel order' }); } finally { client.release(); } });
+app.post('/api/delivery/quote', quoteRateLimit, async (req,res)=>{
   try{
     const {businessId,pickupAddress,deliveryAddress}=req.body;
     if(!businessId||!pickupAddress||!deliveryAddress) return res.status(400).json({error:'businessId, pickupAddress and deliveryAddress are required'});
@@ -1147,40 +1412,65 @@ app.post('/api/delivery/quote', async (req,res)=>{
   }catch(error){res.status(400).json({error:error.message||'Unable to calculate delivery fee'});}
 });
 
-app.post('/api/orders', async (req, res) => {
+app.post('/api/orders', rateLimit({windowMs:10*60_000,max:20,keyFn:req=>`orders:${clientIp(req)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts. Please wait before placing another order.'}), async (req, res) => {
   const client=await pool.connect();
   try{
-    const {businessId,customer,items,paymentMethod,subtotal,total,deliveryNote,quoteId}=req.body;
+    const {businessId,customer,items,paymentMethod,deliveryNote,quoteId}=req.body;
     const normalizedPaymentMethod=paymentMethod==='M-Pesa'?'M-Pesa':paymentMethod==='Card'?'Card':null;
-    const numericSubtotal=Number(subtotal);
     if(!businessId||!customer?.name||!customer?.phone||!customer?.email||!Array.isArray(items)||!items.length||!normalizedPaymentMethod) return res.status(400).json({error:'Missing order fields'});
-    if(!Number.isFinite(numericSubtotal)||numericSubtotal<=0) return res.status(400).json({error:'Invalid food subtotal'});
+    if(items.length>50) return res.status(400).json({error:'Too many order items'});
     let deliveryFee=0,deliveryData=null;
     if(quoteId){
       const quote=await pool.query('select * from delivery_quotes where id=$1 and business_id=$2 and status=\'QUOTED\'',[quoteId,businessId]);
       if(!quote.rowCount) return res.status(400).json({error:'Delivery quote expired or invalid'});
       deliveryData=quote.rows[0]; deliveryFee=Number(deliveryData.delivery_fee_kes);
     }
-    const numericTotal=Math.round((numericSubtotal+deliveryFee)*100)/100;
-    if(Number.isFinite(Number(total)) && Math.abs(Number(total)-numericTotal)>0.01) return res.status(400).json({error:'Order total does not match the server-calculated delivery fee'});
     await client.query('begin');
+    let foodSubtotal=0;
+    const trustedItems=[];
+    for(const item of items){
+      const productId=String(item.productId||'').trim();
+      const quantity=Number(item.quantity);
+      if(!productId||!Number.isInteger(quantity)||quantity<1||quantity>50) throw new Error('Invalid order item');
+      const productResult=await client.query(
+        'select id,business_id,name,price,options from products where id=$1 and business_id=$2 and active=true',
+        [productId,businessId]
+      );
+      if(!productResult.rowCount) throw new Error('Menu item is unavailable');
+      const product=productResult.rows[0];
+      const submittedOptions=item.options && typeof item.options==='object' ? item.options : {};
+      let unitPrice=Number(product.price);
+      const optionGroups=Array.isArray(product.options)?product.options:[];
+      for(const group of optionGroups){
+        if(!submittedOptions[group.name]) continue;
+        const selected=String(submittedOptions[group.name]);
+        const choice=Array.isArray(group.choices)?group.choices.find(ch=>String(ch?.[0])===selected):null;
+        if(!choice) throw new Error('Invalid menu option');
+        unitPrice+=Number(choice[2]||0);
+      }
+      if(!Number.isFinite(unitPrice)||unitPrice<0) throw new Error('Invalid menu price');
+      foodSubtotal+=unitPrice*quantity;
+      trustedItems.push({productId,productName:product.name,quantity,unitPrice,options:submittedOptions});
+    }
+    foodSubtotal=Math.round(foodSubtotal*100)/100;
+    const numericTotal=Math.round((foodSubtotal+deliveryFee)*100)/100;
+    await client.query(`update delivery_quotes set status='USED' where id=$1 and status='QUOTED'`,[quoteId||null]);
     const customerResult=await client.query(`insert into customers(id,business_id,name,phone,email) values(gen_random_uuid(),$1,$2,$3,$4) on conflict(business_id,phone) do update set name=excluded.name,email=coalesce(excluded.email,customers.email) returning id`,[businessId,customer.name.trim(),customer.phone.trim(),customer.email.trim()]);
     const orderNumber='SB-'+Date.now().toString().slice(-8);
     const pickupAddress=deliveryData?.pickup_address||null, deliveryAddress=deliveryData?.delivery_address||deliveryNote?.trim()||null;
-    const orderResult=await client.query(`insert into orders(id,business_id,customer_id,order_number,status,payment_status,payment_method,delivery_note,subtotal,total,delivery_fee,food_subtotal,delivery_status,pickup_address,delivery_address,delivery_lat,delivery_lng,route_distance_meters,route_duration_seconds,delivery_fee_status,rider_earning,branch_id,customer_lat,customer_lng,selected_branch_distance_meters,selected_branch_duration_seconds) values(gen_random_uuid(),$1,$2,$3,'NEW','PENDING',$4,$5,$6,$7,$8,$6,$9,$10,$11,$12,$13,$14,$15,'HELD',$16,$17,$18,$19,$20,$21) returning *`,[businessId,customerResult.rows[0].id,orderNumber,normalizedPaymentMethod,deliveryNote?.trim()||null,numericSubtotal,numericTotal,deliveryFee,deliveryFee>0?'QUOTED':'NONE',pickupAddress,deliveryAddress,deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,deliveryData?.duration_seconds||null,deliveryFee,deliveryData?.branch_id||null,deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,deliveryData?.duration_seconds||null]);
-    for(const item of items){
-      const quantity=Number(item.quantity),unitPrice=Number(item.unitPrice);
-      if(!item.name||!Number.isInteger(quantity)||quantity<=0||!Number.isFinite(unitPrice)||unitPrice<0) throw new Error('Invalid order item');
-      await client.query(`insert into order_items(id,order_id,product_id,product_name,quantity,unit_price,options) values(gen_random_uuid(),$1,$2,$3,$4,$5,$6)`,[orderResult.rows[0].id,item.productId||null,item.name,quantity,unitPrice,item.options||{}]);
+    const customerAccess=createCustomerOrderToken();
+    const orderResult=await client.query(`insert into orders(id,business_id,customer_id,order_number,status,payment_status,payment_method,delivery_note,subtotal,total,delivery_fee,food_subtotal,delivery_status,pickup_address,delivery_address,delivery_lat,delivery_lng,route_distance_meters,route_duration_seconds,delivery_fee_status,rider_earning,branch_id,customer_lat,customer_lng,selected_branch_distance_meters,selected_branch_duration_seconds,customer_access_token_hash) values(gen_random_uuid(),$1,$2,$3,'NEW','PENDING',$4,$5,$6,$7,$8,$6,$9,$10,$11,$12,$13,$14,$15,'HELD',$16,$17,$18,$19,$20,$21,$22) returning *`,[businessId,customerResult.rows[0].id,orderNumber,normalizedPaymentMethod,deliveryNote?.trim()||null,foodSubtotal,numericTotal,deliveryFee,deliveryFee>0?'QUOTED':'NONE',pickupAddress,deliveryAddress,deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,deliveryData?.duration_seconds||null,deliveryFee,deliveryData?.branch_id||null,deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,deliveryData?.duration_seconds||null,customerAccess.hash]);
+    for(const item of trustedItems){
+      await client.query(`insert into order_items(id,order_id,product_id,product_name,quantity,unit_price,options) values(gen_random_uuid(),$1,$2,$3,$4,$5,$6)`,[orderResult.rows[0].id,item.productId,item.productName,item.quantity,item.unitPrice,item.options]);
     }
     if(deliveryData) await client.query('update delivery_quotes set order_id=$1 where id=$2',[orderResult.rows[0].id,quoteId]);
     await client.query(`insert into payments(id,order_id,provider,amount,status) values(gen_random_uuid(),$1,'PAYSTACK',$2,'PENDING')`,[orderResult.rows[0].id,numericTotal]);
     await client.query('commit');
-    res.status(201).json(orderResult.rows[0]);
+    res.status(201).json({...orderResult.rows[0], customerAccessToken: customerAccess.token});
   }catch(error){try{await client.query('rollback')}catch{}res.status(500).json({error:error.message==='Invalid order item'?error.message:'Unable to create order'});}
   finally{client.release();}
 });
-app.post('/api/payments/paystack/initialize', async (req,res)=>{
+app.post('/api/payments/paystack/initialize', requireCustomerOrderBody, async (req,res)=>{
   try{
     const {orderId}=req.body;
     if(!orderId) return res.status(400).json({error:'orderId is required'});
@@ -1206,11 +1496,47 @@ app.post('/api/payments/paystack/initialize', async (req,res)=>{
   }catch(error){res.status(500).json({error:error.message||'Unable to initialize payment'});}
 });
 app.get('/api/payments/paystack/callback', async (req, res) => { const reference = String(req.query.reference || ''); if (!reference) return res.redirect(`${FRONTEND_URL}/order.html?payment=missing`); try { const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' }); const data = verified.data; if (data?.status !== 'success') throw new Error('Payment was not successful'); const orderId = await markPaymentSuccessful(reference, data); if (!orderId) return res.redirect(`${FRONTEND_URL}/order.html?payment=not-found`); const receipt = await pool.query('select receipt_access_token from receipts where order_id=$1',[orderId]); const token = receipt.rows[0]?.receipt_access_token || ''; return res.redirect(`${FRONTEND_URL}/order.html?id=${encodeURIComponent(orderId)}&payment=success${token?'&receipt='+encodeURIComponent(token):''}`); } catch { const payment = await pool.query(`select order_id from payments where provider='PAYSTACK' and provider_reference=$1`, [reference]); const orderId = payment.rows[0]?.order_id; const target = orderId ? `${FRONTEND_URL}/order.html?id=${encodeURIComponent(orderId)}&payment=failed` : `${FRONTEND_URL}/order.html?payment=failed`; return res.redirect(target); } });
-app.post('/api/payments/paystack/verify', async (req, res) => { try { const reference = String(req.body.reference || ''); if (!reference) return res.status(400).json({ error: 'reference is required' }); const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' }); if (verified.data?.status === 'success') { const orderId = await markPaymentSuccessful(reference, verified.data); const receipt = orderId ? await pool.query('select receipt_access_token from receipts where order_id=$1',[orderId]) : null; return res.json({ status: 'success', orderId, receiptToken: receipt?.rows[0]?.receipt_access_token || null }); } res.json({ status: verified.data?.status || 'pending' }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to verify payment' }); } });
+app.post('/api/payments/paystack/verify', requireCustomerOrderBody, async (req, res) => { try { const reference = String(req.body.reference || ''); if (!reference) return res.status(400).json({ error: 'reference is required' }); const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' }); if (verified.data?.status === 'success') { const orderId = await markPaymentSuccessful(reference, verified.data); const receipt = orderId ? await pool.query('select receipt_access_token from receipts where order_id=$1',[orderId]) : null; return res.json({ status: 'success', orderId, receiptToken: receipt?.rows[0]?.receipt_access_token || null }); } res.json({ status: verified.data?.status || 'pending' }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to verify payment' }); } });
 app.get('/api/payments/paystack/webhook', (_req, res) => { res.status(405).json({ error: 'Webhook endpoint accepts POST requests from Paystack.' }); });
 app.post('/api/payments/paystack/webhook', async (req, res) => { const signature = req.headers['x-paystack-signature']; const secret = process.env.PAYSTACK_SECRET_KEY; if (!signature || !secret || !req.rawBody) return res.sendStatus(401); const expected = crypto.createHmac('sha512', secret).update(req.rawBody).digest('hex'); const providedBuffer = Buffer.from(String(signature), 'utf8'); const expectedBuffer = Buffer.from(expected, 'utf8'); if (providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) return res.sendStatus(401); try { const event = req.body; if (event.event === 'charge.success' && event.data?.reference && event.data?.status === 'success') await markPaymentSuccessful(event.data.reference, event.data); if (event.event?.startsWith('refund.') && event.data) await updateRefundFromWebhook(event.data); return res.sendStatus(200); } catch (error) { console.error('Paystack webhook processing failed:', error.message); return res.sendStatus(500); } });
-app.post('/api/admin/refunds', async (req, res) => { if (!requireRefundAdmin(req, res)) return; try { const { orderId, amount, customerNote, merchantNote } = req.body; const requestedAmount = Number(amount); if (!orderId || !Number.isFinite(requestedAmount) || requestedAmount <= 0) return res.status(400).json({ error: 'orderId and a positive refund amount are required' }); const orderResult = await pool.query(`select o.id,o.business_id,o.total,o.payment_status,p.id as payment_id,p.provider_reference,p.amount as paid_amount from orders o join payments p on p.order_id=o.id and p.provider='PAYSTACK' where o.id=$1`, [orderId]); if (!orderResult.rowCount) return res.status(404).json({ error: 'Paid Paystack order not found' }); const order = orderResult.rows[0]; if (order.payment_status !== 'PAID') return res.status(409).json({ error: 'Only paid orders can be refunded' }); if (order.delivery_fee_released_at && Number(requestedAmount) > Number(order.food_subtotal || order.subtotal)) return res.status(400).json({ error: 'Delivery fee is not refundable after completed delivery; refund can only cover the food portion.' }); if (!order.provider_reference) return res.status(409).json({ error: 'Paystack transaction reference is missing' }); const refundedResult = await pool.query(`select coalesce(sum(amount),0) as total from refunds where payment_id=$1 and status in ('PENDING','PROCESSING','PROCESSED')`, [order.payment_id]); const alreadyRefunded = Number(refundedResult.rows[0].total); const remaining = Number(order.paid_amount) - alreadyRefunded; if (requestedAmount > remaining + 0.0001) return res.status(400).json({ error: `Refund exceeds the remaining refundable amount (${remaining.toFixed(2)} KES)` }); const refund = await paystackRequest('/refund', { method: 'POST', body: JSON.stringify({ transaction: order.provider_reference, amount: String(Math.round(requestedAmount * 100)), currency: 'KES', customer_note: customerNote || undefined, merchant_note: merchantNote || undefined }) }); const data = refund.data || {}; const insert = await pool.query(`insert into refunds (id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,customer_note,merchant_note) values (gen_random_uuid(),$1,$2,'PAYSTACK',$3,$4,$5,'KES',$6,$7,$8) returning *`, [order.id, order.payment_id, data.id ? String(data.id) : null, order.provider_reference, requestedAmount, String(data.status || 'pending').toUpperCase(), customerNote || null, merchantNote || null]); broadcastRealtime({ businessId: order.business_id, orderId: order.id, event: 'refund.updated', data: { orderId: order.id, refund: insert.rows[0] } }); res.status(201).json(insert.rows[0]); } catch (error) { res.status(500).json({ error: error.message || 'Unable to initiate refund' }); } });
-
+app.post('/api/admin/refunds', async (req, res) => {
+  if (!requireRefundAdmin(req, res)) return;
+  const client=await pool.connect();
+  try{
+    const {orderId,amount,customerNote,merchantNote}=req.body;
+    const requestedAmount=Number(amount);
+    const idempotencyKey=String(req.headers['idempotency-key']||req.body.idempotencyKey||'').trim();
+    if(!idempotencyKey||idempotencyKey.length>200)return res.status(400).json({error:'Idempotency-Key is required for refunds'});
+    if(!orderId||!Number.isFinite(requestedAmount)||requestedAmount<=0)return res.status(400).json({error:'orderId and a positive refund amount are required'});
+    await client.query('begin');
+    await client.query('select pg_advisory_xact_lock(hashtext($1))',[idempotencyKey]);
+    const existing=await client.query('select * from refunds where idempotency_key=$1 limit 1',[idempotencyKey]);
+    if(existing.rowCount){await client.query('commit');return res.json({refund:existing.rows[0],idempotent:true});}
+    const orderResult=await client.query(`select o.id,o.business_id,o.total,o.food_subtotal,o.subtotal,o.payment_status,o.delivery_fee_released_at,p.id as payment_id,p.provider_reference,p.amount as paid_amount
+      from orders o join payments p on p.order_id=o.id and p.provider='PAYSTACK'
+      where o.id=$1 for update`,[orderId]);
+    if(!orderResult.rowCount){await client.query('rollback');return res.status(404).json({error:'Paid Paystack order not found'});}
+    const order=orderResult.rows[0];
+    if(order.payment_status!=='PAID'){await client.query('rollback');return res.status(409).json({error:'Only paid orders can be refunded'});}
+    if(order.delivery_fee_released_at&&requestedAmount>Number(order.food_subtotal||order.subtotal)){await client.query('rollback');return res.status(400).json({error:'Delivery fee is not refundable after completed delivery; refund can only cover the food portion.'});}
+    if(!order.provider_reference){await client.query('rollback');return res.status(409).json({error:'Paystack transaction reference is missing'});}
+    const refundedResult=await client.query(`select coalesce(sum(amount),0) as total from refunds where payment_id=$1 and status in ('PENDING','PROCESSING','PROCESSED')`,[order.payment_id]);
+    const remaining=Number(order.paid_amount)-Number(refundedResult.rows[0].total);
+    if(requestedAmount>remaining+0.0001){await client.query('rollback');return res.status(400).json({error:`Refund exceeds the remaining refundable amount (${remaining.toFixed(2)} KES)`});}
+    const refund=await paystackRequest('/refund',{method:'POST',body:JSON.stringify({transaction:order.provider_reference,amount:String(Math.round(requestedAmount*100)),currency:'KES',customer_note:customerNote||undefined,merchant_note:merchantNote||undefined})});
+    const data=refund.data||{};
+    const insert=await client.query(`insert into refunds (id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,customer_note,merchant_note,idempotency_key)
+      values(gen_random_uuid(),$1,$2,'PAYSTACK',$3,$4,$5,'KES',$6,$7,$8,$9) returning *`,
+      [order.id,order.payment_id,data.id?String(data.id):null,order.provider_reference,requestedAmount,String(data.status||'pending').toUpperCase(),customerNote||null,merchantNote||null,idempotencyKey]);
+    await client.query('commit');
+    broadcastRealtime({businessId:order.business_id,orderId:order.id,event:'refund.updated',data:{orderId:order.id,refund:insert.rows[0]}});
+    res.json({refund:insert.rows[0],idempotent:false});
+  }catch(error){
+    try{await client.query('rollback')}catch{}
+    if(error.code==='23505')return res.status(409).json({error:'A refund with this Idempotency-Key already exists'});
+    res.status(500).json({error:error.message||'Unable to process refund'});
+  }finally{client.release();}
+});
 
 app.get('/api/riders/events', requireRiderModule, async(req,res)=>{
   try{
@@ -1228,7 +1554,7 @@ app.get('/api/riders/events', requireRiderModule, async(req,res)=>{
   }catch(error){res.status(500).json({error:error.message||'Unable to open rider events'});}
 });
 
-app.post('/api/riders/login', requireRiderModule, async(req,res)=>{
+app.post('/api/riders/login', authRateLimit, requireRiderModule, async(req,res)=>{
   try{
     const {businessId,phone,password}=req.body;
     if(!businessId||!phone||!password) return res.status(400).json({error:'Business, phone and password are required'});
@@ -1236,7 +1562,7 @@ app.post('/api/riders/login', requireRiderModule, async(req,res)=>{
     const result=await pool.query(`select r.*,a.password_hash from riders r join rider_auth a on a.rider_id=r.id where r.business_id=$1 and r.phone=$2 and r.active=true and r.rider_status='ACTIVE'`,[businessId,normalized]);
     if(!result.rowCount||!verifyPassword(password,result.rows[0].password_hash)) return res.status(401).json({error:'Invalid rider login'});
     const token=crypto.randomBytes(32).toString('hex');
-    await pool.query('insert into rider_sessions(id,rider_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval \'30 days\')',[result.rows[0].id,hashSessionToken(token)]);
+    await pool.query('insert into rider_sessions(id,rider_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))',[result.rows[0].id,hashSessionToken(token),SESSION_TTLS.riderHours]);
     await pool.query('update rider_auth set last_login_at=now() where rider_id=$1',[result.rows[0].id]);
     await pool.query(`insert into rider_presence(rider_id,online) values($1,true) on conflict(rider_id) do update set online=true,updated_at=now()`,[result.rows[0].id]);
     await pool.query(`insert into business_connections(business_id,rider_connected,updated_at) values($1,true,now()) on conflict(business_id) do update set rider_connected=true,updated_at=now()`,[businessId]);
@@ -1245,7 +1571,7 @@ app.post('/api/riders/login', requireRiderModule, async(req,res)=>{
   }catch(error){res.status(500).json({error:error.message||'Unable to sign in'});}
 });
 
-app.post('/api/rider-invites', requireRiderModule, requireManager, async(req,res)=>{
+app.post('/api/rider-invites', requireRiderModule, requireManager,requireManagerRole('OWNER'), async(req,res)=>{
   const client=await pool.connect();
   try{
     const {businessId,name,phone,email,vehicleType='Motorbike',numberPlate=''}=req.body;
@@ -1321,7 +1647,7 @@ app.post('/api/rider-invites/:token/complete', requireRiderModule, async(req,res
   }finally{client.release();}
 });
 
-app.post('/api/riders/:id/invite', requireRiderModule, requireManager, async(req,res)=>{
+app.post('/api/riders/:id/invite', requireRiderModule, requireManager,requireManagerRole('OWNER'), async(req,res)=>{
   try{
     const riderResult=await pool.query(`select id,business_id,name,rider_status from riders where id=$1 and business_id=$2`,[req.params.id,req.manager.business_id]);
     if(!riderResult.rowCount){await client.query('rollback');return res.status(404).json({error:'Rider not found'});}
@@ -1334,7 +1660,7 @@ app.post('/api/riders/:id/invite', requireRiderModule, requireManager, async(req
   }catch(error){res.status(400).json({error:error.message||'Unable to generate rider invitation'});}
 });
 
-app.post('/api/riders/:id/approve', requireRiderModule, requireManager, async(req,res)=>{
+app.post('/api/riders/:id/approve', requireRiderModule, requireManager,requireManagerRole('OWNER'), async(req,res)=>{
   try{
     const result=await pool.query(`update riders set rider_status='ACTIVE',active=true where id=$1 and business_id=$2 and rider_status='PENDING_APPROVAL' returning id,name,phone,email,vehicle_type,number_plate,payout_phone,profile_image_url,rider_status,active`,[req.params.id,req.manager.business_id]);
     if(!result.rowCount)return res.status(404).json({error:'Rider is not awaiting approval'});
@@ -1343,7 +1669,7 @@ app.post('/api/riders/:id/approve', requireRiderModule, requireManager, async(re
   }catch(error){res.status(500).json({error:error.message||'Unable to approve rider'});}
 });
 
-app.post('/api/riders/:id/suspend', requireRiderModule, requireManager, async(req,res)=>{
+app.post('/api/riders/:id/suspend', requireRiderModule, requireManager,requireManagerRole('OWNER'), async(req,res)=>{
   try{
     const result=await pool.query(`update riders set rider_status='SUSPENDED',active=false where id=$1 and business_id=$2 returning id,name,rider_status,active`,[req.params.id,req.manager.business_id]);
     if(!result.rowCount)return res.status(404).json({error:'Rider not found'});
@@ -1352,7 +1678,7 @@ app.post('/api/riders/:id/suspend', requireRiderModule, requireManager, async(re
     broadcastRider({businessId:req.manager.business_id,riderId:req.params.id,action:'SUSPENDED',data:{rider:result.rows[0]}});
     res.json({ok:true,rider:result.rows[0]});
   }catch(error){res.status(500).json({error:error.message||'Unable to suspend rider'});}
-});app.post('/api/riders/:id/reactivate', requireRiderModule, requireManager, async(req,res)=>{
+});app.post('/api/riders/:id/reactivate', requireRiderModule, requireManager,requireManagerRole('OWNER'), async(req,res)=>{
   try{
     const result=await pool.query(`update riders set rider_status='ACTIVE',active=true where id=$1 and business_id=$2 and rider_status='SUSPENDED' returning id,name,phone,rider_status,active`,[req.params.id,req.manager.business_id]);
     if(!result.rowCount)return res.status(404).json({error:'Suspended rider not found'});
@@ -1437,9 +1763,19 @@ app.put('/api/riders/:id/profile', requireRiderModule, requireRiderAuth, async(r
 
 app.post('/api/riders/:id/presence', requireRiderModule, requireRiderAuth, async(req,res)=>{
   const online=Boolean(req.body.online);
-  await pool.query(`insert into rider_presence(rider_id,online) values($1,$2) on conflict(rider_id) do update set online=$2,updated_at=now()`,[req.rider.id,online]);
-  broadcastRider({businessId:req.rider.business_id,riderId:req.rider.id,action:online?'ONLINE':'OFFLINE',data:{online}});
-  res.json({online});
+  const lat=Number(req.body.latitude),lng=Number(req.body.longitude),accuracy=Number(req.body.accuracy);
+  const hasLocation=Number.isFinite(lat)&&lat>=-90&&lat<=90&&Number.isFinite(lng)&&lng>=-180&&lng<=180;
+  if(hasLocation && Number.isFinite(accuracy) && (accuracy<0||accuracy>5000)) return res.status(400).json({error:'Invalid GPS accuracy'});
+  await pool.query(`
+    insert into rider_presence(rider_id,online,latitude,longitude,accuracy_meters,location_updated_at)
+    values($1,$2,$3,$4,$5,case when $2 and $3 is not null and $4 is not null then now() else null end)
+    on conflict(rider_id) do update set online=$2,latitude=coalesce($3,rider_presence.latitude),longitude=coalesce($4,rider_presence.longitude),
+      accuracy_meters=coalesce($5,rider_presence.accuracy_meters),
+      location_updated_at=case when $2 and $3 is not null and $4 is not null then now() else rider_presence.location_updated_at end,
+      updated_at=now()
+  `,[req.rider.id,online,hasLocation?lat:null,hasLocation?lng:null,Number.isFinite(accuracy)?accuracy:null]);
+  broadcastRider({businessId:req.rider.business_id,riderId:req.rider.id,action:online?'ONLINE':'OFFLINE',data:{online,locationUpdated:hasLocation}});
+  res.json({online,locationUpdated:hasLocation});
 });
 app.get('/api/riders/:id/dashboard', requireRiderModule, requireRiderAuth, async(req,res)=>{
   const id=req.rider.id;
@@ -1706,7 +2042,7 @@ app.get('/api/stations',requireManager,async(req,res)=>{
     res.json(r.rows);
   }catch(e){res.status(500).json({error:e.message||'Unable to load stations'});}
 });
-app.post('/api/stations',requireManager,async(req,res)=>{
+app.post('/api/stations',requireManager,requireManagerRole('OWNER'),async(req,res)=>{
   try{
     const {name,deviceType,mode}=req.body;
     if(!name||!['PHONE','TABLET','PC','LAPTOP','TV','BOARD'].includes(deviceType)||!['OPERATIONS','KITCHEN','COUNTER','DISPLAY'].includes(mode)) return res.status(400).json({error:'Invalid station configuration'});
@@ -1714,7 +2050,7 @@ app.post('/api/stations',requireManager,async(req,res)=>{
     res.status(201).json(r.rows[0]);
   }catch(e){res.status(400).json({error:e.message||'Unable to create station'});}
 });
-app.post('/api/stations/:id/pairing-token',requireManagerStation,async(req,res)=>{
+app.post('/api/stations/:id/pairing-token',requireManagerStation,requireManagerRole('OWNER'),async(req,res)=>{
   try{
     const raw=crypto.randomBytes(32).toString('hex');
     await pool.query('update station_pairing_tokens set used_at=coalesce(used_at,now()) where station_id=$1 and used_at is null',[req.params.id]);
@@ -1724,7 +2060,7 @@ app.post('/api/stations/:id/pairing-token',requireManagerStation,async(req,res)=
     res.json({token:raw,connectUrl,qrDataUrl,expiresInSeconds:300});
   }catch(e){res.status(500).json({error:e.message||'Unable to create pairing code'});}
 });
-app.post('/api/stations/:id/revoke',requireManagerStation,async(req,res)=>{
+app.post('/api/stations/:id/revoke',requireManagerStation,requireManagerRole('OWNER'),async(req,res)=>{
   try{
     await pool.query('update restaurant_order_stations set active=false,updated_at=now() where id=$1',[req.params.id]);
     await pool.query('delete from station_sessions where station_id=$1',[req.params.id]);
@@ -1732,11 +2068,11 @@ app.post('/api/stations/:id/revoke',requireManagerStation,async(req,res)=>{
     res.json({ok:true});
   }catch(e){res.status(500).json({error:e.message||'Unable to revoke station'});}
 });
-app.post('/api/stations/:id/reactivate',requireManagerStation,async(req,res)=>{
+app.post('/api/stations/:id/reactivate',requireManagerStation,requireManagerRole('OWNER'),async(req,res)=>{
   try{await pool.query('update restaurant_order_stations set active=true,updated_at=now() where id=$1',[req.params.id]);res.json({ok:true});}
   catch(e){res.status(500).json({error:e.message||'Unable to reactivate station'});}
 });
-app.post('/api/station/pair',async(req,res)=>{
+app.post('/api/station/pair',stationPairRateLimit,async(req,res)=>{
   res.setHeader('Cache-Control','no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma','no-cache');
   const client=await pool.connect();
@@ -1751,7 +2087,7 @@ app.post('/api/station/pair',async(req,res)=>{
     const row=r.rows[0];
     await client.query('update station_pairing_tokens set used_at=now() where id=$1',[row.id]);
     const sessionToken=crypto.randomBytes(32).toString('hex');
-    await client.query('insert into station_sessions(id,station_id,token_hash,expires_at,last_seen_at) values(gen_random_uuid(),$1,$2,now()+interval \'30 days\',now())',[row.station_id,hashSessionToken(sessionToken)]);
+    await client.query('insert into station_sessions(id,station_id,token_hash,expires_at,last_seen_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3),now())',[row.station_id,hashSessionToken(sessionToken),SESSION_TTLS.stationHours]);
     await client.query('update restaurant_order_stations set last_seen_at=now(),updated_at=now() where id=$1',[row.station_id]);
     await client.query('commit');
     res.json({token:sessionToken,expiresInSeconds:30*24*60*60,station:{id:row.station_id,businessId:row.business_id,name:row.name,deviceType:row.device_type,mode:row.mode}});
@@ -1867,12 +2203,68 @@ async function getPlatformAdmin(req) {
   const r=await pool.query(`select a.*,s.id as session_id from platform_admin_sessions s join platform_admin_users a on a.id=s.admin_id where s.token_hash=$1 and s.expires_at>now() and a.active=true`,[hashSessionToken(token)]);
   return r.rows[0]||null;
 }
+
+async function issuePlatformAdminSession(adminId) {
+  const token=crypto.randomBytes(32).toString('hex');
+  await pool.query(
+    "insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))",
+    [adminId,hashSessionToken(token),SESSION_TTLS.controlHours]
+  );
+  return token;
+}
+async function authenticatePlatformAdmin(email,password) {
+  const normalizedEmail=String(email||'').trim().toLowerCase();
+  const suppliedPassword=String(password||'');
+  const configuredEmail=String(process.env.PLATFORM_ADMIN_EMAIL||'').trim().toLowerCase();
+  const configuredPassword=String(process.env.PLATFORM_ADMIN_PASSWORD||'');
+  if(!normalizedEmail||!suppliedPassword) return {error:'Email and password are required',status:400};
+  if(!configuredEmail||!configuredPassword) return {error:'Platform owner credentials are not configured on the API',status:503};
+
+  let result=await pool.query('select * from platform_admin_users where lower(email)=lower($1) and active=true',[normalizedEmail]);
+  if(!result.rowCount){
+    if(normalizedEmail!==configuredEmail||suppliedPassword!==configuredPassword) return {error:'Invalid platform owner login',status:401};
+    const hash=hashManagerPassword(suppliedPassword);
+    await pool.query(
+      "insert into platform_admin_users(id,name,email,password_hash,role,active) values(gen_random_uuid(),$1,$2,$3,'PLATFORM_OWNER',true) on conflict(email) do nothing",
+      [String(process.env.PLATFORM_ADMIN_NAME||'Platform Owner'),normalizedEmail,hash]
+    );
+    result=await pool.query('select * from platform_admin_users where lower(email)=lower($1) and active=true',[normalizedEmail]);
+  }
+  const admin=result.rows[0];
+  if(!admin) return {error:'Invalid platform owner login',status:401};
+  const envCredentialsMatch=Boolean(configuredEmail&&configuredPassword&&normalizedEmail===configuredEmail&&suppliedPassword===configuredPassword);
+  if(!verifyManagerPassword(suppliedPassword,admin.password_hash)){
+    if(!envCredentialsMatch) return {error:'Invalid platform owner login',status:401};
+    await pool.query('update platform_admin_users set password_hash=$1 where id=$2',[hashManagerPassword(suppliedPassword),admin.id]);
+  }
+  return {admin};
+}
+
 async function requirePlatformAdmin(req,res,next){
   try{
     const admin=await getPlatformAdmin(req);
     if(!admin)return res.status(401).json({error:'Platform owner login required'});
+    if(!['PLATFORM_OWNER','SUPPORT'].includes(String(admin.role||'').toUpperCase())) return res.status(403).json({error:'Platform admin role is not permitted'});
     req.platformAdmin=admin;next();
   }catch(e){res.status(500).json({error:'Unable to verify platform owner session'});}
+}
+
+function requirePlatformRole(...allowedRoles) {
+  const roles = new Set(allowedRoles.map(role => String(role).toUpperCase()));
+  return (req,res,next) => {
+    const role=String(req.platformAdmin?.role||'').toUpperCase();
+    if(!roles.has(role)) return res.status(403).json({error:'This platform role is not permitted to perform this action'});
+    next();
+  };
+}
+
+function requireControlRole(...allowedRoles) {
+  const roles = new Set(allowedRoles.map(role => String(role).toUpperCase()));
+  return (req,res,next) => {
+    const role=String(req.controlAdmin?.role||'').toUpperCase();
+    if(!roles.has(role)) return res.status(403).json({error:'This control-centre role is not permitted to perform this action'});
+    next();
+  };
 }
 async function recordPlatformAudit(adminId,businessId,action,note='',metadata={}){
   try{
@@ -1909,38 +2301,19 @@ async function ensurePlatformObservabilitySchema(){
 function platformSlug(value){
   return String(value||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,80);
 }
-app.post('/api/platform/login',async(req,res)=>{
+app.post('/api/platform/login', authRateLimit,async(req,res)=>{
   try{
-    const email=String(req.body.email||'').trim().toLowerCase();
-    const password=String(req.body.password||'');
-    const configuredEmail=String(process.env.PLATFORM_ADMIN_EMAIL||'').trim().toLowerCase();
-    const configuredPassword=String(process.env.PLATFORM_ADMIN_PASSWORD||'');
-    if(!email||!password)return res.status(400).json({error:'Email and password are required'});
-    if(!configuredEmail||!configuredPassword)return res.status(503).json({error:'Platform owner credentials are not configured on the API'});
-    let r=await pool.query('select * from platform_admin_users where lower(email)=lower($1) and active=true',[email]);
-    if(!r.rowCount){
-      if(email!==configuredEmail||password!==configuredPassword)return res.status(401).json({error:'Invalid platform owner login'});
-      const hash=hashManagerPassword(password);
-      await pool.query('insert into platform_admin_users(id,name,email,password_hash,active) values(gen_random_uuid(),$1,$2,$3,true) on conflict(email) do nothing',[String(process.env.PLATFORM_ADMIN_NAME||'Platform Owner'),email,hash]);
-      r=await pool.query('select * from platform_admin_users where lower(email)=lower($1) and active=true',[email]);
-    }
-    const admin=r.rows[0];
-    const envCredentialsMatch=Boolean(configuredEmail&&configuredPassword&&email===configuredEmail&&password===configuredPassword);
-    if(!admin)return res.status(401).json({error:'Invalid platform owner login'});
-    if(!verifyManagerPassword(password,admin.password_hash)){
-      if(!envCredentialsMatch)return res.status(401).json({error:'Invalid platform owner login'});
-      await pool.query('update platform_admin_users set password_hash=$1 where id=$2',[hashManagerPassword(password),admin.id]);
-    }
-    const token=crypto.randomBytes(32).toString('hex');
-    await pool.query("insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval '30 days')",[admin.id,hashSessionToken(token)]);
-    await pool.query('update platform_admin_users set last_login_at=now() where id=$1',[admin.id]);
-    await recordPlatformAudit(admin.id,null,'PLATFORM_LOGIN','Platform owner signed in',{});
-    res.json({token,admin:{id:admin.id,name:admin.name,email:admin.email}});
+    const auth=await authenticatePlatformAdmin(req.body.email,req.body.password);
+    if(auth.error)return res.status(auth.status).json({error:auth.error});
+    const token=await issuePlatformAdminSession(auth.admin.id);
+    await pool.query('update platform_admin_users set last_login_at=now() where id=$1',[auth.admin.id]);
+    await recordPlatformAudit(auth.admin.id,null,'PLATFORM_LOGIN','Platform owner signed in',{});
+    res.json({token,admin:{id:auth.admin.id,name:auth.admin.name,email:auth.admin.email,role:auth.admin.role}});
   }catch(e){res.status(500).json({error:e.message||'Unable to sign in platform owner'});}
 });
 app.get('/api/platform/google/config',(req,res)=>res.json({clientId:String(process.env.GOOGLE_CLIENT_ID||'')}));
 
-app.post('/api/platform/google',async(req,res)=>{
+app.post('/api/platform/google',googleRateLimit,async(req,res)=>{
   try{
     const credential=String(req.body.credential||'').trim();
     const clientId=String(process.env.GOOGLE_CLIENT_ID||'').trim();
@@ -1962,8 +2335,7 @@ app.post('/api/platform/google',async(req,res)=>{
     }
     const admin=result.rows[0];
     if(!admin)return res.status(403).json({error:'Platform owner account is not configured'});
-    const token=crypto.randomBytes(32).toString('hex');
-    await pool.query("insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval '30 days')",[admin.id,hashSessionToken(token)]);
+    const token=await issuePlatformAdminSession(admin.id);
     await pool.query('update platform_admin_users set last_login_at=now() where id=$1',[admin.id]);
     res.json({token,admin:{id:admin.id,name:admin.name,email:admin.email}});
   }catch(e){res.status(500).json({error:e.message||'Unable to sign in with Google'});}
@@ -2128,7 +2500,7 @@ app.get('/api/platform/incidents',requirePlatformAdmin,async(req,res)=>{
   }catch(e){res.status(500).json({error:e.message||'Unable to load platform incidents'});}
 });
 
-app.post('/api/platform/incidents/:id/resolve',requirePlatformAdmin,async(req,res)=>{
+app.post('/api/platform/incidents/:id/resolve',requirePlatformAdmin,requirePlatformRole('PLATFORM_OWNER'),async(req,res)=>{
   try{
     const r=await pool.query("update platform_incidents set status='RESOLVED',resolved_at=now() where id=$1 returning *",[req.params.id]);
     if(!r.rowCount)return res.status(404).json({error:'Incident not found'});
@@ -2253,7 +2625,7 @@ app.get('/api/platform/businesses',requirePlatformAdmin,async(req,res)=>{
     res.json(r.rows.map(x=>({...x,revenue:Number(x.revenue||0)})));
   }catch(e){res.status(500).json({error:e.message||'Unable to load tenants'});}
 });
-app.post('/api/platform/businesses',requirePlatformAdmin,async(req,res)=>{
+app.post('/api/platform/businesses',requirePlatformAdmin,requirePlatformRole('PLATFORM_OWNER'),async(req,res)=>{
   const client=await pool.connect();
   try{
     const name=String(req.body.name||'').trim();
@@ -2280,7 +2652,7 @@ app.post('/api/platform/businesses',requirePlatformAdmin,async(req,res)=>{
   }catch(e){try{await client.query('rollback')}catch{}res.status(400).json({error:e.message||'Unable to provision restaurant'});}
   finally{client.release();}
 });
-app.patch('/api/platform/businesses/:id',requirePlatformAdmin,async(req,res)=>{
+app.patch('/api/platform/businesses/:id',requirePlatformAdmin,requirePlatformRole('PLATFORM_OWNER'),async(req,res)=>{
   try{
     const current=await pool.query('select * from businesses where id=$1',[req.params.id]);
     if(!current.rowCount)return res.status(404).json({error:'Restaurant not found'});
@@ -2308,25 +2680,14 @@ app.patch('/api/platform/businesses/:id',requirePlatformAdmin,async(req,res)=>{
 });
 
 
-app.post('/api/control/login',async(req,res)=>{
+app.post('/api/control/login',authRateLimit,async(req,res)=>{
   try{
-    const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');
-    if(!email||!password)return res.status(400).json({error:'Email and password are required'});
-    let r=await pool.query('select * from platform_admin_users where lower(email)=lower($1) and active=true',[email]);
-    if(!r.rowCount){
-      const configuredEmail=String(process.env.PLATFORM_ADMIN_EMAIL||'').trim().toLowerCase();
-      const configuredPassword=String(process.env.PLATFORM_ADMIN_PASSWORD||'');
-      if(!configuredEmail||!configuredPassword||email!==configuredEmail||password!==configuredPassword)return res.status(401).json({error:'Invalid control centre login'});
-      const hash=hashManagerPassword(password);
-      await pool.query('insert into platform_admin_users(id,email,name,password_hash,active) values(gen_random_uuid(),$1,$2,$3,true) on conflict(email) do nothing',[email,String(process.env.PLATFORM_ADMIN_NAME||'Platform Owner'),hash]);
-      r=await pool.query('select * from platform_admin_users where lower(email)=lower($1) and active=true',[email]);
-    }
-    const admin=r.rows[0];
-    if(!admin||!verifyManagerPassword(password,admin.password_hash))return res.status(401).json({error:'Invalid control centre login'});
-    const token=crypto.randomBytes(32).toString('hex');
-    await pool.query('insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval \'30 days\')',[admin.id,hashSessionToken(token)]);
-    await pool.query('update platform_admin_users set last_login_at=now() where id=$1',[admin.id]);
-    res.json({token,admin:{id:admin.id,name:admin.name,email:admin.email}});
+    const auth=await authenticatePlatformAdmin(req.body.email,req.body.password);
+    if(auth.error)return res.status(auth.status).json({error:auth.error});
+    const token=await issuePlatformAdminSession(auth.admin.id);
+    await pool.query('update platform_admin_users set last_login_at=now() where id=$1',[auth.admin.id]);
+    await recordPlatformAudit(auth.admin.id,null,'PLATFORM_LOGIN','Platform control centre signed in',{});
+    res.json({token,admin:{id:auth.admin.id,name:auth.admin.name,email:auth.admin.email,role:auth.admin.role}});
   }catch(e){res.status(500).json({error:e.message||'Unable to sign in to control centre'});}
 });
 app.get('/api/control/me',requireControl,(req,res)=>res.json({id:req.controlAdmin.id,name:req.controlAdmin.name,email:req.controlAdmin.email}));
@@ -2366,7 +2727,7 @@ async function saveBusinessConnection(businessId,{websiteUrl,customerConnected,r
   await pool.query(`insert into business_features(business_id,rider_module_enabled) values($1,$2) on conflict(business_id) do update set rider_module_enabled=$2,updated_at=now()`,[businessId,rider]);
   return {websiteUrl:web,customerDashboardUrl:customerUrl,managerDashboardUrl:managerUrl,riderDashboardUrl:riderUrl,customerConnected:customer,riderConnected:rider};
 }
-app.post('/api/control/businesses',requireControl,async(req,res)=>{
+app.post('/api/control/businesses',requireControl,requireControlRole('PLATFORM_OWNER'),async(req,res)=>{
   const client=await pool.connect();
   try{
     const name=String(req.body.name||'').trim(),slug=String(req.body.slug||'').trim().toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-+|-+$/g,'');
@@ -2384,7 +2745,7 @@ app.post('/api/control/businesses',requireControl,async(req,res)=>{
     res.status(201).json({business:{...business,...connection},connection});
   }catch(e){try{await client.query('rollback')}catch{}res.status(400).json({error:e.code==='23505'?'That restaurant slug already exists':e.message||'Unable to create restaurant'});}finally{client.release();}
 });
-app.patch('/api/control/businesses/:id',requireControl,async(req,res)=>{
+app.patch('/api/control/businesses/:id',requireControl,requireControlRole('PLATFORM_OWNER'),async(req,res)=>{
   try{
     const id=String(req.params.id),name=String(req.body.name||'').trim(),slug=String(req.body.slug||'').trim().toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-+|-+$/g,'');
     const packageType=String(req.body.packageType||'DIGITAL_ORDERING').toUpperCase();
@@ -2428,7 +2789,7 @@ function integrationCustomerUrl(businessId){
   return `${FRONTEND_URL.replace(/\/$/,'')}/menu.html?businessId=${encodeURIComponent(businessId)}`;
 }
 
-app.post('/api/platform/businesses/:id/integration',requirePlatformAdmin,async(req,res)=>{
+app.post('/api/platform/businesses/:id/integration',requirePlatformAdmin,requirePlatformRole('PLATFORM_OWNER'),async(req,res)=>{
   try{
     const business=await pool.query('select id,name,slug,domain,website_url,primary_color,status from businesses where id=$1',[req.params.id]);
     if(!business.rowCount)return res.status(404).json({error:'Restaurant not found'});
@@ -2485,7 +2846,7 @@ app.get('/api/platform/businesses/:id/integration',requirePlatformAdmin,async(re
     res.json({configured:true,...r.rows[0]});
   }catch(e){res.status(500).json({error:e.message||'Unable to load integration'});}
 });
-app.delete('/api/platform/businesses/:id/integration',requirePlatformAdmin,async(req,res)=>{
+app.delete('/api/platform/businesses/:id/integration',requirePlatformAdmin,requirePlatformRole('PLATFORM_OWNER'),async(req,res)=>{
   try{
     await ensureIntegrationSchema();
     await pool.query(`update business_integrations set status='REVOKED',revoked_at=now(),updated_at=now() where business_id=$1`,[req.params.id]);
@@ -2527,6 +2888,8 @@ app.get('/api/public/integrations/:token.js',(req,res)=>{
 
 async function startServer(){
   await ensureIntegrationSchema();
+  await ensurePhase1SecuritySchema();
+  await ensurePhase3SecuritySchema();
   await ensureSmsSchema();
   await ensurePlatformObservabilitySchema();
   app.listen(port, () => console.log(`Ordering API listening on ${port}`));

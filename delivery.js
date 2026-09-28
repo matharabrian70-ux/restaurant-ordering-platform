@@ -1,6 +1,7 @@
 const RIDER_TOKEN_KEY='rider_session_token';
 const RIDER_BUSINESS_ID=BUSINESS_ID;
 let rider=null,lastTripId=null,pollTimer=null,riderEvents=null,riderLiveSyncBusy=false,availabilityActionVersion=0,riderDashboardInitialized=false,riderAudioContext=null,riderMap=null,riderMapTripId=null,riderMapWatchId=null,riderMapRouteLayer=null,riderMapRiderMarker=null,riderMapReady=false,lastActiveRenderKey='';
+let riderLocationSending=false,riderLocationLastPoint=null,riderLocationTripId=null,riderLocationLastSentAt=0;
 
 function riderHeaders(){const token=sessionStorage.getItem(RIDER_TOKEN_KEY);return token?{'Authorization':'Bearer '+token}:{};}
 async function riderApi(path,options={}){return apiRequest(path,{...options,headers:{...riderHeaders(),...(options.headers||{})}});}

@@ -275,6 +275,10 @@ async function ensureSmsSchema() {
 
 async function ensureDeliveryTrackingSchema() {
   await pool.query(`
+    alter table rider_presence add column if not exists latitude numeric(10,7);
+    alter table rider_presence add column if not exists longitude numeric(10,7);
+    alter table rider_presence add column if not exists accuracy_meters numeric(10,2);
+    alter table rider_presence add column if not exists location_updated_at timestamptz;
     create table if not exists rider_live_locations (
       rider_id uuid primary key references riders(id) on delete cascade,
       trip_id uuid not null unique references rider_trips(id) on delete cascade,
@@ -687,7 +691,7 @@ app.get('/api/manager/dispatch', requireManager, async (req, res) => {
       pool.query(`
         select o.id,o.order_number,o.status,o.payment_status,o.total,o.delivery_fee,o.delivery_address,
           o.route_distance_meters,o.route_duration_seconds,o.created_at,c.name as customer_name,c.phone as customer_phone,
-          o.branch_id,bb.name as branch_name
+          o.branch_id,bb.name as branch_name,bb.latitude as branch_latitude,bb.longitude as branch_longitude
         from orders o
         join customers c on c.id=o.customer_id
         left join business_branches bb on bb.id=o.branch_id
@@ -1110,7 +1114,7 @@ app.post('/api/orders/:id/confirm-delivery', async (req,res)=>{
 });
 app.get('/api/orders/:id', async (req, res) => { try { const result = await pool.query(`select o.*, c.name as customer_name, c.phone, c.email, r.name as rider_name, r.vehicle_type, r.number_plate, r.phone as rider_phone from orders o join customers c on c.id=o.customer_id left join riders r on r.id=(select rider_id from rider_trips t where t.order_id=o.id order by assigned_at desc limit 1) where o.id=$1`, [req.params.id]); if (!result.rowCount) return res.status(404).json({ error: 'Order not found' }); res.json(result.rows[0]); } catch { res.status(500).json({ error: 'Unable to load order' }); } });
 app.get('/api/orders/:id/refunds', async (req, res) => { try { const result = await pool.query(`select id,amount,currency,status,created_at,updated_at,customer_note,merchant_note from refunds where order_id=$1 order by created_at desc`, [req.params.id]); res.json(result.rows); } catch { res.status(500).json({ error: 'Unable to load refunds' }); } });
-app.get('/api/orders', requireManager, async (req, res) => { try { const { businessId, q = '' } = req.query; if (!businessId) return res.status(400).json({ error: 'businessId is required' }); const result = await pool.query(`select o.id,o.business_id,o.order_number,o.status,o.payment_status,o.payment_method,o.total,o.created_at,o.delivery_note,c.name,c.phone,c.email,coalesce((select r.name from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_name,coalesce((select r.vehicle_type from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_vehicle,coalesce((select r.number_plate from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_plate,
+app.get('/api/orders', requireManager, async (req, res) => { try { const { businessId, q = '' } = req.query; if (!businessId) return res.status(400).json({ error: 'businessId is required' }); const result = await pool.query(`select o.id,o.business_id,o.order_number,o.status,o.payment_status,o.payment_method,o.total,o.created_at,o.delivery_note,o.branch_id,bb.latitude as branch_latitude,bb.longitude as branch_longitude,c.name,c.phone,c.email,coalesce((select r.name from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_name,coalesce((select r.vehicle_type from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_vehicle,coalesce((select r.number_plate from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_plate,
       coalesce((select de.status from delivery_events de join rider_trips rt on rt.id=de.trip_id where rt.order_id=o.id order by de.created_at desc limit 1),'') as rider_delivery_status from orders o join customers c on c.id=o.customer_id where o.business_id=$1 and ($2='' or c.name ilike '%'||$2||'%' or c.phone ilike '%'||$2||'%' or coalesce(c.email,'') ilike '%'||$2||'%' or o.order_number ilike '%'||$2||'%') order by o.created_at desc limit 200`, [businessId, String(q).trim()]); res.json(result.rows); } catch { res.status(500).json({ error: 'Unable to load orders' }); } });
 app.get('/api/riders/:id/profile', requireManager, async(req,res)=>{
   try{
@@ -1437,9 +1441,19 @@ app.put('/api/riders/:id/profile', requireRiderModule, requireRiderAuth, async(r
 
 app.post('/api/riders/:id/presence', requireRiderModule, requireRiderAuth, async(req,res)=>{
   const online=Boolean(req.body.online);
-  await pool.query(`insert into rider_presence(rider_id,online) values($1,$2) on conflict(rider_id) do update set online=$2,updated_at=now()`,[req.rider.id,online]);
-  broadcastRider({businessId:req.rider.business_id,riderId:req.rider.id,action:online?'ONLINE':'OFFLINE',data:{online}});
-  res.json({online});
+  const lat=Number(req.body.latitude),lng=Number(req.body.longitude),accuracy=Number(req.body.accuracy);
+  const hasLocation=Number.isFinite(lat)&&lat>=-90&&lat<=90&&Number.isFinite(lng)&&lng>=-180&&lng<=180;
+  if(hasLocation && Number.isFinite(accuracy) && (accuracy<0||accuracy>5000)) return res.status(400).json({error:'Invalid GPS accuracy'});
+  await pool.query(`
+    insert into rider_presence(rider_id,online,latitude,longitude,accuracy_meters,location_updated_at)
+    values($1,$2,$3,$4,$5,case when $2 and $3 is not null and $4 is not null then now() else null end)
+    on conflict(rider_id) do update set online=$2,latitude=coalesce($3,rider_presence.latitude),longitude=coalesce($4,rider_presence.longitude),
+      accuracy_meters=coalesce($5,rider_presence.accuracy_meters),
+      location_updated_at=case when $2 and $3 is not null and $4 is not null then now() else rider_presence.location_updated_at end,
+      updated_at=now()
+  `,[req.rider.id,online,hasLocation?lat:null,hasLocation?lng:null,Number.isFinite(accuracy)?accuracy:null]);
+  broadcastRider({businessId:req.rider.business_id,riderId:req.rider.id,action:online?'ONLINE':'OFFLINE',data:{online,locationUpdated:hasLocation}});
+  res.json({online,locationUpdated:hasLocation});
 });
 app.get('/api/riders/:id/dashboard', requireRiderModule, requireRiderAuth, async(req,res)=>{
   const id=req.rider.id;

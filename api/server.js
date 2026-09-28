@@ -414,40 +414,49 @@ async function ensurePhase3SecuritySchema() {
     update manager_users set role=upper(coalesce(role,'MANAGER'));
     update platform_admin_users set role=upper(coalesce(role,'PLATFORM_OWNER'));
 
-    do $
-    begin
-      if not exists (select 1 from pg_constraint where conname='manager_users_role_check') then
-        alter table manager_users add constraint manager_users_role_check
-          check (role in ('OWNER','MANAGER'));
-      end if;
-      if not exists (select 1 from pg_constraint where conname='platform_admin_users_role_check') then
-        alter table platform_admin_users add constraint platform_admin_users_role_check
-          check (role in ('PLATFORM_OWNER','SUPPORT'));
-      end if;
-    end $;
-
     create unique index if not exists customers_business_id_id_uidx on customers(business_id,id);
     create unique index if not exists products_business_id_id_uidx on products(business_id,id);
     create unique index if not exists orders_business_id_id_uidx on orders(business_id,id);
-
-    do $
-    begin
-      if not exists (select 1 from pg_constraint where conname='orders_customer_tenant_fk') then
-        alter table orders add constraint orders_customer_tenant_fk
-          foreign key (business_id,customer_id)
-          references customers(business_id,id)
-          not valid;
-      end if;
-    end $;
-
-    alter table products add constraint products_price_nonnegative check (price >= 0) not valid;
-    alter table orders add constraint orders_amounts_nonnegative check (
-      subtotal >= 0 and total >= 0 and delivery_fee >= 0 and coalesce(food_subtotal,0) >= 0
-    ) not valid;
-    alter table order_items add constraint order_items_amount_nonnegative check (unit_price >= 0) not valid;
   `);
-}
 
+  const constraints = await pool.query(
+    `select conname from pg_constraint where conname = any($1::text[])`,
+    [[
+      'manager_users_role_check',
+      'platform_admin_users_role_check',
+      'orders_customer_tenant_fk',
+      'products_price_nonnegative',
+      'orders_amounts_nonnegative',
+      'order_items_amount_nonnegative'
+    ]]
+  );
+  const existing = new Set(constraints.rows.map(row => row.conname));
+
+  if (!existing.has('manager_users_role_check')) {
+    await pool.query(`alter table manager_users add constraint manager_users_role_check
+      check (role in ('OWNER','MANAGER')) not valid`);
+  }
+  if (!existing.has('platform_admin_users_role_check')) {
+    await pool.query(`alter table platform_admin_users add constraint platform_admin_users_role_check
+      check (role in ('PLATFORM_OWNER','SUPPORT')) not valid`);
+  }
+  if (!existing.has('orders_customer_tenant_fk')) {
+    await pool.query(`alter table orders add constraint orders_customer_tenant_fk
+      foreign key (business_id,customer_id) references customers(business_id,id) not valid`);
+  }
+  if (!existing.has('products_price_nonnegative')) {
+    await pool.query(`alter table products add constraint products_price_nonnegative
+      check (price >= 0) not valid`);
+  }
+  if (!existing.has('orders_amounts_nonnegative')) {
+    await pool.query(`alter table orders add constraint orders_amounts_nonnegative
+      check (subtotal >= 0 and total >= 0 and delivery_fee >= 0 and coalesce(food_subtotal,0) >= 0) not valid`);
+  }
+  if (!existing.has('order_items_amount_nonnegative')) {
+    await pool.query(`alter table order_items add constraint order_items_amount_nonnegative
+      check (unit_price >= 0) not valid`);
+  }
+}
 
 async function ensureSmsSchema() {
   await pool.query(`

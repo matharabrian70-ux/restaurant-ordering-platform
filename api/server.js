@@ -972,7 +972,13 @@ app.get('/api/orders/:id/live-location',async(req,res)=>{
 app.get('/api/events', async (req, res) => {
   const businessId = String(req.query.businessId || '');
   const orderId = req.query.orderId ? String(req.query.orderId) : null;
+  const orderToken = String(req.query.orderToken || '').trim();
   if (!businessId) return res.status(400).json({ error: 'businessId is required' });
+  if (orderId) {
+    if (!orderToken) return res.status(401).json({error:'Order access authorization required'});
+    const access=await pool.query('select id from orders where id=$1 and business_id=$2 and customer_access_token_hash=$3 limit 1',[orderId,businessId,hashSessionToken(orderToken)]);
+    if(!access.rowCount)return res.status(401).json({error:'Order access authorization required'});
+  }
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -986,6 +992,9 @@ app.get('/api/events', async (req, res) => {
 });
 
 async function initiateRefundForOrder(orderId, customerNote = 'Customer cancelled before restaurant acceptance', merchantNote = 'Automatic cancellation refund') {
+  const idempotencyKey='AUTO-CANCEL-'+String(orderId);
+  const existing=await pool.query('select * from refunds where idempotency_key=$1 limit 1',[idempotencyKey]);
+  if(existing.rowCount)return existing.rows[0];
   const orderResult = await pool.query(`select o.id,o.business_id,o.total,o.payment_status,p.id as payment_id,p.provider_reference,p.amount as paid_amount from orders o join payments p on p.order_id=o.id and p.provider='PAYSTACK' where o.id=$1`, [orderId]);
   if (!orderResult.rowCount) throw new Error('Paid Paystack order not found');
   const order = orderResult.rows[0];
@@ -996,7 +1005,7 @@ async function initiateRefundForOrder(orderId, customerNote = 'Customer cancelle
   if (remaining <= 0.0001) return null;
   const refund = await paystackRequest('/refund', { method: 'POST', body: JSON.stringify({ transaction: order.provider_reference, amount: String(Math.round(remaining * 100)), currency: 'KES', customer_note: customerNote, merchant_note: merchantNote }) });
   const data = refund.data || {};
-  const insert = await pool.query(`insert into refunds (id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,customer_note,merchant_note) values (gen_random_uuid(),$1,$2,'PAYSTACK',$3,$4,$5,'KES',$6,$7,$8) returning *`, [order.id, order.payment_id, data.id ? String(data.id) : null, order.provider_reference, remaining, String(data.status || 'pending').toUpperCase(), customerNote, merchantNote]);
+  const insert = await pool.query(`insert into refunds (id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,customer_note,merchant_note,idempotency_key) values (gen_random_uuid(),$1,$2,'PAYSTACK',$3,$4,$5,'KES',$6,$7,$8,$9) returning *`, [order.id, order.payment_id, data.id ? String(data.id) : null, order.provider_reference, remaining, String(data.status || 'pending').toUpperCase(), customerNote, merchantNote, idempotencyKey]);
   broadcastRealtime({ businessId: order.business_id, orderId: order.id, event: 'refund.updated', data: { orderId: order.id, refund: insert.rows[0] } });
   return insert.rows[0];
 }
@@ -2658,6 +2667,7 @@ app.get('/api/public/integrations/:token.js',(req,res)=>{
 
 async function startServer(){
   await ensureIntegrationSchema();
+  await ensurePhase1SecuritySchema();
   await ensureSmsSchema();
   await ensurePlatformObservabilitySchema();
   app.listen(port, () => console.log(`Ordering API listening on ${port}`));

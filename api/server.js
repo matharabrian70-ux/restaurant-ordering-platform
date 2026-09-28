@@ -784,7 +784,7 @@ async function calculateDeliveryQuote({businessId,pickupAddress,deliveryAddress}
 }
 
 
-app.post('/api/manager/login', async (req,res)=>{
+app.post('/api/manager/login', authRateLimit, async (req,res)=>{
   try{
     const businessId=String(req.body.businessId||process.env.MANAGER_BUSINESS_ID||'11111111-1111-4111-8111-111111111111');
     const email=String(req.body.email||'').trim().toLowerCase();
@@ -816,7 +816,7 @@ app.post('/api/manager/login', async (req,res)=>{
   }catch(error){res.status(500).json({error:error.message||'Unable to sign in manager'});}
 });
 app.get('/api/manager/google/config',(req,res)=>res.json({clientId:String(process.env.GOOGLE_CLIENT_ID||'')}));
-app.post('/api/manager/google', async (req,res)=>{
+app.post('/api/manager/google', googleRateLimit, async (req,res)=>{
   try{
     const businessId=String(req.body.businessId||process.env.MANAGER_BUSINESS_ID||'11111111-1111-4111-8111-111111111111');
     const credential=String(req.body.credential||'').trim();
@@ -1348,7 +1348,7 @@ app.post('/api/delivery/quote', quoteRateLimit, async (req,res)=>{
   }catch(error){res.status(400).json({error:error.message||'Unable to calculate delivery fee'});}
 });
 
-app.post('/api/orders', async (req, res) => {
+app.post('/api/orders', rateLimit({windowMs:10*60_000,max:20,keyFn:req=>`orders:${clientIp(req)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts. Please wait before placing another order.'}), async (req, res) => {
   const client=await pool.connect();
   try{
     const {businessId,customer,items,paymentMethod,deliveryNote,quoteId}=req.body;
@@ -2235,7 +2235,7 @@ app.post('/api/platform/google',googleRateLimit,async(req,res)=>{
     const admin=result.rows[0];
     if(!admin)return res.status(403).json({error:'Platform owner account is not configured'});
     const token=crypto.randomBytes(32).toString('hex');
-    await pool.query("insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval '30 days')",[admin.id,hashSessionToken(token)]);
+    await pool.query("insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))",[admin.id,hashSessionToken(token),SESSION_TTLS.controlHours]);
     await pool.query('update platform_admin_users set last_login_at=now() where id=$1',[admin.id]);
     res.json({token,admin:{id:admin.id,name:admin.name,email:admin.email}});
   }catch(e){res.status(500).json({error:e.message||'Unable to sign in with Google'});}

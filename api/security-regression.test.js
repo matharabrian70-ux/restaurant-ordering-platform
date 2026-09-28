@@ -73,3 +73,26 @@ test('Phase 3: database invariants are represented in schema and runtime migrati
   }
   has(server, 'ensurePhase3SecuritySchema');
 });
+
+test('Phase 5: rider priority is GPS-based at the branch', () => {
+  const manager = fs.readFileSync(path.join(root, 'manager.js'), 'utf8');
+  const api = server;
+  const delivery = fs.readFileSync(path.join(root, 'delivery.js'), 'utf8');
+  for (const value of ['r.latitude','r.longitude','branch_latitude','branch_longitude','riderDistanceMeters','sortRiders']) has(manager, value);
+  assert.match(manager, /dLat=\(blat-lat\)/);
+  assert.match(manager, /dLng=\(blng-lng\)/);
+  assert.match(manager, /Boolean\(x\.available\)!==Boolean\(y\.available\)/);
+  assert.match(manager, /dx!==dy/);
+  for (const value of ['latitude','longitude','accuracy_meters','location_updated_at']) has(api, value);
+  assert.match(delivery, /navigator\.geolocation\.watchPosition/);
+  assert.match(delivery, /riderPresenceLastSentAt<5000/);
+});
+
+test('Phase 5: rider GPS is authenticated and tenant-bound', () => {
+  const block = section("app.post('/api/riders/:id/presence'");
+  has(block, 'requireRiderModule');
+  has(block, 'requireRiderAuth');
+  has(block, 'req.rider.id');
+  has(block, 'latitude');
+  has(block, 'longitude');
+});

@@ -43,7 +43,7 @@ test('Phase 2: CORS is allowlisted and security headers are present', () => {
 });
 
 test('Phase 2: rate limiting covers expensive and authentication paths', () => {
-  for (const value of ['authRateLimit','googleRateLimit','quoteRateLimit','smsTestRateLimit','stationPairRateLimit','rateLimit({windowMs:10 * 60_000,max:20','smsSpendBuckets','SMS_MAX_PER_RECIPIENT_PER_10_MIN','SMS_MAX_PER_BUSINESS_PER_10_MIN']) has(server, value);
+  for (const value of ['authRateLimit','googleRateLimit','quoteRateLimit','smsTestRateLimit','stationPairRateLimit','orders:${clientIp','smsSpendBuckets','SMS_MAX_PER_RECIPIENT_PER_10_MIN','SMS_MAX_PER_BUSINESS_PER_10_MIN']) has(server, value);
 });
 
 test('Phase 2: session TTLs are bounded and configurable', () => {

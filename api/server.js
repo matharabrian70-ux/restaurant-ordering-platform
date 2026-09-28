@@ -1294,8 +1294,44 @@ app.get('/api/payments/paystack/callback', async (req, res) => { const reference
 app.post('/api/payments/paystack/verify', requireCustomerOrder, async (req, res) => { try { const reference = String(req.body.reference || ''); if (!reference) return res.status(400).json({ error: 'reference is required' }); const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' }); if (verified.data?.status === 'success') { const orderId = await markPaymentSuccessful(reference, verified.data); const receipt = orderId ? await pool.query('select receipt_access_token from receipts where order_id=$1',[orderId]) : null; return res.json({ status: 'success', orderId, receiptToken: receipt?.rows[0]?.receipt_access_token || null }); } res.json({ status: verified.data?.status || 'pending' }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to verify payment' }); } });
 app.get('/api/payments/paystack/webhook', (_req, res) => { res.status(405).json({ error: 'Webhook endpoint accepts POST requests from Paystack.' }); });
 app.post('/api/payments/paystack/webhook', async (req, res) => { const signature = req.headers['x-paystack-signature']; const secret = process.env.PAYSTACK_SECRET_KEY; if (!signature || !secret || !req.rawBody) return res.sendStatus(401); const expected = crypto.createHmac('sha512', secret).update(req.rawBody).digest('hex'); const providedBuffer = Buffer.from(String(signature), 'utf8'); const expectedBuffer = Buffer.from(expected, 'utf8'); if (providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) return res.sendStatus(401); try { const event = req.body; if (event.event === 'charge.success' && event.data?.reference && event.data?.status === 'success') await markPaymentSuccessful(event.data.reference, event.data); if (event.event?.startsWith('refund.') && event.data) await updateRefundFromWebhook(event.data); return res.sendStatus(200); } catch (error) { console.error('Paystack webhook processing failed:', error.message); return res.sendStatus(500); } });
-app.post('/api/admin/refunds', async (req, res) => { if (!requireRefundAdmin(req, res)) return; try { const { orderId, amount, customerNote, merchantNote } = req.body; const idempotencyKey=String(req.headers['idempotency-key']||req.body.idempotencyKey||'').trim(); if(!idempotencyKey||idempotencyKey.length>200) return res.status(400).json({error:'Idempotency-Key is required for refunds'}); const existing=await pool.query('select * from refunds where idempotency_key=$1 limit 1',[idempotencyKey]); if(existing.rowCount) return res.json({refund:existing.rows[0],idempotent:true}); const requestedAmount = Number(amount); if (!orderId || !Number.isFinite(requestedAmount) || requestedAmount <= 0) return res.status(400).json({ error: 'orderId and a positive refund amount are required' }); const orderResult = await pool.query(`select o.id,o.business_id,o.total,o.payment_status,p.id as payment_id,p.provider_reference,p.amount as paid_amount from orders o join payments p on p.order_id=o.id and p.provider='PAYSTACK' where o.id=$1`, [orderId]); if (!orderResult.rowCount) return res.status(404).json({ error: 'Paid Paystack order not found' }); const order = orderResult.rows[0]; if (order.payment_status !== 'PAID') return res.status(409).json({ error: 'Only paid orders can be refunded' }); if (order.delivery_fee_released_at && Number(requestedAmount) > Number(order.food_subtotal || order.subtotal)) return res.status(400).json({ error: 'Delivery fee is not refundable after completed delivery; refund can only cover the food portion.' }); if (!order.provider_reference) return res.status(409).json({ error: 'Paystack transaction reference is missing' }); const refundedResult = await pool.query(`select coalesce(sum(amount),0) as total from refunds where payment_id=$1 and status in ('PENDING','PROCESSING','PROCESSED')`, [order.payment_id]); const alreadyRefunded = Number(refundedResult.rows[0].total); const remaining = Number(order.paid_amount) - alreadyRefunded; if (requestedAmount > remaining + 0.0001) return res.status(400).json({ error: `Refund exceeds the remaining refundable amount (${remaining.toFixed(2)} KES)` }); const refund = await paystackRequest('/refund', { method: 'POST', body: JSON.stringify({ transaction: order.provider_reference, amount: String(Math.round(requestedAmount * 100)), currency: 'KES', customer_note: customerNote || undefined, merchant_note: merchantNote || undefined }) }); const data = refund.data || {}; const insert = await pool.query(`insert into refunds (id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,customer_note,merchant_note) values (gen_random_uuid(),$1,$2,'PAYSTACK',$3,$4,$5,'KES',$6,$7,$8) returning *`, [order.id, order.payment_id, data.id ? String(data.id) : null, order.provider_reference, requestedAmount, String(data.status || 'pending').toUpperCase(), customerNote || null, merchantNote || null, idempotencyKey]); broadcastRealtime({ businessId: order.business_id, orderId: order.id, event: 'refund.updated', data: { orderId: order.id, refund: insert.rows[0] } }); res.status(201).json(insert.rows[0]); } catch (error) { res.status(500).json({ error: error.message || 'Unable to initiate refund' }); } });
-
+app.post('/api/admin/refunds', async (req, res) => {
+  if (!requireRefundAdmin(req, res)) return;
+  const client=await pool.connect();
+  try{
+    const {orderId,amount,customerNote,merchantNote}=req.body;
+    const requestedAmount=Number(amount);
+    const idempotencyKey=String(req.headers['idempotency-key']||req.body.idempotencyKey||'').trim();
+    if(!idempotencyKey||idempotencyKey.length>200)return res.status(400).json({error:'Idempotency-Key is required for refunds'});
+    if(!orderId||!Number.isFinite(requestedAmount)||requestedAmount<=0)return res.status(400).json({error:'orderId and a positive refund amount are required'});
+    await client.query('begin');
+    await client.query('select pg_advisory_xact_lock(hashtext($1))',[idempotencyKey]);
+    const existing=await client.query('select * from refunds where idempotency_key=$1 limit 1',[idempotencyKey]);
+    if(existing.rowCount){await client.query('commit');return res.json({refund:existing.rows[0],idempotent:true});}
+    const orderResult=await client.query(`select o.id,o.business_id,o.total,o.food_subtotal,o.subtotal,o.payment_status,o.delivery_fee_released_at,p.id as payment_id,p.provider_reference,p.amount as paid_amount
+      from orders o join payments p on p.order_id=o.id and p.provider='PAYSTACK'
+      where o.id=$1 for update`,[orderId]);
+    if(!orderResult.rowCount){await client.query('rollback');return res.status(404).json({error:'Paid Paystack order not found'});}
+    const order=orderResult.rows[0];
+    if(order.payment_status!=='PAID'){await client.query('rollback');return res.status(409).json({error:'Only paid orders can be refunded'});}
+    if(order.delivery_fee_released_at&&requestedAmount>Number(order.food_subtotal||order.subtotal)){await client.query('rollback');return res.status(400).json({error:'Delivery fee is not refundable after completed delivery; refund can only cover the food portion.'});}
+    if(!order.provider_reference){await client.query('rollback');return res.status(409).json({error:'Paystack transaction reference is missing'});}
+    const refundedResult=await client.query(`select coalesce(sum(amount),0) as total from refunds where payment_id=$1 and status in ('PENDING','PROCESSING','PROCESSED')`,[order.payment_id]);
+    const remaining=Number(order.paid_amount)-Number(refundedResult.rows[0].total);
+    if(requestedAmount>remaining+0.0001){await client.query('rollback');return res.status(400).json({error:`Refund exceeds the remaining refundable amount (${remaining.toFixed(2)} KES)`});}
+    const refund=await paystackRequest('/refund',{method:'POST',body:JSON.stringify({transaction:order.provider_reference,amount:String(Math.round(requestedAmount*100)),currency:'KES',customer_note:customerNote||undefined,merchant_note:merchantNote||undefined})});
+    const data=refund.data||{};
+    const insert=await client.query(`insert into refunds (id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,customer_note,merchant_note,idempotency_key)
+      values(gen_random_uuid(),$1,$2,'PAYSTACK',$3,$4,$5,'KES',$6,$7,$8,$9) returning *`,
+      [order.id,order.payment_id,data.id?String(data.id):null,order.provider_reference,requestedAmount,String(data.status||'pending').toUpperCase(),customerNote||null,merchantNote||null,idempotencyKey]);
+    await client.query('commit');
+    broadcastRealtime({businessId:order.business_id,orderId:order.id,event:'refund.updated',data:{orderId:order.id,refund:insert.rows[0]}});
+    res.json({refund:insert.rows[0],idempotent:false});
+  }catch(error){
+    try{await client.query('rollback')}catch{}
+    if(error.code==='23505')return res.status(409).json({error:'A refund with this Idempotency-Key already exists'});
+    res.status(500).json({error:error.message||'Unable to process refund'});
+  }finally{client.release();}
+});
 
 app.get('/api/riders/events', requireRiderModule, async(req,res)=>{
   try{

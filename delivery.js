@@ -1,7 +1,7 @@
 const RIDER_TOKEN_KEY='rider_session_token';
 const RIDER_BUSINESS_ID=BUSINESS_ID;
 let rider=null,lastTripId=null,pollTimer=null,riderEvents=null,riderLiveSyncBusy=false,availabilityActionVersion=0,riderDashboardInitialized=false,riderAudioContext=null,riderMap=null,riderMapTripId=null,riderMapWatchId=null,riderMapRouteLayer=null,riderMapRiderMarker=null,riderMapReady=false,lastActiveRenderKey='';
-let riderLocationSending=false,riderLocationLastPoint=null,riderLocationTripId=null,riderLocationLastSentAt=0;
+let riderLocationSending=false,riderLocationLastPoint=null,riderLocationTripId=null,riderLocationLastSentAt=0,riderPresenceWatchId=null,riderPresenceLastSentAt=0;
 
 function riderHeaders(){const token=sessionStorage.getItem(RIDER_TOKEN_KEY);return token?{'Authorization':'Bearer '+token}:{};}
 async function riderApi(path,options={}){return apiRequest(path,{...options,headers:{...riderHeaders(),...(options.headers||{})}});}
@@ -57,6 +57,35 @@ async function publishRiderLocation(pos,tripId){
     riderLocationTripId=tripId;
   }catch{}
   finally{riderLocationSending=false;}
+}
+async function publishRiderPresenceLocation(pos){
+  if(!rider||riderLocationSending)return;
+  const now=Date.now();
+  if(now-riderPresenceLastSentAt<5000)return;
+  const lat=Number(pos.coords.latitude),lng=Number(pos.coords.longitude);
+  if(!Number.isFinite(lat)||!Number.isFinite(lng))return;
+  riderLocationSending=true;
+  try{
+    await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/presence',{
+      method:'POST',
+      body:JSON.stringify({
+        online:true,latitude:lat,longitude:lng,
+        accuracy:Number.isFinite(Number(pos.coords.accuracy))?Number(pos.coords.accuracy):null
+      })
+    });
+    riderPresenceLastSentAt=now;
+  }catch{}
+  finally{riderLocationSending=false;}
+}
+function startRiderPresenceTracking(){
+  if(!navigator.geolocation||riderPresenceWatchId!==null)return;
+  riderPresenceWatchId=navigator.geolocation.watchPosition(pos=>{
+    publishRiderPresenceLocation(pos);
+  },()=>{}, {enableHighAccuracy:true,maximumAge:5000,timeout:10000});
+}
+function stopRiderPresenceTracking(){
+  if(riderPresenceWatchId!==null&&navigator.geolocation)navigator.geolocation.clearWatch(riderPresenceWatchId);
+  riderPresenceWatchId=null;riderPresenceLastSentAt=0;
 }
 function stopRiderMapTracking(){
   if(riderMapWatchId!==null&&navigator.geolocation){navigator.geolocation.clearWatch(riderMapWatchId);}
@@ -388,7 +417,7 @@ function toggleRiderPassword(){
   button.textContent=input.type==='password'?'SHOW':'HIDE';
 }
 
-async function logoutRider(){try{await riderApi('/api/riders/logout',{method:'POST'});}catch{}clearRiderSession();location.reload();}
+async function logoutRider(){stopRiderPresenceTracking();try{await riderApi('/api/riders/logout',{method:'POST'});}catch{}clearRiderSession();location.reload();}
 function toggleOnline(){
   const button=document.getElementById('online-button');
   const online=Boolean(button && button.classList.contains('is-online'));
@@ -412,6 +441,7 @@ async function setOnline(online){
   updateOnlineButton(online);
   try{
     if(online) requestNotifications().catch(()=>{});
+    if(online) startRiderPresenceTracking(); else stopRiderPresenceTracking();
     const data=await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/presence',{method:'POST',body:JSON.stringify({online})});
     if(actionVersion!==availabilityActionVersion)return;
     updateOnlineButton(Boolean(data.online));

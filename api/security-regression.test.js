@@ -9,7 +9,7 @@ const server = fs.readFileSync(path.join(root, 'api', 'server.js'), 'utf8');
 const schema = fs.readFileSync(path.join(root, 'schema.sql'), 'utf8');
 
 function routeMatches(methods, route) {
-  const re = new RegExp('app\\\\.(?:' + methods + ')\\\\(\\\\s*[\\\\'"]' + route + '[\\\\s\\\\S]*?\\\\n\\\\s*\\\\}\\\\);', 'g');
+  const re = new RegExp("app\\.(?:" + methods + ")\\(\\s*['\"]" + route + "[\\s\\S]*?\\n\\s*\\}\\);", 'g');
   return [...server.matchAll(re)].map(m => m[0]);
 }
 

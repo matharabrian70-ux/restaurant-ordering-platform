@@ -265,6 +265,22 @@ async function requireCustomerOrder(req,res,next) {
     res.status(500).json({error:'Unable to verify order access'});
   }
 }
+async function requireCustomerOrderBody(req,res,next) {
+  try {
+    const id=String(req.body?.orderId||'').trim();
+    const token=String(req.headers.authorization||'').startsWith('Bearer ')
+      ? String(req.headers.authorization).slice(7).trim()
+      : String(req.body?.orderToken||'').trim();
+    if(!id||!token) return res.status(401).json({error:'Order access authorization required'});
+    const result=await pool.query(
+      'select o.*,c.phone as customer_phone,c.email as customer_email from orders o join customers c on c.id=o.customer_id where o.id=$1 and o.customer_access_token_hash=$2 limit 1',
+      [id,hashSessionToken(token)]
+    );
+    if(!result.rowCount)return res.status(401).json({error:'Order access authorization required'});
+    req.customerOrder=result.rows[0];
+    next();
+  }catch{res.status(500).json({error:'Unable to verify order access'});}
+}
 async function ensurePhase1SecuritySchema() {
   await pool.query(`
     alter table orders add column if not exists customer_access_token_hash text;

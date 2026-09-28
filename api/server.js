@@ -954,7 +954,7 @@ app.post('/api/riders/:id/deliveries/:tripId/location',requireRiderModule,requir
   }catch(e){res.status(400).json({error:e.message||'Unable to update rider location'});}
 });
 
-app.get('/api/orders/:id/live-location',async(req,res)=>{
+app.get('/api/orders/:id/live-location',requireCustomerOrder,async(req,res)=>{
   try{
     await ensureDeliveryTrackingSchema();
     const r=await pool.query(`select l.latitude,l.longitude,l.accuracy_meters,l.heading,l.speed_mps,l.updated_at,

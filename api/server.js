@@ -2203,6 +2203,34 @@ async function issuePlatformAdminSession(adminId) {
   );
   return token;
 }
+async function authenticatePlatformAdmin(email,password) {
+  const normalizedEmail=String(email||'').trim().toLowerCase();
+  const suppliedPassword=String(password||'');
+  const configuredEmail=String(process.env.PLATFORM_ADMIN_EMAIL||'').trim().toLowerCase();
+  const configuredPassword=String(process.env.PLATFORM_ADMIN_PASSWORD||'');
+  if(!normalizedEmail||!suppliedPassword) return {error:'Email and password are required',status:400};
+  if(!configuredEmail||!configuredPassword) return {error:'Platform owner credentials are not configured on the API',status:503};
+
+  let result=await pool.query('select * from platform_admin_users where lower(email)=lower($1) and active=true',[normalizedEmail]);
+  if(!result.rowCount){
+    if(normalizedEmail!==configuredEmail||suppliedPassword!==configuredPassword) return {error:'Invalid platform owner login',status:401};
+    const hash=hashManagerPassword(suppliedPassword);
+    await pool.query(
+      "insert into platform_admin_users(id,name,email,password_hash,role,active) values(gen_random_uuid(),$1,$2,$3,'PLATFORM_OWNER',true) on conflict(email) do nothing",
+      [String(process.env.PLATFORM_ADMIN_NAME||'Platform Owner'),normalizedEmail,hash]
+    );
+    result=await pool.query('select * from platform_admin_users where lower(email)=lower($1) and active=true',[normalizedEmail]);
+  }
+  const admin=result.rows[0];
+  if(!admin) return {error:'Invalid platform owner login',status:401};
+  const envCredentialsMatch=Boolean(configuredEmail&&configuredPassword&&normalizedEmail===configuredEmail&&suppliedPassword===configuredPassword);
+  if(!verifyManagerPassword(suppliedPassword,admin.password_hash)){
+    if(!envCredentialsMatch) return {error:'Invalid platform owner login',status:401};
+    await pool.query('update platform_admin_users set password_hash=$1 where id=$2',[hashManagerPassword(suppliedPassword),admin.id]);
+  }
+  return {admin};
+}
+
 async function requirePlatformAdmin(req,res,next){
   try{
     const admin=await getPlatformAdmin(req);
@@ -2257,31 +2285,12 @@ function platformSlug(value){
 }
 app.post('/api/platform/login', authRateLimit,async(req,res)=>{
   try{
-    const email=String(req.body.email||'').trim().toLowerCase();
-    const password=String(req.body.password||'');
-    const configuredEmail=String(process.env.PLATFORM_ADMIN_EMAIL||'').trim().toLowerCase();
-    const configuredPassword=String(process.env.PLATFORM_ADMIN_PASSWORD||'');
-    if(!email||!password)return res.status(400).json({error:'Email and password are required'});
-    if(!configuredEmail||!configuredPassword)return res.status(503).json({error:'Platform owner credentials are not configured on the API'});
-    let r=await pool.query('select * from platform_admin_users where lower(email)=lower($1) and active=true',[email]);
-    if(!r.rowCount){
-      if(email!==configuredEmail||password!==configuredPassword)return res.status(401).json({error:'Invalid platform owner login'});
-      const hash=hashManagerPassword(password);
-      await pool.query('insert into platform_admin_users(id,name,email,password_hash,active) values(gen_random_uuid(),$1,$2,$3,true) on conflict(email) do nothing',[String(process.env.PLATFORM_ADMIN_NAME||'Platform Owner'),email,hash]);
-      r=await pool.query('select * from platform_admin_users where lower(email)=lower($1) and active=true',[email]);
-    }
-    const admin=r.rows[0];
-    const envCredentialsMatch=Boolean(configuredEmail&&configuredPassword&&email===configuredEmail&&password===configuredPassword);
-    if(!admin)return res.status(401).json({error:'Invalid platform owner login'});
-    if(!verifyManagerPassword(password,admin.password_hash)){
-      if(!envCredentialsMatch)return res.status(401).json({error:'Invalid platform owner login'});
-      await pool.query('update platform_admin_users set password_hash=$1 where id=$2',[hashManagerPassword(password),admin.id]);
-    }
-    const token=crypto.randomBytes(32).toString('hex');
-    await pool.query("insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))",[admin.id,hashSessionToken(token),SESSION_TTLS.controlHours]);
-    await pool.query('update platform_admin_users set last_login_at=now() where id=$1',[admin.id]);
-    await recordPlatformAudit(admin.id,null,'PLATFORM_LOGIN','Platform owner signed in',{});
-    res.json({token,admin:{id:admin.id,name:admin.name,email:admin.email}});
+    const auth=await authenticatePlatformAdmin(req.body.email,req.body.password);
+    if(auth.error)return res.status(auth.status).json({error:auth.error});
+    const token=await issuePlatformAdminSession(auth.admin.id);
+    await pool.query('update platform_admin_users set last_login_at=now() where id=$1',[auth.admin.id]);
+    await recordPlatformAudit(auth.admin.id,null,'PLATFORM_LOGIN','Platform owner signed in',{});
+    res.json({token,admin:{id:auth.admin.id,name:auth.admin.name,email:auth.admin.email,role:auth.admin.role}});
   }catch(e){res.status(500).json({error:e.message||'Unable to sign in platform owner'});}
 });
 app.get('/api/platform/google/config',(req,res)=>res.json({clientId:String(process.env.GOOGLE_CLIENT_ID||'')}));
@@ -2308,8 +2317,7 @@ app.post('/api/platform/google',googleRateLimit,async(req,res)=>{
     }
     const admin=result.rows[0];
     if(!admin)return res.status(403).json({error:'Platform owner account is not configured'});
-    const token=crypto.randomBytes(32).toString('hex');
-    await pool.query("insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))",[admin.id,hashSessionToken(token),SESSION_TTLS.controlHours]);
+    const token=await issuePlatformAdminSession(admin.id);
     await pool.query('update platform_admin_users set last_login_at=now() where id=$1',[admin.id]);
     res.json({token,admin:{id:admin.id,name:admin.name,email:admin.email}});
   }catch(e){res.status(500).json({error:e.message||'Unable to sign in with Google'});}
@@ -2656,23 +2664,12 @@ app.patch('/api/platform/businesses/:id',requirePlatformAdmin,async(req,res)=>{
 
 app.post('/api/control/login',authRateLimit,async(req,res)=>{
   try{
-    const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');
-    if(!email||!password)return res.status(400).json({error:'Email and password are required'});
-    let r=await pool.query('select * from platform_admin_users where lower(email)=lower($1) and active=true',[email]);
-    if(!r.rowCount){
-      const configuredEmail=String(process.env.PLATFORM_ADMIN_EMAIL||'').trim().toLowerCase();
-      const configuredPassword=String(process.env.PLATFORM_ADMIN_PASSWORD||'');
-      if(!configuredEmail||!configuredPassword||email!==configuredEmail||password!==configuredPassword)return res.status(401).json({error:'Invalid control centre login'});
-      const hash=hashManagerPassword(password);
-      await pool.query('insert into platform_admin_users(id,email,name,password_hash,active) values(gen_random_uuid(),$1,$2,$3,true) on conflict(email) do nothing',[email,String(process.env.PLATFORM_ADMIN_NAME||'Platform Owner'),hash]);
-      r=await pool.query('select * from platform_admin_users where lower(email)=lower($1) and active=true',[email]);
-    }
-    const admin=r.rows[0];
-    if(!admin||!verifyManagerPassword(password,admin.password_hash))return res.status(401).json({error:'Invalid control centre login'});
-    const token=crypto.randomBytes(32).toString('hex');
-    await pool.query('insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))',[admin.id,hashSessionToken(token),SESSION_TTLS.controlHours]);
-    await pool.query('update platform_admin_users set last_login_at=now() where id=$1',[admin.id]);
-    res.json({token,admin:{id:admin.id,name:admin.name,email:admin.email}});
+    const auth=await authenticatePlatformAdmin(req.body.email,req.body.password);
+    if(auth.error)return res.status(auth.status).json({error:auth.error});
+    const token=await issuePlatformAdminSession(auth.admin.id);
+    await pool.query('update platform_admin_users set last_login_at=now() where id=$1',[auth.admin.id]);
+    await recordPlatformAudit(auth.admin.id,null,'PLATFORM_LOGIN','Platform control centre signed in',{});
+    res.json({token,admin:{id:auth.admin.id,name:auth.admin.name,email:auth.admin.email,role:auth.admin.role}});
   }catch(e){res.status(500).json({error:e.message||'Unable to sign in to control centre'});}
 });
 app.get('/api/control/me',requireControl,(req,res)=>res.json({id:req.controlAdmin.id,name:req.controlAdmin.name,email:req.controlAdmin.email}));

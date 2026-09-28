@@ -1059,7 +1059,7 @@ app.get('/api/manager/sms-settings',requireManager,async(req,res)=>{
     });
   }catch(e){res.status(500).json({error:e.message||'Unable to load SMS settings'});}
 });
-app.put('/api/manager/sms-settings',requireManager,async(req,res)=>{
+app.put('/api/manager/sms-settings',requireManager,requireManagerRole('OWNER'),async(req,res)=>{
   try{
     await ensureSmsSchema();
     const senderId=normalizeSenderId(req.body.senderId);
@@ -1074,7 +1074,7 @@ app.put('/api/manager/sms-settings',requireManager,async(req,res)=>{
     res.json(await getBusinessSmsSettings(req.manager.business_id));
   }catch(e){res.status(400).json({error:e.message||'Unable to save SMS settings'});}
 });
-app.post('/api/manager/sms-test', smsTestRateLimit,requireManager,async(req,res)=>{
+app.post('/api/manager/sms-test', smsTestRateLimit,requireManager,requireManagerRole('OWNER'),async(req,res)=>{
   try{
     const phone=normalizeKenyanPhone(req.body.phone);
     const settings=await getBusinessSmsSettings(req.manager.business_id);
@@ -1571,7 +1571,7 @@ app.post('/api/riders/login', authRateLimit, requireRiderModule, async(req,res)=
   }catch(error){res.status(500).json({error:error.message||'Unable to sign in'});}
 });
 
-app.post('/api/rider-invites', requireRiderModule, requireManager, async(req,res)=>{
+app.post('/api/rider-invites', requireRiderModule, requireManager,requireManagerRole('OWNER'), async(req,res)=>{
   const client=await pool.connect();
   try{
     const {businessId,name,phone,email,vehicleType='Motorbike',numberPlate=''}=req.body;
@@ -1647,7 +1647,7 @@ app.post('/api/rider-invites/:token/complete', requireRiderModule, async(req,res
   }finally{client.release();}
 });
 
-app.post('/api/riders/:id/invite', requireRiderModule, requireManager, async(req,res)=>{
+app.post('/api/riders/:id/invite', requireRiderModule, requireManager,requireManagerRole('OWNER'), async(req,res)=>{
   try{
     const riderResult=await pool.query(`select id,business_id,name,rider_status from riders where id=$1 and business_id=$2`,[req.params.id,req.manager.business_id]);
     if(!riderResult.rowCount){await client.query('rollback');return res.status(404).json({error:'Rider not found'});}
@@ -1660,7 +1660,7 @@ app.post('/api/riders/:id/invite', requireRiderModule, requireManager, async(req
   }catch(error){res.status(400).json({error:error.message||'Unable to generate rider invitation'});}
 });
 
-app.post('/api/riders/:id/approve', requireRiderModule, requireManager, async(req,res)=>{
+app.post('/api/riders/:id/approve', requireRiderModule, requireManager,requireManagerRole('OWNER'), async(req,res)=>{
   try{
     const result=await pool.query(`update riders set rider_status='ACTIVE',active=true where id=$1 and business_id=$2 and rider_status='PENDING_APPROVAL' returning id,name,phone,email,vehicle_type,number_plate,payout_phone,profile_image_url,rider_status,active`,[req.params.id,req.manager.business_id]);
     if(!result.rowCount)return res.status(404).json({error:'Rider is not awaiting approval'});
@@ -1669,7 +1669,7 @@ app.post('/api/riders/:id/approve', requireRiderModule, requireManager, async(re
   }catch(error){res.status(500).json({error:error.message||'Unable to approve rider'});}
 });
 
-app.post('/api/riders/:id/suspend', requireRiderModule, requireManager, async(req,res)=>{
+app.post('/api/riders/:id/suspend', requireRiderModule, requireManager,requireManagerRole('OWNER'), async(req,res)=>{
   try{
     const result=await pool.query(`update riders set rider_status='SUSPENDED',active=false where id=$1 and business_id=$2 returning id,name,rider_status,active`,[req.params.id,req.manager.business_id]);
     if(!result.rowCount)return res.status(404).json({error:'Rider not found'});
@@ -1678,7 +1678,7 @@ app.post('/api/riders/:id/suspend', requireRiderModule, requireManager, async(re
     broadcastRider({businessId:req.manager.business_id,riderId:req.params.id,action:'SUSPENDED',data:{rider:result.rows[0]}});
     res.json({ok:true,rider:result.rows[0]});
   }catch(error){res.status(500).json({error:error.message||'Unable to suspend rider'});}
-});app.post('/api/riders/:id/reactivate', requireRiderModule, requireManager, async(req,res)=>{
+});app.post('/api/riders/:id/reactivate', requireRiderModule, requireManager,requireManagerRole('OWNER'), async(req,res)=>{
   try{
     const result=await pool.query(`update riders set rider_status='ACTIVE',active=true where id=$1 and business_id=$2 and rider_status='SUSPENDED' returning id,name,phone,rider_status,active`,[req.params.id,req.manager.business_id]);
     if(!result.rowCount)return res.status(404).json({error:'Suspended rider not found'});
@@ -2042,7 +2042,7 @@ app.get('/api/stations',requireManager,async(req,res)=>{
     res.json(r.rows);
   }catch(e){res.status(500).json({error:e.message||'Unable to load stations'});}
 });
-app.post('/api/stations',requireManager,async(req,res)=>{
+app.post('/api/stations',requireManager,requireManagerRole('OWNER'),async(req,res)=>{
   try{
     const {name,deviceType,mode}=req.body;
     if(!name||!['PHONE','TABLET','PC','LAPTOP','TV','BOARD'].includes(deviceType)||!['OPERATIONS','KITCHEN','COUNTER','DISPLAY'].includes(mode)) return res.status(400).json({error:'Invalid station configuration'});
@@ -2050,7 +2050,7 @@ app.post('/api/stations',requireManager,async(req,res)=>{
     res.status(201).json(r.rows[0]);
   }catch(e){res.status(400).json({error:e.message||'Unable to create station'});}
 });
-app.post('/api/stations/:id/pairing-token',requireManagerStation,async(req,res)=>{
+app.post('/api/stations/:id/pairing-token',requireManagerStation,requireManagerRole('OWNER'),async(req,res)=>{
   try{
     const raw=crypto.randomBytes(32).toString('hex');
     await pool.query('update station_pairing_tokens set used_at=coalesce(used_at,now()) where station_id=$1 and used_at is null',[req.params.id]);
@@ -2060,7 +2060,7 @@ app.post('/api/stations/:id/pairing-token',requireManagerStation,async(req,res)=
     res.json({token:raw,connectUrl,qrDataUrl,expiresInSeconds:300});
   }catch(e){res.status(500).json({error:e.message||'Unable to create pairing code'});}
 });
-app.post('/api/stations/:id/revoke',requireManagerStation,async(req,res)=>{
+app.post('/api/stations/:id/revoke',requireManagerStation,requireManagerRole('OWNER'),async(req,res)=>{
   try{
     await pool.query('update restaurant_order_stations set active=false,updated_at=now() where id=$1',[req.params.id]);
     await pool.query('delete from station_sessions where station_id=$1',[req.params.id]);
@@ -2068,7 +2068,7 @@ app.post('/api/stations/:id/revoke',requireManagerStation,async(req,res)=>{
     res.json({ok:true});
   }catch(e){res.status(500).json({error:e.message||'Unable to revoke station'});}
 });
-app.post('/api/stations/:id/reactivate',requireManagerStation,async(req,res)=>{
+app.post('/api/stations/:id/reactivate',requireManagerStation,requireManagerRole('OWNER'),async(req,res)=>{
   try{await pool.query('update restaurant_order_stations set active=true,updated_at=now() where id=$1',[req.params.id]);res.json({ok:true});}
   catch(e){res.status(500).json({error:e.message||'Unable to reactivate station'});}
 });
@@ -2254,6 +2254,15 @@ function requirePlatformRole(...allowedRoles) {
   return (req,res,next) => {
     const role=String(req.platformAdmin?.role||'').toUpperCase();
     if(!roles.has(role)) return res.status(403).json({error:'This platform role is not permitted to perform this action'});
+    next();
+  };
+}
+
+function requireControlRole(...allowedRoles) {
+  const roles = new Set(allowedRoles.map(role => String(role).toUpperCase()));
+  return (req,res,next) => {
+    const role=String(req.controlAdmin?.role||'').toUpperCase();
+    if(!roles.has(role)) return res.status(403).json({error:'This control-centre role is not permitted to perform this action'});
     next();
   };
 }
@@ -2491,7 +2500,7 @@ app.get('/api/platform/incidents',requirePlatformAdmin,async(req,res)=>{
   }catch(e){res.status(500).json({error:e.message||'Unable to load platform incidents'});}
 });
 
-app.post('/api/platform/incidents/:id/resolve',requirePlatformAdmin,async(req,res)=>{
+app.post('/api/platform/incidents/:id/resolve',requirePlatformAdmin,requirePlatformRole('PLATFORM_OWNER'),async(req,res)=>{
   try{
     const r=await pool.query("update platform_incidents set status='RESOLVED',resolved_at=now() where id=$1 returning *",[req.params.id]);
     if(!r.rowCount)return res.status(404).json({error:'Incident not found'});
@@ -2616,7 +2625,7 @@ app.get('/api/platform/businesses',requirePlatformAdmin,async(req,res)=>{
     res.json(r.rows.map(x=>({...x,revenue:Number(x.revenue||0)})));
   }catch(e){res.status(500).json({error:e.message||'Unable to load tenants'});}
 });
-app.post('/api/platform/businesses',requirePlatformAdmin,async(req,res)=>{
+app.post('/api/platform/businesses',requirePlatformAdmin,requirePlatformRole('PLATFORM_OWNER'),async(req,res)=>{
   const client=await pool.connect();
   try{
     const name=String(req.body.name||'').trim();
@@ -2643,7 +2652,7 @@ app.post('/api/platform/businesses',requirePlatformAdmin,async(req,res)=>{
   }catch(e){try{await client.query('rollback')}catch{}res.status(400).json({error:e.message||'Unable to provision restaurant'});}
   finally{client.release();}
 });
-app.patch('/api/platform/businesses/:id',requirePlatformAdmin,async(req,res)=>{
+app.patch('/api/platform/businesses/:id',requirePlatformAdmin,requirePlatformRole('PLATFORM_OWNER'),async(req,res)=>{
   try{
     const current=await pool.query('select * from businesses where id=$1',[req.params.id]);
     if(!current.rowCount)return res.status(404).json({error:'Restaurant not found'});
@@ -2718,7 +2727,7 @@ async function saveBusinessConnection(businessId,{websiteUrl,customerConnected,r
   await pool.query(`insert into business_features(business_id,rider_module_enabled) values($1,$2) on conflict(business_id) do update set rider_module_enabled=$2,updated_at=now()`,[businessId,rider]);
   return {websiteUrl:web,customerDashboardUrl:customerUrl,managerDashboardUrl:managerUrl,riderDashboardUrl:riderUrl,customerConnected:customer,riderConnected:rider};
 }
-app.post('/api/control/businesses',requireControl,async(req,res)=>{
+app.post('/api/control/businesses',requireControl,requireControlRole('PLATFORM_OWNER'),async(req,res)=>{
   const client=await pool.connect();
   try{
     const name=String(req.body.name||'').trim(),slug=String(req.body.slug||'').trim().toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-+|-+$/g,'');
@@ -2736,7 +2745,7 @@ app.post('/api/control/businesses',requireControl,async(req,res)=>{
     res.status(201).json({business:{...business,...connection},connection});
   }catch(e){try{await client.query('rollback')}catch{}res.status(400).json({error:e.code==='23505'?'That restaurant slug already exists':e.message||'Unable to create restaurant'});}finally{client.release();}
 });
-app.patch('/api/control/businesses/:id',requireControl,async(req,res)=>{
+app.patch('/api/control/businesses/:id',requireControl,requireControlRole('PLATFORM_OWNER'),async(req,res)=>{
   try{
     const id=String(req.params.id),name=String(req.body.name||'').trim(),slug=String(req.body.slug||'').trim().toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-+|-+$/g,'');
     const packageType=String(req.body.packageType||'DIGITAL_ORDERING').toUpperCase();
@@ -2780,7 +2789,7 @@ function integrationCustomerUrl(businessId){
   return `${FRONTEND_URL.replace(/\/$/,'')}/menu.html?businessId=${encodeURIComponent(businessId)}`;
 }
 
-app.post('/api/platform/businesses/:id/integration',requirePlatformAdmin,async(req,res)=>{
+app.post('/api/platform/businesses/:id/integration',requirePlatformAdmin,requirePlatformRole('PLATFORM_OWNER'),async(req,res)=>{
   try{
     const business=await pool.query('select id,name,slug,domain,website_url,primary_color,status from businesses where id=$1',[req.params.id]);
     if(!business.rowCount)return res.status(404).json({error:'Restaurant not found'});
@@ -2837,7 +2846,7 @@ app.get('/api/platform/businesses/:id/integration',requirePlatformAdmin,async(re
     res.json({configured:true,...r.rows[0]});
   }catch(e){res.status(500).json({error:e.message||'Unable to load integration'});}
 });
-app.delete('/api/platform/businesses/:id/integration',requirePlatformAdmin,async(req,res)=>{
+app.delete('/api/platform/businesses/:id/integration',requirePlatformAdmin,requirePlatformRole('PLATFORM_OWNER'),async(req,res)=>{
   try{
     await ensureIntegrationSchema();
     await pool.query(`update business_integrations set status='REVOKED',revoked_at=now(),updated_at=now() where business_id=$1`,[req.params.id]);
@@ -2880,6 +2889,7 @@ app.get('/api/public/integrations/:token.js',(req,res)=>{
 async function startServer(){
   await ensureIntegrationSchema();
   await ensurePhase1SecuritySchema();
+  await ensurePhase3SecuritySchema();
   await ensureSmsSchema();
   await ensurePlatformObservabilitySchema();
   app.listen(port, () => console.log(`Ordering API listening on ${port}`));

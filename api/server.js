@@ -407,6 +407,47 @@ async function ensurePhase1SecuritySchema() {
   `);
 }
 
+async function ensurePhase3SecuritySchema() {
+  await pool.query(`
+    alter table manager_users add column if not exists role text not null default 'MANAGER';
+    alter table platform_admin_users add column if not exists role text not null default 'PLATFORM_OWNER';
+    update manager_users set role=upper(coalesce(role,'MANAGER'));
+    update platform_admin_users set role=upper(coalesce(role,'PLATFORM_OWNER'));
+
+    do $
+    begin
+      if not exists (select 1 from pg_constraint where conname='manager_users_role_check') then
+        alter table manager_users add constraint manager_users_role_check
+          check (role in ('OWNER','MANAGER'));
+      end if;
+      if not exists (select 1 from pg_constraint where conname='platform_admin_users_role_check') then
+        alter table platform_admin_users add constraint platform_admin_users_role_check
+          check (role in ('PLATFORM_OWNER','SUPPORT'));
+      end if;
+    end $;
+
+    create unique index if not exists customers_business_id_id_uidx on customers(business_id,id);
+    create unique index if not exists products_business_id_id_uidx on products(business_id,id);
+    create unique index if not exists orders_business_id_id_uidx on orders(business_id,id);
+
+    do $
+    begin
+      if not exists (select 1 from pg_constraint where conname='orders_customer_tenant_fk') then
+        alter table orders add constraint orders_customer_tenant_fk
+          foreign key (business_id,customer_id)
+          references customers(business_id,id)
+          not valid;
+      end if;
+    end $;
+
+    alter table products add constraint products_price_nonnegative check (price >= 0) not valid;
+    alter table orders add constraint orders_amounts_nonnegative check (
+      subtotal >= 0 and total >= 0 and delivery_fee >= 0 and coalesce(food_subtotal,0) >= 0
+    ) not valid;
+    alter table order_items add constraint order_items_amount_nonnegative check (unit_price >= 0) not valid;
+  `);
+}
+
 
 async function ensureSmsSchema() {
   await pool.query(`
@@ -636,8 +677,14 @@ async function getControlAdminFromSession(req){
   return r.rows[0]||null;
 }
 async function requireControl(req,res,next){
-  try{const admin=await getControlAdminFromSession(req);if(!admin)return res.status(401).json({error:'Platform control login required'});req.controlAdmin=admin;next();}
-  catch(e){res.status(500).json({error:'Unable to verify control session'});}
+  try{
+    const admin=await getControlAdminFromSession(req);
+    if(!admin)return res.status(401).json({error:'Platform control login required'});
+    if(!['PLATFORM_OWNER','SUPPORT'].includes(String(admin.role||'').toUpperCase())) return res.status(403).json({error:'Platform control role is not permitted'});
+    req.controlAdmin=admin;
+    req.platformAdmin=admin;
+    next();
+  }catch(e){res.status(500).json({error:'Unable to verify control session'});}
 }
 async function getManagerFromSession(req) {
   const raw = String(req.headers.authorization || '');
@@ -659,6 +706,15 @@ async function requireManager(req, res, next) {
     req.manager = manager;
     next();
   } catch { res.status(500).json({ error: 'Unable to verify manager session' }); }
+}
+
+function requireManagerRole(...allowedRoles) {
+  const roles = new Set(allowedRoles.map(role => String(role).toUpperCase()));
+  return (req, res, next) => {
+    const role = String(req.manager?.role || '').toUpperCase();
+    if (!roles.has(role)) return res.status(403).json({ error: 'This manager role is not permitted to perform this action' });
+    next();
+  };
 }
 async function requireManagerOrder(req, res, next) {
   return requireManager(req, res, async () => {
@@ -2138,12 +2194,31 @@ async function getPlatformAdmin(req) {
   const r=await pool.query(`select a.*,s.id as session_id from platform_admin_sessions s join platform_admin_users a on a.id=s.admin_id where s.token_hash=$1 and s.expires_at>now() and a.active=true`,[hashSessionToken(token)]);
   return r.rows[0]||null;
 }
+
+async function issuePlatformAdminSession(adminId) {
+  const token=crypto.randomBytes(32).toString('hex');
+  await pool.query(
+    "insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))",
+    [adminId,hashSessionToken(token),SESSION_TTLS.controlHours]
+  );
+  return token;
+}
 async function requirePlatformAdmin(req,res,next){
   try{
     const admin=await getPlatformAdmin(req);
     if(!admin)return res.status(401).json({error:'Platform owner login required'});
+    if(!['PLATFORM_OWNER','SUPPORT'].includes(String(admin.role||'').toUpperCase())) return res.status(403).json({error:'Platform admin role is not permitted'});
     req.platformAdmin=admin;next();
   }catch(e){res.status(500).json({error:'Unable to verify platform owner session'});}
+}
+
+function requirePlatformRole(...allowedRoles) {
+  const roles = new Set(allowedRoles.map(role => String(role).toUpperCase()));
+  return (req,res,next) => {
+    const role=String(req.platformAdmin?.role||'').toUpperCase();
+    if(!roles.has(role)) return res.status(403).json({error:'This platform role is not permitted to perform this action'});
+    next();
+  };
 }
 async function recordPlatformAudit(adminId,businessId,action,note='',metadata={}){
   try{

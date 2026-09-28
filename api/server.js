@@ -238,6 +238,45 @@ function verifyPassword(password, stored) {
 function hashSessionToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
+function createCustomerOrderToken() {
+  const token = crypto.randomBytes(32).toString('hex');
+  return { token, hash: hashSessionToken(token) };
+}
+async function getCustomerOrderAccess(req) {
+  const auth = String(req.headers.authorization || '');
+  const bearer = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+  const queryToken = String(req.query.orderToken || '').trim();
+  const token = bearer || queryToken;
+  if (!token) return null;
+  const hash = hashSessionToken(token);
+  const result = await pool.query(
+    'select o.*,c.phone as customer_phone,c.email as customer_email from orders o join customers c on c.id=o.customer_id where o.id=$1 and o.customer_access_token_hash=$2 limit 1',
+    [req.params.id, hash]
+  );
+  return result.rows[0] || null;
+}
+async function requireCustomerOrder(req,res,next) {
+  try {
+    const order = await getCustomerOrderAccess(req);
+    if (!order) return res.status(401).json({error:'Order access authorization required'});
+    req.customerOrder = order;
+    next();
+  } catch {
+    res.status(500).json({error:'Unable to verify order access'});
+  }
+}
+async function ensurePhase1SecuritySchema() {
+  await pool.query(`
+    alter table orders add column if not exists customer_access_token_hash text;
+    create unique index if not exists orders_customer_access_token_idx
+      on orders(customer_access_token_hash)
+      where customer_access_token_hash is not null;
+    alter table refunds add column if not exists idempotency_key text;
+    create unique index if not exists refunds_idempotency_key_idx
+      on refunds(idempotency_key)
+      where idempotency_key is not null;
+  `);
+}
 
 
 async function ensureSmsSchema() {
@@ -664,6 +703,7 @@ app.post('/api/manager/google', async (req,res)=>{
 app.get('/api/manager/dispatch', requireManager, async (req, res) => {
   try {
     await ensureDeliveryTrackingSchema();
+    await ensurePhase1SecuritySchema();
     const businessId = req.manager.business_id;
     const [connection, riders, unassigned, active] = await Promise.all([
       pool.query('select coalesce(rider_connected,false) as rider_connected from business_connections where business_id=$1 limit 1', [businessId]),
@@ -1105,15 +1145,15 @@ app.get('/api/customers/:id/record', requireManager, async (req,res)=>{
     res.json({customer:customer.rows[0],summary,orders:orders.rows,addresses:addresses.rows,audit:audit.rows});
   }catch(error){res.status(500).json({error:error.message||'Unable to load customer record'});}
 });
-app.post('/api/orders/:id/confirm-delivery', async (req,res)=>{
+app.post('/api/orders/:id/confirm-delivery', requireCustomerOrder, async (req,res)=>{
   try{
     const result=await completeOrderByConfirmation(req.params.id,'customer');
     if(result.error) return res.status(result.status).json({error:result.error});
     res.json(result.order);
   }catch(error){res.status(500).json({error:error.message||'Unable to confirm delivery'});}
 });
-app.get('/api/orders/:id', async (req, res) => { try { const result = await pool.query(`select o.*, c.name as customer_name, c.phone, c.email, r.name as rider_name, r.vehicle_type, r.number_plate, r.phone as rider_phone from orders o join customers c on c.id=o.customer_id left join riders r on r.id=(select rider_id from rider_trips t where t.order_id=o.id order by assigned_at desc limit 1) where o.id=$1`, [req.params.id]); if (!result.rowCount) return res.status(404).json({ error: 'Order not found' }); res.json(result.rows[0]); } catch { res.status(500).json({ error: 'Unable to load order' }); } });
-app.get('/api/orders/:id/refunds', async (req, res) => { try { const result = await pool.query(`select id,amount,currency,status,created_at,updated_at,customer_note,merchant_note from refunds where order_id=$1 order by created_at desc`, [req.params.id]); res.json(result.rows); } catch { res.status(500).json({ error: 'Unable to load refunds' }); } });
+app.get('/api/orders/:id', requireCustomerOrder, async (req, res) => { try { const result = await pool.query(`select o.*, c.name as customer_name, c.phone, c.email, r.name as rider_name, r.vehicle_type, r.number_plate, r.phone as rider_phone from orders o join customers c on c.id=o.customer_id left join riders r on r.id=(select rider_id from rider_trips t where t.order_id=o.id order by assigned_at desc limit 1) where o.id=$1`, [req.params.id]); if (!result.rowCount) return res.status(404).json({ error: 'Order not found' }); res.json(result.rows[0]); } catch { res.status(500).json({ error: 'Unable to load order' }); } });
+app.get('/api/orders/:id/refunds', requireCustomerOrder, async (req, res) => { try { const result = await pool.query(`select id,amount,currency,status,created_at,updated_at,customer_note,merchant_note from refunds where order_id=$1 order by created_at desc`, [req.params.id]); res.json(result.rows); } catch { res.status(500).json({ error: 'Unable to load refunds' }); } });
 app.get('/api/orders', requireManager, async (req, res) => { try { const { businessId, q = '' } = req.query; if (!businessId) return res.status(400).json({ error: 'businessId is required' }); const result = await pool.query(`select o.id,o.business_id,o.order_number,o.status,o.payment_status,o.payment_method,o.total,o.created_at,o.delivery_note,o.branch_id,bb.latitude as branch_latitude,bb.longitude as branch_longitude,c.name,c.phone,c.email,coalesce((select r.name from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_name,coalesce((select r.vehicle_type from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_vehicle,coalesce((select r.number_plate from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_plate,
       coalesce((select de.status from delivery_events de join rider_trips rt on rt.id=de.trip_id where rt.order_id=o.id order by de.created_at desc limit 1),'') as rider_delivery_status from orders o join customers c on c.id=o.customer_id left join business_branches bb on bb.id=o.branch_id where o.business_id=$1 and ($2='' or c.name ilike '%'||$2||'%' or c.phone ilike '%'||$2||'%' or coalesce(c.email,'') ilike '%'||$2||'%' or o.order_number ilike '%'||$2||'%') order by o.created_at desc limit 200`, [businessId, String(q).trim()]); res.json(result.rows); } catch { res.status(500).json({ error: 'Unable to load orders' }); } });
 app.get('/api/riders/:id/profile', requireManager, async(req,res)=>{
@@ -1138,7 +1178,7 @@ app.post('/api/orders/:id/status', requireManagerOrder, async (req, res) => { tr
     const result = await pool.query(`update orders set status='ACCEPTED',accepted_at=coalesce(accepted_at,now()) where id=$1 returning *`, [req.params.id]);
     broadcastOrder(result.rows[0], { reason: 'restaurant.accepted' });
     res.json(result.rows[0]); } catch { res.status(500).json({ error: 'Unable to update order status' }); } });
-app.post('/api/orders/:id/cancel', async (req, res) => { const client = await pool.connect(); try { let order; try { await client.query('begin'); const result = await client.query(`select * from orders where id=$1 for update`, [req.params.id]); if (!result.rowCount) { await client.query('rollback'); return res.status(404).json({ error: 'Order not found' }); } order = result.rows[0]; if (order.status !== 'NEW') { await client.query('rollback'); return res.status(409).json({ error: 'This order can no longer be cancelled because the restaurant has accepted it.' }); } await client.query(`update orders set status='CANCELLED' where id=$1`, [order.id]); const updated = await client.query(`select * from orders where id=$1`, [order.id]); await client.query('commit'); order = updated.rows[0]; broadcastOrder(order, { reason: 'customer.cancelled' }); } catch (error) { try { await client.query('rollback'); } catch {} throw error; } let refund = null; if (order.payment_status === 'PAID') refund = await initiateRefundForOrder(order.id, 'Customer cancelled before restaurant acceptance', 'Automatic cancellation refund'); const latest = await pool.query(`select * from orders where id=$1`, [order.id]); res.json({ order: latest.rows[0], refund }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to cancel order' }); } finally { client.release(); } });
+app.post('/api/orders/:id/cancel', requireCustomerOrder, async (req, res) => { const client = await pool.connect(); try { let order; try { await client.query('begin'); const result = await client.query(`select * from orders where id=$1 for update`, [req.params.id]); if (!result.rowCount) { await client.query('rollback'); return res.status(404).json({ error: 'Order not found' }); } order = result.rows[0]; if (order.status !== 'NEW') { await client.query('rollback'); return res.status(409).json({ error: 'This order can no longer be cancelled because the restaurant has accepted it.' }); } await client.query(`update orders set status='CANCELLED' where id=$1`, [order.id]); const updated = await client.query(`select * from orders where id=$1`, [order.id]); await client.query('commit'); order = updated.rows[0]; broadcastOrder(order, { reason: 'customer.cancelled' }); } catch (error) { try { await client.query('rollback'); } catch {} throw error; } let refund = null; if (order.payment_status === 'PAID') refund = await initiateRefundForOrder(order.id, 'Customer cancelled before restaurant acceptance', 'Automatic cancellation refund'); const latest = await pool.query(`select * from orders where id=$1`, [order.id]); res.json({ order: latest.rows[0], refund }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to cancel order' }); } finally { client.release(); } });
 app.post('/api/delivery/quote', async (req,res)=>{
   try{
     const {businessId,pickupAddress,deliveryAddress}=req.body;
@@ -1154,37 +1194,62 @@ app.post('/api/delivery/quote', async (req,res)=>{
 app.post('/api/orders', async (req, res) => {
   const client=await pool.connect();
   try{
-    const {businessId,customer,items,paymentMethod,subtotal,total,deliveryNote,quoteId}=req.body;
+    const {businessId,customer,items,paymentMethod,deliveryNote,quoteId}=req.body;
     const normalizedPaymentMethod=paymentMethod==='M-Pesa'?'M-Pesa':paymentMethod==='Card'?'Card':null;
-    const numericSubtotal=Number(subtotal);
     if(!businessId||!customer?.name||!customer?.phone||!customer?.email||!Array.isArray(items)||!items.length||!normalizedPaymentMethod) return res.status(400).json({error:'Missing order fields'});
-    if(!Number.isFinite(numericSubtotal)||numericSubtotal<=0) return res.status(400).json({error:'Invalid food subtotal'});
+    if(items.length>50) return res.status(400).json({error:'Too many order items'});
     let deliveryFee=0,deliveryData=null;
     if(quoteId){
       const quote=await pool.query('select * from delivery_quotes where id=$1 and business_id=$2 and status=\'QUOTED\'',[quoteId,businessId]);
       if(!quote.rowCount) return res.status(400).json({error:'Delivery quote expired or invalid'});
       deliveryData=quote.rows[0]; deliveryFee=Number(deliveryData.delivery_fee_kes);
     }
-    const numericTotal=Math.round((numericSubtotal+deliveryFee)*100)/100;
-    if(Number.isFinite(Number(total)) && Math.abs(Number(total)-numericTotal)>0.01) return res.status(400).json({error:'Order total does not match the server-calculated delivery fee'});
     await client.query('begin');
+    let foodSubtotal=0;
+    const trustedItems=[];
+    for(const item of items){
+      const productId=String(item.productId||'').trim();
+      const quantity=Number(item.quantity);
+      if(!productId||!Number.isInteger(quantity)||quantity<1||quantity>50) throw new Error('Invalid order item');
+      const productResult=await client.query(
+        'select id,business_id,name,price,options from products where id=$1 and business_id=$2 and active=true',
+        [productId,businessId]
+      );
+      if(!productResult.rowCount) throw new Error('Menu item is unavailable');
+      const product=productResult.rows[0];
+      const submittedOptions=item.options && typeof item.options==='object' ? item.options : {};
+      let unitPrice=Number(product.price);
+      const optionGroups=Array.isArray(product.options)?product.options:[];
+      for(const group of optionGroups){
+        if(!submittedOptions[group.name]) continue;
+        const selected=String(submittedOptions[group.name]);
+        const choice=Array.isArray(group.choices)?group.choices.find(ch=>String(ch?.[0])===selected):null;
+        if(!choice) throw new Error('Invalid menu option');
+        unitPrice+=Number(choice[2]||0);
+      }
+      if(!Number.isFinite(unitPrice)||unitPrice<0) throw new Error('Invalid menu price');
+      foodSubtotal+=unitPrice*quantity;
+      trustedItems.push({productId,productName:product.name,quantity,unitPrice,options:submittedOptions});
+    }
+    foodSubtotal=Math.round(foodSubtotal*100)/100;
+    const numericTotal=Math.round((foodSubtotal+deliveryFee)*100)/100;
+    await client.query(`update delivery_quotes set status='USED' where id=$1 and status='QUOTED'`,[quoteId||null]);
     const customerResult=await client.query(`insert into customers(id,business_id,name,phone,email) values(gen_random_uuid(),$1,$2,$3,$4) on conflict(business_id,phone) do update set name=excluded.name,email=coalesce(excluded.email,customers.email) returning id`,[businessId,customer.name.trim(),customer.phone.trim(),customer.email.trim()]);
     const orderNumber='SB-'+Date.now().toString().slice(-8);
     const pickupAddress=deliveryData?.pickup_address||null, deliveryAddress=deliveryData?.delivery_address||deliveryNote?.trim()||null;
-    const orderResult=await client.query(`insert into orders(id,business_id,customer_id,order_number,status,payment_status,payment_method,delivery_note,subtotal,total,delivery_fee,food_subtotal,delivery_status,pickup_address,delivery_address,delivery_lat,delivery_lng,route_distance_meters,route_duration_seconds,delivery_fee_status,rider_earning,branch_id,customer_lat,customer_lng,selected_branch_distance_meters,selected_branch_duration_seconds) values(gen_random_uuid(),$1,$2,$3,'NEW','PENDING',$4,$5,$6,$7,$8,$6,$9,$10,$11,$12,$13,$14,$15,'HELD',$16,$17,$18,$19,$20,$21) returning *`,[businessId,customerResult.rows[0].id,orderNumber,normalizedPaymentMethod,deliveryNote?.trim()||null,numericSubtotal,numericTotal,deliveryFee,deliveryFee>0?'QUOTED':'NONE',pickupAddress,deliveryAddress,deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,deliveryData?.duration_seconds||null,deliveryFee,deliveryData?.branch_id||null,deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,deliveryData?.duration_seconds||null]);
-    for(const item of items){
-      const quantity=Number(item.quantity),unitPrice=Number(item.unitPrice);
-      if(!item.name||!Number.isInteger(quantity)||quantity<=0||!Number.isFinite(unitPrice)||unitPrice<0) throw new Error('Invalid order item');
-      await client.query(`insert into order_items(id,order_id,product_id,product_name,quantity,unit_price,options) values(gen_random_uuid(),$1,$2,$3,$4,$5,$6)`,[orderResult.rows[0].id,item.productId||null,item.name,quantity,unitPrice,item.options||{}]);
+    const customerAccess=createCustomerOrderToken();
+    const orderResult=await client.query(`insert into orders(id,business_id,customer_id,order_number,status,payment_status,payment_method,delivery_note,subtotal,total,delivery_fee,food_subtotal,delivery_status,pickup_address,delivery_address,delivery_lat,delivery_lng,route_distance_meters,route_duration_seconds,delivery_fee_status,rider_earning,branch_id,customer_lat,customer_lng,selected_branch_distance_meters,selected_branch_duration_seconds,customer_access_token_hash) values(gen_random_uuid(),$1,$2,$3,'NEW','PENDING',$4,$5,$6,$7,$8,$6,$9,$10,$11,$12,$13,$14,$15,'HELD',$16,$17,$18,$19,$20,$21,$22) returning *`,[businessId,customerResult.rows[0].id,orderNumber,normalizedPaymentMethod,deliveryNote?.trim()||null,foodSubtotal,numericTotal,deliveryFee,deliveryFee>0?'QUOTED':'NONE',pickupAddress,deliveryAddress,deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,deliveryData?.duration_seconds||null,deliveryFee,deliveryData?.branch_id||null,deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,deliveryData?.duration_seconds||null,customerAccess.hash]);
+    for(const item of trustedItems){
+      await client.query(`insert into order_items(id,order_id,product_id,product_name,quantity,unit_price,options) values(gen_random_uuid(),$1,$2,$3,$4,$5,$6)`,[orderResult.rows[0].id,item.productId,item.productName,item.quantity,item.unitPrice,item.options]);
     }
     if(deliveryData) await client.query('update delivery_quotes set order_id=$1 where id=$2',[orderResult.rows[0].id,quoteId]);
     await client.query(`insert into payments(id,order_id,provider,amount,status) values(gen_random_uuid(),$1,'PAYSTACK',$2,'PENDING')`,[orderResult.rows[0].id,numericTotal]);
     await client.query('commit');
-    res.status(201).json(orderResult.rows[0]);
+    res.status(201).json({...orderResult.rows[0], customerAccessToken: customerAccess.token});
   }catch(error){try{await client.query('rollback')}catch{}res.status(500).json({error:error.message==='Invalid order item'?error.message:'Unable to create order'});}
   finally{client.release();}
 });
-app.post('/api/payments/paystack/initialize', async (req,res)=>{
+app.post('/api/payments/paystack/initialize', requireCustomerOrder, async (req,res)=>{
   try{
     const {orderId}=req.body;
     if(!orderId) return res.status(400).json({error:'orderId is required'});
@@ -1210,10 +1275,10 @@ app.post('/api/payments/paystack/initialize', async (req,res)=>{
   }catch(error){res.status(500).json({error:error.message||'Unable to initialize payment'});}
 });
 app.get('/api/payments/paystack/callback', async (req, res) => { const reference = String(req.query.reference || ''); if (!reference) return res.redirect(`${FRONTEND_URL}/order.html?payment=missing`); try { const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' }); const data = verified.data; if (data?.status !== 'success') throw new Error('Payment was not successful'); const orderId = await markPaymentSuccessful(reference, data); if (!orderId) return res.redirect(`${FRONTEND_URL}/order.html?payment=not-found`); const receipt = await pool.query('select receipt_access_token from receipts where order_id=$1',[orderId]); const token = receipt.rows[0]?.receipt_access_token || ''; return res.redirect(`${FRONTEND_URL}/order.html?id=${encodeURIComponent(orderId)}&payment=success${token?'&receipt='+encodeURIComponent(token):''}`); } catch { const payment = await pool.query(`select order_id from payments where provider='PAYSTACK' and provider_reference=$1`, [reference]); const orderId = payment.rows[0]?.order_id; const target = orderId ? `${FRONTEND_URL}/order.html?id=${encodeURIComponent(orderId)}&payment=failed` : `${FRONTEND_URL}/order.html?payment=failed`; return res.redirect(target); } });
-app.post('/api/payments/paystack/verify', async (req, res) => { try { const reference = String(req.body.reference || ''); if (!reference) return res.status(400).json({ error: 'reference is required' }); const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' }); if (verified.data?.status === 'success') { const orderId = await markPaymentSuccessful(reference, verified.data); const receipt = orderId ? await pool.query('select receipt_access_token from receipts where order_id=$1',[orderId]) : null; return res.json({ status: 'success', orderId, receiptToken: receipt?.rows[0]?.receipt_access_token || null }); } res.json({ status: verified.data?.status || 'pending' }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to verify payment' }); } });
+app.post('/api/payments/paystack/verify', requireCustomerOrder, async (req, res) => { try { const reference = String(req.body.reference || ''); if (!reference) return res.status(400).json({ error: 'reference is required' }); const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' }); if (verified.data?.status === 'success') { const orderId = await markPaymentSuccessful(reference, verified.data); const receipt = orderId ? await pool.query('select receipt_access_token from receipts where order_id=$1',[orderId]) : null; return res.json({ status: 'success', orderId, receiptToken: receipt?.rows[0]?.receipt_access_token || null }); } res.json({ status: verified.data?.status || 'pending' }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to verify payment' }); } });
 app.get('/api/payments/paystack/webhook', (_req, res) => { res.status(405).json({ error: 'Webhook endpoint accepts POST requests from Paystack.' }); });
 app.post('/api/payments/paystack/webhook', async (req, res) => { const signature = req.headers['x-paystack-signature']; const secret = process.env.PAYSTACK_SECRET_KEY; if (!signature || !secret || !req.rawBody) return res.sendStatus(401); const expected = crypto.createHmac('sha512', secret).update(req.rawBody).digest('hex'); const providedBuffer = Buffer.from(String(signature), 'utf8'); const expectedBuffer = Buffer.from(expected, 'utf8'); if (providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) return res.sendStatus(401); try { const event = req.body; if (event.event === 'charge.success' && event.data?.reference && event.data?.status === 'success') await markPaymentSuccessful(event.data.reference, event.data); if (event.event?.startsWith('refund.') && event.data) await updateRefundFromWebhook(event.data); return res.sendStatus(200); } catch (error) { console.error('Paystack webhook processing failed:', error.message); return res.sendStatus(500); } });
-app.post('/api/admin/refunds', async (req, res) => { if (!requireRefundAdmin(req, res)) return; try { const { orderId, amount, customerNote, merchantNote } = req.body; const requestedAmount = Number(amount); if (!orderId || !Number.isFinite(requestedAmount) || requestedAmount <= 0) return res.status(400).json({ error: 'orderId and a positive refund amount are required' }); const orderResult = await pool.query(`select o.id,o.business_id,o.total,o.payment_status,p.id as payment_id,p.provider_reference,p.amount as paid_amount from orders o join payments p on p.order_id=o.id and p.provider='PAYSTACK' where o.id=$1`, [orderId]); if (!orderResult.rowCount) return res.status(404).json({ error: 'Paid Paystack order not found' }); const order = orderResult.rows[0]; if (order.payment_status !== 'PAID') return res.status(409).json({ error: 'Only paid orders can be refunded' }); if (order.delivery_fee_released_at && Number(requestedAmount) > Number(order.food_subtotal || order.subtotal)) return res.status(400).json({ error: 'Delivery fee is not refundable after completed delivery; refund can only cover the food portion.' }); if (!order.provider_reference) return res.status(409).json({ error: 'Paystack transaction reference is missing' }); const refundedResult = await pool.query(`select coalesce(sum(amount),0) as total from refunds where payment_id=$1 and status in ('PENDING','PROCESSING','PROCESSED')`, [order.payment_id]); const alreadyRefunded = Number(refundedResult.rows[0].total); const remaining = Number(order.paid_amount) - alreadyRefunded; if (requestedAmount > remaining + 0.0001) return res.status(400).json({ error: `Refund exceeds the remaining refundable amount (${remaining.toFixed(2)} KES)` }); const refund = await paystackRequest('/refund', { method: 'POST', body: JSON.stringify({ transaction: order.provider_reference, amount: String(Math.round(requestedAmount * 100)), currency: 'KES', customer_note: customerNote || undefined, merchant_note: merchantNote || undefined }) }); const data = refund.data || {}; const insert = await pool.query(`insert into refunds (id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,customer_note,merchant_note) values (gen_random_uuid(),$1,$2,'PAYSTACK',$3,$4,$5,'KES',$6,$7,$8) returning *`, [order.id, order.payment_id, data.id ? String(data.id) : null, order.provider_reference, requestedAmount, String(data.status || 'pending').toUpperCase(), customerNote || null, merchantNote || null]); broadcastRealtime({ businessId: order.business_id, orderId: order.id, event: 'refund.updated', data: { orderId: order.id, refund: insert.rows[0] } }); res.status(201).json(insert.rows[0]); } catch (error) { res.status(500).json({ error: error.message || 'Unable to initiate refund' }); } });
+app.post('/api/admin/refunds', async (req, res) => { if (!requireRefundAdmin(req, res)) return; try { const { orderId, amount, customerNote, merchantNote } = req.body; const idempotencyKey=String(req.headers['idempotency-key']||req.body.idempotencyKey||'').trim(); if(!idempotencyKey||idempotencyKey.length>200) return res.status(400).json({error:'Idempotency-Key is required for refunds'}); const existing=await pool.query('select * from refunds where idempotency_key=$1 limit 1',[idempotencyKey]); if(existing.rowCount) return res.json({refund:existing.rows[0],idempotent:true}); const requestedAmount = Number(amount); if (!orderId || !Number.isFinite(requestedAmount) || requestedAmount <= 0) return res.status(400).json({ error: 'orderId and a positive refund amount are required' }); const orderResult = await pool.query(`select o.id,o.business_id,o.total,o.payment_status,p.id as payment_id,p.provider_reference,p.amount as paid_amount from orders o join payments p on p.order_id=o.id and p.provider='PAYSTACK' where o.id=$1`, [orderId]); if (!orderResult.rowCount) return res.status(404).json({ error: 'Paid Paystack order not found' }); const order = orderResult.rows[0]; if (order.payment_status !== 'PAID') return res.status(409).json({ error: 'Only paid orders can be refunded' }); if (order.delivery_fee_released_at && Number(requestedAmount) > Number(order.food_subtotal || order.subtotal)) return res.status(400).json({ error: 'Delivery fee is not refundable after completed delivery; refund can only cover the food portion.' }); if (!order.provider_reference) return res.status(409).json({ error: 'Paystack transaction reference is missing' }); const refundedResult = await pool.query(`select coalesce(sum(amount),0) as total from refunds where payment_id=$1 and status in ('PENDING','PROCESSING','PROCESSED')`, [order.payment_id]); const alreadyRefunded = Number(refundedResult.rows[0].total); const remaining = Number(order.paid_amount) - alreadyRefunded; if (requestedAmount > remaining + 0.0001) return res.status(400).json({ error: `Refund exceeds the remaining refundable amount (${remaining.toFixed(2)} KES)` }); const refund = await paystackRequest('/refund', { method: 'POST', body: JSON.stringify({ transaction: order.provider_reference, amount: String(Math.round(requestedAmount * 100)), currency: 'KES', customer_note: customerNote || undefined, merchant_note: merchantNote || undefined }) }); const data = refund.data || {}; const insert = await pool.query(`insert into refunds (id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,customer_note,merchant_note) values (gen_random_uuid(),$1,$2,'PAYSTACK',$3,$4,$5,'KES',$6,$7,$8) returning *`, [order.id, order.payment_id, data.id ? String(data.id) : null, order.provider_reference, requestedAmount, String(data.status || 'pending').toUpperCase(), customerNote || null, merchantNote || null, idempotencyKey]); broadcastRealtime({ businessId: order.business_id, orderId: order.id, event: 'refund.updated', data: { orderId: order.id, refund: insert.rows[0] } }); res.status(201).json(insert.rows[0]); } catch (error) { res.status(500).json({ error: error.message || 'Unable to initiate refund' }); } });
 
 
 app.get('/api/riders/events', requireRiderModule, async(req,res)=>{

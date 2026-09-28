@@ -279,11 +279,15 @@ function smsApiBase() {
     : 'https://api.africastalking.com';
 }
 function requireSmsConfig() {
+  const environment=smsEnvironment();
   const username=String(process.env.AFRICASTALKING_USERNAME || '').trim();
   const apiKey=String(process.env.AFRICASTALKING_API_KEY || '').trim();
   const defaultSender=String(process.env.AFRICASTALKING_SENDER_ID || '').trim();
   if(!username || !apiKey) throw new Error('Africa\'s Talking SMS is not configured on the server');
-  return {username,apiKey,defaultSender};
+  if(environment==='sandbox' && username.toLowerCase()!=='sandbox') {
+    throw new Error('Sandbox mode requires AFRICASTALKING_USERNAME=sandbox and a Sandbox API key');
+  }
+  return {username,apiKey,defaultSender,environment};
 }
 function normalizeSenderId(value) {
   const sender=String(value||'').trim();
@@ -310,8 +314,15 @@ async function sendSms({businessId,to,message,senderId=null}) {
   const config=requireSmsConfig();
   const recipient=normalizeKenyanPhone(to);
   const settings=await getBusinessSmsSettings(businessId);
-  const sender=normalizeSenderId(senderId || settings.sender_id || config.defaultSender);
-  if(!sender) throw new Error('No SMS Sender ID is configured for this restaurant');
+
+  // Phase 1 uses Africa's Talking Sandbox. Sandbox messages go to the
+  // simulator, not a real handset, so do not send a live/tenant Sender ID.
+  // Live mode requires an approved Sender ID.
+  let sender='';
+  if(config.environment!=='sandbox') {
+    sender=normalizeSenderId(senderId || settings.sender_id || config.defaultSender);
+    if(!sender) throw new Error('No SMS Sender ID is configured for this restaurant');
+  }
   const body=new URLSearchParams({
     username:config.username,
     to:recipient,
@@ -328,7 +339,15 @@ async function sendSms({businessId,to,message,senderId=null}) {
   if(!response.ok || !recipientResult || String(recipientResult.statusCode)!=='101') {
     throw new Error(recipientResult?.status || data?.SMSMessageData?.Message || data?.message || `SMS provider request failed (${response.status})`);
   }
-  return {recipient:recipientResult.number || recipient,status:recipientResult.status || 'Success',statusCode:recipientResult.statusCode,messageId:recipientResult.messageId||null,cost:recipientResult.cost||null};
+  return {
+    recipient:recipientResult.number || recipient,
+    status:recipientResult.status || 'Success',
+    statusCode:recipientResult.statusCode,
+    messageId:recipientResult.messageId||null,
+    cost:recipientResult.cost||null,
+    environment:config.environment,
+    senderId:sender || null
+  };
 }
 async function sendRiderAssignmentSms({businessId,riderId,orderId}) {
   const riderResult=await pool.query('select r.name,r.phone,o.order_number,b.name as restaurant_name from riders r join orders o on o.id=$2 and o.business_id=$1 join businesses b on b.id=$1 where r.id=$3 and r.business_id=$1 limit 1',[businessId,orderId,riderId]);
@@ -737,6 +756,7 @@ app.get('/api/manager/sms-settings',requireManager,async(req,res)=>{
       senderId:config.sender_id||'',
       systemSenderId:serverSender,
       effectiveSenderId:config.sender_id||serverSender||'',
+      environment:smsEnvironment(),
       assignmentTemplate:config.assignment_template
     });
   }catch(e){res.status(500).json({error:e.message||'Unable to load SMS settings'});}

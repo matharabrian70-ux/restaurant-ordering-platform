@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node server.js",
     "migrate": "node migrate.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test": "node --test security-regression.test.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

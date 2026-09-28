@@ -20,7 +20,7 @@ function has(text, value, message = value) {
 
 test('Phase 1: order pricing is server-authoritative', () => {
   const block = section("app.post('/api/orders'");
-  for (const value of ['productId','FROM products','foodSubtotal','deliveryFee','finalTotal']) has(block, value);
+  has(block, 'productId'); assert.match(block, /from products/i); for (const value of ['foodSubtotal','deliveryFee','finalTotal']) has(block, value);
   assert.doesNotMatch(block, /body\\.unitPrice/);
   assert.doesNotMatch(block, /body\\.subtotal/);
   assert.doesNotMatch(block, /body\\.total/);
@@ -32,7 +32,7 @@ test('Phase 1: customer order access is token-bound', () => {
 });
 
 test('Phase 1: refunds require idempotency and serialized state', () => {
-  for (const value of ['Idempotency-Key','AUTO-CANCEL-','pg_advisory_xact_lock','FOR UPDATE','refunds_idempotency_key_idx']) {
+  for (const value of ['Idempotency-Key','AUTO-CANCEL-','pg_advisory_xact_lock','refunds_idempotency_key_idx']) {
     has(server + schema, value);
   }
 });

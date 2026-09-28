@@ -2,8 +2,8 @@
 'use strict';
 const API='https://restaurant-ordering-api-ow3p.onrender.com';
 const params=new URLSearchParams(location.search);
-const businessId=path.includes('platform-control')?null:(params.get('businessId')||'11111111-1111-4111-8111-111111111111');
 const path=location.pathname.toLowerCase();
+const businessId=path.includes('platform-control')?null:(params.get('businessId')||'11111111-1111-4111-8111-111111111111');
 const dashboard=path.includes('rider')?'RIDER':path.includes('manager')?'MANAGER':path.includes('station')?'ORDER_STATION':path.includes('checkout')?'CHECKOUT':path.includes('cart')?'CART':path.includes('order')?'ORDER_TRACKING':path.includes('records')?'CUSTOMER_RECORDS':path.includes('menu')||path.includes('index')?'CUSTOMER_MENU':path.includes('platform-control')?'CONTROL_CENTRE':'WEB';
 const sent=new Map();
 function report(message,stack,severity){

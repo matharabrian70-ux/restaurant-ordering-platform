@@ -226,7 +226,7 @@ function deliverySection(){
 function healthSection(){
   const h=state.health||{},tenants=h.tenants||[];
   return `<header class="pc-head compact"><div><span class="pc-kicker">DIAGNOSTICS</span><h1>System health.</h1><p>Infrastructure readiness plus a tenant-by-tenant diagnostic view.</p></div><button class="pc-btn" id="health-refresh">RUN FULL CHECK</button></header>
-  <section class="pc-panel">${healthPanel().replace(/^<section[^>]*>|<\\/section>$/g,'')}</section>
+  <section class="pc-panel">${healthPanel().replace(/^<section[^>]*>|<\/section>$/g,'')}</section>
   <section class="pc-panel"><div class="pc-panel-head"><div><span class="pc-kicker">TENANT DIAGNOSTICS</span><h2>Restaurant health matrix</h2></div></div><div class="pc-table-wrap"><table class="pc-table"><thead><tr><th>RESTAURANT</th><th>STATUS</th><th>PACKAGE</th><th>ISSUES</th><th></th></tr></thead><tbody>${tenants.map(t=>'<tr><td><strong>'+esc(t.name)+'</strong><small class="pc-cell-sub">'+esc(t.slug)+'</small></td><td><span class="pc-pill '+(t.status==='ACTIVE'?'active':'suspended')+'">'+esc(t.status)+'</span></td><td>'+esc(t.planKey||'—')+'</td><td>'+esc(t.issues?.join(' · ')||'NONE')+'</td><td><button class="pc-mini pc-open" data-id="'+esc(t.id)+'">INSPECT</button></td></tr>').join('')}</tbody></table></div></section>`;
 }
 

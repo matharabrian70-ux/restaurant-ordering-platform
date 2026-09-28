@@ -15,10 +15,124 @@ const port = Number(process.env.PORT || 3000);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false });
 const PAYSTACK_API = 'https://api.paystack.co';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://matharabrian70-ux.github.io/restaurant-ordering-platform';
-// Temporary prototype mode: keep the rider module available for end-to-end testing.
+// Phase 2 security controls are intentionally backend-only; dashboard structure is unchanged.
 const RIDER_MODULE_ENABLED = String(process.env.RIDER_MODULE_ENABLED || 'true').toLowerCase() === 'true';
 
-app.use(cors());
+function parsePositiveInt(value, fallback, min, max) {
+  const n = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback;
+}
+
+const SESSION_TTLS = {
+  managerHours: parsePositiveInt(process.env.MANAGER_SESSION_HOURS, 12, 1, 72),
+  riderHours: parsePositiveInt(process.env.RIDER_SESSION_HOURS, 168, 1, 720),
+  stationHours: parsePositiveInt(process.env.STATION_SESSION_HOURS, 168, 1, 720),
+  controlHours: parsePositiveInt(process.env.CONTROL_SESSION_HOURS, 12, 1, 72),
+};
+
+const allowedCorsOrigins = new Set(
+  [FRONTEND_URL, ...(String(process.env.CORS_ALLOWED_ORIGINS || '').split(',').map(v => v.trim()).filter(Boolean))]
+    .map(v => { try { return new URL(v).origin; } catch { return ''; } })
+    .filter(Boolean)
+);
+
+app.set('trust proxy', 1);
+
+const rateLimitBuckets = new Map();
+function clientIp(req) {
+  return String(req.ip || req.socket?.remoteAddress || 'unknown');
+}
+function rateLimit({ windowMs = 60_000, max = 60, keyFn = clientIp, message = 'Too many requests. Please try again later.' } = {}) {
+  return (req, res, next) => {
+    const now = Date.now();
+    const key = String(keyFn(req));
+    let bucket = rateLimitBuckets.get(key);
+    if (!bucket || now >= bucket.resetAt) {
+      bucket = { count: 0, resetAt: now + windowMs };
+      rateLimitBuckets.set(key, bucket);
+    }
+    bucket.count += 1;
+    const remaining = Math.max(0, max - bucket.count);
+    res.setHeader('X-RateLimit-Limit', String(max));
+    res.setHeader('X-RateLimit-Remaining', String(remaining));
+    res.setHeader('X-RateLimit-Reset', String(Math.ceil(bucket.resetAt / 1000)));
+    if (bucket.count > max) {
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))));
+      return res.status(429).json({ error: message });
+    }
+    next();
+  };
+}
+
+// Prevent an unbounded in-memory limiter map on a long-running Render instance.
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of rateLimitBuckets) {
+    if (now >= bucket.resetAt) rateLimitBuckets.delete(key);
+  }
+}, 60_000).unref?.();
+
+const apiRateLimit = rateLimit({
+  windowMs: 60_000,
+  max: parsePositiveInt(process.env.API_RATE_LIMIT_PER_MINUTE, 180, 60, 600),
+  keyFn: req => `${clientIp(req)}:${req.method}:${req.path}`,
+});
+const authRateLimit = rateLimit({
+  windowMs: 10 * 60_000,
+  max: parsePositiveInt(process.env.AUTH_RATE_LIMIT_PER_10_MIN, 8, 3, 30),
+  keyFn: req => `auth:${clientIp(req)}`,
+  message: 'Too many login attempts. Please wait before trying again.',
+});
+const googleRateLimit = rateLimit({
+  windowMs: 10 * 60_000,
+  max: parsePositiveInt(process.env.GOOGLE_RATE_LIMIT_PER_10_MIN, 5, 2, 20),
+  keyFn: req => `google:${clientIp(req)}`,
+  message: 'Too many Google sign-in attempts. Please wait before trying again.',
+});
+const quoteRateLimit = rateLimit({
+  windowMs: 60_000,
+  max: parsePositiveInt(process.env.DELIVERY_QUOTE_RATE_LIMIT_PER_MIN, 20, 5, 60),
+  keyFn: req => `quote:${clientIp(req)}:${String(req.body?.businessId || '')}`,
+  message: 'Too many delivery quote requests. Please wait before requesting another quote.',
+});
+const smsTestRateLimit = rateLimit({
+  windowMs: 10 * 60_000,
+  max: parsePositiveInt(process.env.SMS_TEST_RATE_LIMIT_PER_10_MIN, 3, 1, 10),
+  keyFn: req => `sms-test:${clientIp(req)}`,
+  message: 'Too many SMS test requests. Please wait before trying again.',
+});
+const stationPairRateLimit = rateLimit({
+  windowMs: 10 * 60_000,
+  max: 5,
+  keyFn: req => `station-pair:${clientIp(req)}`,
+  message: 'Too many device-pairing attempts. Please wait and try again.',
+});
+
+const corsOptions = {
+  origin(origin, callback) {
+    // Non-browser clients and same-origin requests do not send Origin.
+    if (!origin) return callback(null, true);
+    let normalized = '';
+    try { normalized = new URL(origin).origin; } catch {}
+    if (allowedCorsOrigins.has(normalized)) return callback(null, normalized);
+    return callback(new Error('CORS origin not allowed'));
+  },
+  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Refund-Admin-Key'],
+  optionsSuccessStatus: 204,
+  maxAge: 600,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+app.use('/api', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'geolocation=(self), camera=(), microphone=()');
+  next();
+});
+app.use('/api', apiRateLimit);
 app.use(express.json({ limit: '2mb', verify: (req, _res, buf) => { req.rawBody = Buffer.from(buf); } }));
 
 // Optional advanced module flag. The core ordering system remains usable when disabled.
@@ -389,9 +503,27 @@ async function getBusinessSmsSettings(businessId) {
   if(!r.rowCount) throw new Error('Restaurant not found');
   return r.rows[0];
 }
+const smsSpendBuckets = new Map();
+function consumeSmsBudget(key, windowMs, max) {
+  const now=Date.now();
+  let bucket=smsSpendBuckets.get(key);
+  if(!bucket || now>=bucket.resetAt){ bucket={count:0,resetAt:now+windowMs}; smsSpendBuckets.set(key,bucket); }
+  if(bucket.count>=max) return false;
+  bucket.count += 1;
+  return true;
+}
+setInterval(() => {
+  const now=Date.now();
+  for(const [key,bucket] of smsSpendBuckets) if(now>=bucket.resetAt) smsSpendBuckets.delete(key);
+},60_000).unref?.();
+
 async function sendSms({businessId,to,message,senderId=null,riderId=null,orderId=null,purpose='ASSIGNMENT'}) {
   const config=requireSmsConfig();
   const recipient=normalizeKenyanPhone(to);
+  // Protect the paid provider from accidental retry loops and repeated assignment spam.
+  const recipientBudget = consumeSmsBudget(`recipient:${recipient}`, 10*60_000, parsePositiveInt(process.env.SMS_MAX_PER_RECIPIENT_PER_10_MIN, 3, 1, 10));
+  const businessBudget = consumeSmsBudget(`business:${businessId}`, 10*60_000, parsePositiveInt(process.env.SMS_MAX_PER_BUSINESS_PER_10_MIN, 30, 5, 200));
+  if(!recipientBudget || !businessBudget) throw new Error('SMS sending is temporarily rate limited for this recipient or restaurant');
   const settings=await getBusinessSmsSettings(businessId);
 
   // Sandbox deliberately omits the Sender ID. Production requires a Sender ID
@@ -678,7 +810,7 @@ app.post('/api/manager/login', async (req,res)=>{
       await pool.query('update manager_users set password_hash=$1 where id=$2',[hashManagerPassword(password),manager.id]);
     }
     const token=crypto.randomBytes(32).toString('hex');
-    await pool.query('insert into manager_sessions(id,manager_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval \'30 days\')',[manager.id,hashSessionToken(token)]);
+    await pool.query('insert into manager_sessions(id,manager_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))',[manager.id,hashSessionToken(token),SESSION_TTLS.managerHours]);
     await pool.query('update manager_users set last_login_at=now() where id=$1',[manager.id]);
     res.json({token,manager:{id:manager.id,businessId:manager.business_id,name:manager.name,email:manager.email,role:manager.role}});
   }catch(error){res.status(500).json({error:error.message||'Unable to sign in manager'});}
@@ -878,7 +1010,7 @@ app.put('/api/manager/sms-settings',requireManager,async(req,res)=>{
     res.json(await getBusinessSmsSettings(req.manager.business_id));
   }catch(e){res.status(400).json({error:e.message||'Unable to save SMS settings'});}
 });
-app.post('/api/manager/sms-test',requireManager,async(req,res)=>{
+app.post('/api/manager/sms-test', smsTestRateLimit,requireManager,async(req,res)=>{
   try{
     const phone=normalizeKenyanPhone(req.body.phone);
     const settings=await getBusinessSmsSettings(req.manager.business_id);
@@ -1204,7 +1336,7 @@ app.post('/api/orders/:id/status', requireManagerOrder, async (req, res) => { tr
     broadcastOrder(result.rows[0], { reason: 'restaurant.accepted' });
     res.json(result.rows[0]); } catch { res.status(500).json({ error: 'Unable to update order status' }); } });
 app.post('/api/orders/:id/cancel', requireCustomerOrder, async (req, res) => { const client = await pool.connect(); try { let order; try { await client.query('begin'); const result = await client.query(`select * from orders where id=$1 for update`, [req.params.id]); if (!result.rowCount) { await client.query('rollback'); return res.status(404).json({ error: 'Order not found' }); } order = result.rows[0]; if (order.status !== 'NEW') { await client.query('rollback'); return res.status(409).json({ error: 'This order can no longer be cancelled because the restaurant has accepted it.' }); } await client.query(`update orders set status='CANCELLED' where id=$1`, [order.id]); const updated = await client.query(`select * from orders where id=$1`, [order.id]); await client.query('commit'); order = updated.rows[0]; broadcastOrder(order, { reason: 'customer.cancelled' }); } catch (error) { try { await client.query('rollback'); } catch {} throw error; } let refund = null; if (order.payment_status === 'PAID') refund = await initiateRefundForOrder(order.id, 'Customer cancelled before restaurant acceptance', 'Automatic cancellation refund'); const latest = await pool.query(`select * from orders where id=$1`, [order.id]); res.json({ order: latest.rows[0], refund }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to cancel order' }); } finally { client.release(); } });
-app.post('/api/delivery/quote', async (req,res)=>{
+app.post('/api/delivery/quote', quoteRateLimit, async (req,res)=>{
   try{
     const {businessId,pickupAddress,deliveryAddress}=req.body;
     if(!businessId||!pickupAddress||!deliveryAddress) return res.status(400).json({error:'businessId, pickupAddress and deliveryAddress are required'});
@@ -1358,7 +1490,7 @@ app.get('/api/riders/events', requireRiderModule, async(req,res)=>{
   }catch(error){res.status(500).json({error:error.message||'Unable to open rider events'});}
 });
 
-app.post('/api/riders/login', requireRiderModule, async(req,res)=>{
+app.post('/api/riders/login', authRateLimit, requireRiderModule, async(req,res)=>{
   try{
     const {businessId,phone,password}=req.body;
     if(!businessId||!phone||!password) return res.status(400).json({error:'Business, phone and password are required'});
@@ -1876,7 +2008,7 @@ app.post('/api/stations/:id/reactivate',requireManagerStation,async(req,res)=>{
   try{await pool.query('update restaurant_order_stations set active=true,updated_at=now() where id=$1',[req.params.id]);res.json({ok:true});}
   catch(e){res.status(500).json({error:e.message||'Unable to reactivate station'});}
 });
-app.post('/api/station/pair',async(req,res)=>{
+app.post('/api/station/pair',stationPairRateLimit,async(req,res)=>{
   res.setHeader('Cache-Control','no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma','no-cache');
   const client=await pool.connect();
@@ -2049,7 +2181,7 @@ async function ensurePlatformObservabilitySchema(){
 function platformSlug(value){
   return String(value||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,80);
 }
-app.post('/api/platform/login',async(req,res)=>{
+app.post('/api/platform/login', authRateLimit,async(req,res)=>{
   try{
     const email=String(req.body.email||'').trim().toLowerCase();
     const password=String(req.body.password||'');
@@ -2072,7 +2204,7 @@ app.post('/api/platform/login',async(req,res)=>{
       await pool.query('update platform_admin_users set password_hash=$1 where id=$2',[hashManagerPassword(password),admin.id]);
     }
     const token=crypto.randomBytes(32).toString('hex');
-    await pool.query("insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval '30 days')",[admin.id,hashSessionToken(token)]);
+    await pool.query("insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))",[admin.id,hashSessionToken(token)]);
     await pool.query('update platform_admin_users set last_login_at=now() where id=$1',[admin.id]);
     await recordPlatformAudit(admin.id,null,'PLATFORM_LOGIN','Platform owner signed in',{});
     res.json({token,admin:{id:admin.id,name:admin.name,email:admin.email}});
@@ -2080,7 +2212,7 @@ app.post('/api/platform/login',async(req,res)=>{
 });
 app.get('/api/platform/google/config',(req,res)=>res.json({clientId:String(process.env.GOOGLE_CLIENT_ID||'')}));
 
-app.post('/api/platform/google',async(req,res)=>{
+app.post('/api/platform/google',googleRateLimit,async(req,res)=>{
   try{
     const credential=String(req.body.credential||'').trim();
     const clientId=String(process.env.GOOGLE_CLIENT_ID||'').trim();
@@ -2448,7 +2580,7 @@ app.patch('/api/platform/businesses/:id',requirePlatformAdmin,async(req,res)=>{
 });
 
 
-app.post('/api/control/login',async(req,res)=>{
+app.post('/api/control/login',authRateLimit,async(req,res)=>{
   try{
     const email=String(req.body.email||'').trim().toLowerCase(),password=String(req.body.password||'');
     if(!email||!password)return res.status(400).json({error:'Email and password are required'});

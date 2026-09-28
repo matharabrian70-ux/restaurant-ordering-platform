@@ -840,7 +840,7 @@ app.post('/api/manager/google', googleRateLimit, async (req,res)=>{
     const manager=result.rows[0];
     if(!manager) return res.status(403).json({error:'Manager account is not configured'});
     const token=crypto.randomBytes(32).toString('hex');
-    await pool.query('insert into manager_sessions(id,manager_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval \'30 days\')',[manager.id,hashSessionToken(token)]);
+    await pool.query('insert into manager_sessions(id,manager_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))',[manager.id,hashSessionToken(token),SESSION_TTLS.managerHours]);
     await pool.query('update manager_users set last_login_at=now() where id=$1',[manager.id]);
     res.json({token,manager:{id:manager.id,businessId:manager.business_id,name:manager.name,email:manager.email,role:manager.role}});
   }catch(error){res.status(500).json({error:error.message||'Unable to sign in with Google'});}
@@ -1498,7 +1498,7 @@ app.post('/api/riders/login', authRateLimit, requireRiderModule, async(req,res)=
     const result=await pool.query(`select r.*,a.password_hash from riders r join rider_auth a on a.rider_id=r.id where r.business_id=$1 and r.phone=$2 and r.active=true and r.rider_status='ACTIVE'`,[businessId,normalized]);
     if(!result.rowCount||!verifyPassword(password,result.rows[0].password_hash)) return res.status(401).json({error:'Invalid rider login'});
     const token=crypto.randomBytes(32).toString('hex');
-    await pool.query('insert into rider_sessions(id,rider_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval \'30 days\')',[result.rows[0].id,hashSessionToken(token)]);
+    await pool.query('insert into rider_sessions(id,rider_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))',[result.rows[0].id,hashSessionToken(token),SESSION_TTLS.riderHours]);
     await pool.query('update rider_auth set last_login_at=now() where rider_id=$1',[result.rows[0].id]);
     await pool.query(`insert into rider_presence(rider_id,online) values($1,true) on conflict(rider_id) do update set online=true,updated_at=now()`,[result.rows[0].id]);
     await pool.query(`insert into business_connections(business_id,rider_connected,updated_at) values($1,true,now()) on conflict(business_id) do update set rider_connected=true,updated_at=now()`,[businessId]);
@@ -2023,7 +2023,7 @@ app.post('/api/station/pair',stationPairRateLimit,async(req,res)=>{
     const row=r.rows[0];
     await client.query('update station_pairing_tokens set used_at=now() where id=$1',[row.id]);
     const sessionToken=crypto.randomBytes(32).toString('hex');
-    await client.query('insert into station_sessions(id,station_id,token_hash,expires_at,last_seen_at) values(gen_random_uuid(),$1,$2,now()+interval \'30 days\',now())',[row.station_id,hashSessionToken(sessionToken)]);
+    await client.query('insert into station_sessions(id,station_id,token_hash,expires_at,last_seen_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3),now())',[row.station_id,hashSessionToken(sessionToken),SESSION_TTLS.stationHours]);
     await client.query('update restaurant_order_stations set last_seen_at=now(),updated_at=now() where id=$1',[row.station_id]);
     await client.query('commit');
     res.json({token:sessionToken,expiresInSeconds:30*24*60*60,station:{id:row.station_id,businessId:row.business_id,name:row.name,deviceType:row.device_type,mode:row.mode}});
@@ -2596,7 +2596,7 @@ app.post('/api/control/login',authRateLimit,async(req,res)=>{
     const admin=r.rows[0];
     if(!admin||!verifyManagerPassword(password,admin.password_hash))return res.status(401).json({error:'Invalid control centre login'});
     const token=crypto.randomBytes(32).toString('hex');
-    await pool.query('insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+interval \'30 days\')',[admin.id,hashSessionToken(token)]);
+    await pool.query('insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))',[admin.id,hashSessionToken(token),SESSION_TTLS.controlHours]);
     await pool.query('update platform_admin_users set last_login_at=now() where id=$1',[admin.id]);
     res.json({token,admin:{id:admin.id,name:admin.name,email:admin.email}});
   }catch(e){res.status(500).json({error:e.message||'Unable to sign in to control centre'});}

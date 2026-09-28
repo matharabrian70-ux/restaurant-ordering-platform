@@ -298,3 +298,25 @@
 @media(max-width:600px){.payment-summary strong{font-size:23px}.payment-summary article{padding:13px}.payment-ledger-panel{padding:14px}.payment-main{display:grid}.payment-amount{text-align:left}.payment-meta{grid-template-columns:1fr 1fr}.payment-actions{justify-content:stretch}.payment-actions button{width:100%}}
 
 .sms-status-stack{display:grid;justify-items:end;gap:6px}.sms-environment-badge{font-size:10px;font-weight:950;letter-spacing:.12em;padding:6px 9px;border:1px solid var(--line);background:#f4f7f2;color:var(--accent)}.sms-sandbox-note{display:flex;gap:12px;align-items:flex-start;margin:0 0 18px;padding:12px 14px;border:1px solid #cce2ce;background:#edf7ee;color:#355b3d}.sms-sandbox-note strong{font-size:10px;letter-spacing:.12em;white-space:nowrap}.sms-sandbox-note span{font-size:12px;color:var(--muted)}@media(max-width:650px){.sms-status-stack{justify-items:start}.sms-sandbox-note{display:grid;gap:5px}}
+
+.sms-log-box{display:grid;gap:14px;background:#fff;border:1px solid var(--line);padding:20px}
+.sms-log-box .panel-title{margin-bottom:0}
+.sms-log-list{display:grid;gap:8px}
+.sms-log-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:15px;padding:12px;border:1px solid var(--line);background:var(--paper);border-radius:10px}
+.sms-log-main{min-width:0;display:grid;gap:3px}
+.sms-log-main strong{font-size:10px;letter-spacing:.08em}
+.sms-log-main span{font-size:11px;font-weight:800}
+.sms-log-main small{color:var(--muted);font-size:10px;line-height:1.45;overflow-wrap:anywhere}
+.sms-log-meta{display:grid;justify-items:end;gap:3px;text-align:right;font-size:9px;color:var(--muted);min-width:150px}
+.sms-log-meta time{font-size:8px}
+.sms-log-meta em{max-width:280px;color:#a2473f;font-size:8px;font-style:normal;overflow-wrap:anywhere}
+.sms-log-status{padding:5px 8px;border-radius:999px;border:1px solid var(--line);font-size:8px;letter-spacing:.07em}
+.sms-log-status.accepted{background:#edf7ef;color:#246d35;border-color:#cfe2d2}
+.sms-log-status.failed{background:#fff0ef;color:#a2473f;border-color:#e8c9c6}
+.sms-log-status.pending{background:#fff8e9;color:#8b641d;border-color:#ead9ad}
+@media(max-width:650px){
+  .sms-log-box{padding:14px}
+  .sms-log-row{grid-template-columns:1fr}
+  .sms-log-meta{justify-items:start;text-align:left;min-width:0}
+  .sms-log-meta em{max-width:none}
+}

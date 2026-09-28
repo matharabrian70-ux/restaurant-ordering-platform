@@ -53,7 +53,8 @@ create table if not exists orders (
   accepted_at timestamptz,
   out_for_delivery_at timestamptz,
   delivered_at timestamptz,
-  unique (business_id, order_number)
+  unique (business_id, order_number),
+  customer_access_token_hash text
 );
 
 create table if not exists order_items (
@@ -110,7 +111,8 @@ create table if not exists refunds (
   customer_note text,
   merchant_note text,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  idempotency_key text
 );
 
 create table if not exists receipts (
@@ -130,6 +132,8 @@ create index if not exists trips_rider_idx on rider_trips(rider_id, completed_at
 create unique index if not exists rider_active_trip_idx on rider_trips(rider_id) where completed_at is null;
 create unique index if not exists payments_provider_reference_idx on payments(provider_reference) where provider_reference is not null;
 create unique index if not exists refunds_provider_refund_id_idx on refunds(provider_refund_id) where provider_refund_id is not null;
+create unique index if not exists refunds_idempotency_key_idx on refunds(idempotency_key) where idempotency_key is not null;
+create unique index if not exists orders_customer_access_token_idx on orders(customer_access_token_hash) where customer_access_token_hash is not null;
 create index if not exists refunds_order_idx on refunds(order_id, created_at desc);
 alter table receipts add column if not exists receipt_access_token text;
 create unique index if not exists receipts_access_token_idx on receipts(receipt_access_token) where receipt_access_token is not null;

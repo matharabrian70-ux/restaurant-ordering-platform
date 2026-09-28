@@ -124,7 +124,16 @@ async function logoutManager(){
   managerLogoutLocal();currentManager=null;showLogin('You have been signed out.');
 }
 
-async function loadSmsSettings(){try{D.smsConfig=await api('/api/manager/sms-settings')}catch(e){D.smsConfig={error:e.message}}}
+async function loadSmsSettings(){
+  try{
+    const [settings,log]=await Promise.all([api('/api/manager/sms-settings'),api('/api/manager/sms-log')]);
+    D.smsConfig=settings;
+    D.smsLog=Array.isArray(log)?log:[];
+  }catch(e){
+    D.smsConfig={error:e.message};
+    D.smsLog=[];
+  }
+}
 
 async function loadPhase4Ops(){
   try{D.dispatch=await api('/api/manager/dispatch')}catch(e){D.dispatch={error:e.message,riders:[],unassigned:[],active:[],summary:{}}}
@@ -231,7 +240,15 @@ function smsSettings(){
   '<div class="sms-settings-grid"><section><h3>Sender ID</h3><p class="sms-help">The restaurant override is used when it is set. Otherwise the platform Sender ID from Render is used. Only use a Sender ID that Africa\'s Talking has approved for this account.</p><label>Restaurant Sender ID<input id="sms-sender-id" maxlength="11" value="'+esc(s.senderId||'')+'" placeholder="Leave blank to use system default"></label><small>Maximum 11 characters, no spaces. The ID must already be registered with Africa\'s Talking.</small><div class="sms-system-default"><span>System default</span><strong>'+esc(s.systemSenderId||'Not configured')+'</strong></div></section>'+
   '<section><h3>Assignment message</h3><label class="sms-toggle"><input id="sms-enabled" type="checkbox" '+(s.enabled!==false?'checked':'')+'><span><b>Send SMS automatically</b><small>Send immediately after a rider is assigned.</small></span></label><label>Message template<textarea id="sms-template" maxlength="320">'+esc(template)+'</textarea></label><small>Variables: {restaurant}, {order}, {rider}, {dashboard}</small></section></div>'+
   '<div class="sms-settings-actions"><button id="sms-save-button" class="btn" onclick="saveSmsSettings()">SAVE SMS SETTINGS</button></div>'+
-  '<div class="sms-test-box"><div><span class="eyebrow">TEST WITHOUT AN ORDER</span><h3>Send a test SMS</h3><p>Use this to test the provider without creating an order or calculating a Google route.</p></div><div class="sms-test-grid"><label>Test phone number<input id="sms-test-phone" inputmode="tel" placeholder="+2547XXXXXXXX"></label><label>Test message<textarea id="sms-test-message" maxlength="918" placeholder="Leave blank to use your saved assignment template with a demo order."></textarea></label><button id="sms-test-button" class="btn secondary" onclick="sendSmsTest()">SEND TEST SMS</button></div></div></section>';
+  '<div class="sms-test-box"><div><span class="eyebrow">TEST WITHOUT AN ORDER</span><h3>Send a test SMS</h3><p>Use this to test the provider without creating an order or calculating a Google route.</p></div><div class="sms-test-grid"><label>Test phone number<input id="sms-test-phone" inputmode="tel" placeholder="+2547XXXXXXXX"></label><label>Test message<textarea id="sms-test-message" maxlength="918" placeholder="Leave blank to use your saved assignment template with a demo order."></textarea></label><button id="sms-test-button" class="btn secondary" onclick="sendSmsTest()">SEND TEST SMS</button></div></div>'+
+  smsLogPanel()+'</section>';
+}
+function smsLogPanel(){
+  const rows=Array.isArray(D.smsLog)?D.smsLog:[];
+  const statusClass=v=>String(v||'').toLowerCase();
+  return '<div class="sms-log-box"><div class="panel-title"><div><span class="eyebrow">PHASE 2 · DELIVERY LOG</span><h3>Recent SMS activity</h3><p>Every test and rider-assignment message is recorded here for this restaurant.</p></div><button class="btn btn-small secondary" onclick="loadSmsSettings().then(()=>render())">REFRESH LOG</button></div>'+
+    (rows.length?'<div class="sms-log-list">'+rows.map(x=>'<article class="sms-log-row"><div class="sms-log-main"><strong>'+esc(x.purpose||'SMS')+'</strong><span>'+esc(x.recipient||'')+(x.rider_name?' · '+esc(x.rider_name):'')+(x.order_number?' · '+esc(x.order_number):'')+'</span><small>'+esc(x.message||'')+'</small></div><div class="sms-log-meta"><b class="sms-log-status '+statusClass(x.status)+'">'+esc(x.status||'UNKNOWN')+'</b><span>'+esc(x.sender_id||'Platform default')+'</span><time>'+esc(new Date(x.created_at).toLocaleString())+'</time>'+(x.error_message?'<em>'+esc(x.error_message)+'</em>':'')+'</div></article>').join('')+'</div>':'<div class="empty-state">No SMS activity yet.</div>')+
+    '</div>';
 }
 function overview(){const o=D.orders||[],n=o.filter(x=>x.status==='NEW'&&x.payment_status==='PAID').length,p=o.filter(x=>x.status==='ACCEPTED').length,d=o.filter(x=>x.status==='OUT_FOR_DELIVERY').length,c=o.filter(x=>x.status==='DELIVERED').length;return '<div class="manager-grid two"><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">ORDER FLOW</span><h2>Today\'s operation</h2></div><button class="btn btn-small" onclick="T=\'orders\';render()">OPEN ORDERS</button></div><div class="flow-grid"><button onclick="orderFilter=\'NEW\';T=\'orders\';render()"><b>'+n+'</b><span>New paid</span></button><button onclick="orderFilter=\'ACCEPTED\';T=\'orders\';render()"><b>'+p+'</b><span>Preparing</span></button><button onclick="orderFilter=\'OUT_FOR_DELIVERY\';T=\'orders\';render()"><b>'+d+'</b><span>Out for delivery</span></button></div></section><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">QUICK ACTIONS</span><h2>Restaurant controls</h2></div></div><div class="quick-grid"><button class="quick-action" onclick="T=\'menu\';render()">＋ Add menu item</button><button class="quick-action" onclick="T=\'promotions\';render()">＋ Create offer</button><button class="quick-action" onclick="T=\'riders\';render()">＋ Add rider</button><button class="quick-action" onclick="T=\'station\';render()">▣ Configure order station</button></div></section></div>'+alertsPanel()+'<section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">LATEST ACTIVITY</span><h2>Recent orders</h2></div></div>'+rows(o.slice(0,8))+'</section>'}
 function rows(a){return a.length?'<div class="order-table">'+a.map(o=>'<div class="order-row"><div><b>'+esc(o.order_number)+'</b><span>'+esc(o.name)+' · '+esc(o.phone)+'</span></div><div><span class="status-chip '+o.status.toLowerCase()+'">'+esc(o.status)+'</span><strong>'+money(o.total)+'</strong></div></div>').join('')+'</div>':'<div class="empty-state">No orders yet.</div>'}

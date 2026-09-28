@@ -250,6 +250,26 @@ async function ensureSmsSchema() {
       updated_at timestamptz not null default now()
     );
     create index if not exists business_sms_settings_enabled_idx on business_sms_settings(business_id,enabled);
+    create table if not exists sms_message_log (
+      id uuid primary key,
+      business_id uuid not null references businesses(id) on delete cascade,
+      rider_id uuid references riders(id) on delete set null,
+      order_id uuid references orders(id) on delete set null,
+      recipient text not null,
+      sender_id text,
+      message text not null,
+      purpose text not null default 'ASSIGNMENT',
+      environment text not null default 'production',
+      status text not null default 'PENDING',
+      provider_status text,
+      provider_message_id text,
+      provider_cost text,
+      error_message text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+    create index if not exists sms_message_log_business_idx on sms_message_log(business_id,created_at desc);
+    create index if not exists sms_message_log_rider_idx on sms_message_log(rider_id,created_at desc);
   `);
 }
 
@@ -310,44 +330,66 @@ async function getBusinessSmsSettings(businessId) {
   if(!r.rowCount) throw new Error('Restaurant not found');
   return r.rows[0];
 }
-async function sendSms({businessId,to,message,senderId=null}) {
+async function sendSms({businessId,to,message,senderId=null,riderId=null,orderId=null,purpose='ASSIGNMENT'}) {
   const config=requireSmsConfig();
   const recipient=normalizeKenyanPhone(to);
   const settings=await getBusinessSmsSettings(businessId);
 
-  // Phase 1 uses Africa's Talking Sandbox. Sandbox messages go to the
-  // simulator, not a real handset, so do not send a live/tenant Sender ID.
-  // Live mode requires an approved Sender ID.
+  // Sandbox deliberately omits the Sender ID. Production requires a Sender ID
+  // that Africa's Talking has approved for this account.
   let sender='';
   if(config.environment!=='sandbox') {
     sender=normalizeSenderId(senderId || settings.sender_id || config.defaultSender);
     if(!sender) throw new Error('No SMS Sender ID is configured for this restaurant');
   }
-  const body=new URLSearchParams({
-    username:config.username,
-    to:recipient,
-    message:String(message).slice(0,918),
-    ...(sender?{from:sender}:{}),
-  });
-  const response=await fetch(smsApiBase()+'/version1/messaging',{
-    method:'POST',
-    headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8','apiKey':config.apiKey,'Accept':'application/json'},
-    body:body.toString()
-  });
-  const data=await response.json().catch(()=>({}));
-  const recipientResult=data?.SMSMessageData?.Recipients?.[0];
-  if(!response.ok || !recipientResult || String(recipientResult.statusCode)!=='101') {
-    throw new Error(recipientResult?.status || data?.SMSMessageData?.Message || data?.message || `SMS provider request failed (${response.status})`);
+
+  const logId=crypto.randomUUID();
+  const bodyMessage=String(message).slice(0,918);
+  await pool.query(`insert into sms_message_log
+    (id,business_id,rider_id,order_id,recipient,sender_id,message,purpose,environment,status)
+    values($1,$2,$3,$4,$5,$6,$7,$8,$9,'PENDING')`,
+    [logId,businessId,riderId||null,orderId||null,recipient,sender||null,bodyMessage,String(purpose||'ASSIGNMENT').toUpperCase(),config.environment]);
+
+  try {
+    const body=new URLSearchParams({
+      username:config.username,
+      to:recipient,
+      message:bodyMessage,
+      ...(sender?{from:sender}:{}),
+    });
+    const response=await fetch(smsApiBase()+'/version1/messaging',{
+      method:'POST',
+      headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8','apiKey':config.apiKey,'Accept':'application/json'},
+      body:body.toString()
+    });
+    const data=await response.json().catch(()=>({}));
+    const recipientResult=data?.SMSMessageData?.Recipients?.[0];
+    if(!response.ok || !recipientResult || String(recipientResult.statusCode)!=='101') {
+      const rawError=recipientResult?.status || data?.SMSMessageData?.Message || data?.message || `SMS provider request failed (${response.status})`;
+      const errorMessage=/InvalidSenderId/i.test(String(rawError))
+        ? `Africa's Talking rejected the Sender ID "${sender}". It must be an approved Sender ID for this SMS account.`
+        : String(rawError);
+      await pool.query('update sms_message_log set status=$1,error_message=$2,updated_at=now() where id=$3',['FAILED',errorMessage,logId]);
+      throw new Error(errorMessage);
+    }
+    await pool.query(`update sms_message_log set status='ACCEPTED',provider_status=$1,provider_message_id=$2,provider_cost=$3,updated_at=now() where id=$4`,
+      [recipientResult.status||'Success',recipientResult.messageId||null,recipientResult.cost||null,logId]);
+    return {
+      logId,
+      recipient:recipientResult.number || recipient,
+      status:recipientResult.status || 'Success',
+      statusCode:recipientResult.statusCode,
+      messageId:recipientResult.messageId||null,
+      cost:recipientResult.cost||null,
+      environment:config.environment,
+      senderId:sender || null
+    };
+  } catch(error) {
+    try {
+      await pool.query('update sms_message_log set status=case when status=\'PENDING\' then \'FAILED\' else status end,error_message=coalesce(error_message,$1),updated_at=now() where id=$2',[String(error.message||'SMS send failed'),logId]);
+    } catch {}
+    throw error;
   }
-  return {
-    recipient:recipientResult.number || recipient,
-    status:recipientResult.status || 'Success',
-    statusCode:recipientResult.statusCode,
-    messageId:recipientResult.messageId||null,
-    cost:recipientResult.cost||null,
-    environment:config.environment,
-    senderId:sender || null
-  };
 }
 async function sendRiderAssignmentSms({businessId,riderId,orderId}) {
   const riderResult=await pool.query('select r.name,r.phone,o.order_number,b.name as restaurant_name from riders r join orders o on o.id=$2 and o.business_id=$1 join businesses b on b.id=$1 where r.id=$3 and r.business_id=$1 limit 1',[businessId,orderId,riderId]);
@@ -363,7 +405,7 @@ async function sendRiderAssignmentSms({businessId,riderId,orderId}) {
     rider:rider.name,
     dashboard
   });
-  return sendSms({businessId,to:rider.phone,message});
+  return sendSms({businessId,to:rider.phone,message,riderId,purpose:'ASSIGNMENT'});
 }
 
 async function ensureIntegrationSchema() {
@@ -785,9 +827,25 @@ app.post('/api/manager/sms-test',requireManager,async(req,res)=>{
       dashboard:`${FRONTEND_URL.replace(/\/$/,'')}/rider.html?businessId=${encodeURIComponent(req.manager.business_id)}`
     });
     if(message.length>918)return res.status(400).json({error:'SMS message is too long'});
-    const result=await sendSms({businessId:req.manager.business_id,to:phone,message});
+    const result=await sendSms({businessId:req.manager.business_id,to:phone,message,purpose:'TEST'});
     res.json({ok:true,message:'SMS accepted by Africa\'s Talking',...result});
   }catch(e){res.status(400).json({error:e.message||'Unable to send test SMS'});}
+});
+
+app.get('/api/manager/sms-log',requireManager,async(req,res)=>{
+  try{
+    await ensureSmsSchema();
+    const result=await pool.query(`select l.id,l.recipient,l.sender_id,l.message,l.purpose,l.environment,l.status,
+      l.provider_status,l.provider_message_id,l.provider_cost,l.error_message,l.created_at,
+      l.rider_id,l.order_id,o.order_number,r.name as rider_name
+      from sms_message_log l
+      left join orders o on o.id=l.order_id
+      left join riders r on r.id=l.rider_id
+      where l.business_id=$1
+      order by l.created_at desc
+      limit 50`,[req.manager.business_id]);
+    res.json(result.rows);
+  }catch(e){res.status(500).json({error:e.message||'Unable to load SMS log'});}
 });
 
 app.get('/api/manager/me',requireManager,(req,res)=>res.json({id:req.manager.id,businessId:req.manager.business_id,name:req.manager.name,email:req.manager.email,role:req.manager.role}));

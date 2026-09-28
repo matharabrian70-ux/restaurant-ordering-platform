@@ -115,7 +115,7 @@ const corsOptions = {
     let normalized = '';
     try { normalized = new URL(origin).origin; } catch {}
     if (allowedCorsOrigins.has(normalized)) return callback(null, normalized);
-    return callback(new Error('CORS origin not allowed'));
+    return callback(null, false);
   },
   methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Refund-Admin-Key'],
@@ -124,7 +124,6 @@ const corsOptions = {
 };
 
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
 app.use('/api', (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');

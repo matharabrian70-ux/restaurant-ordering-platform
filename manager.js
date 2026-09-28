@@ -212,14 +212,22 @@ async function sendSmsTest(){
   const button=document.getElementById('sms-test-button');if(button)button.disabled=true;
   try{
     const result=await api('/api/manager/sms-test',{method:'POST',body:JSON.stringify({phone,message})});
-    alert('SMS accepted by Africa\'s Talking. Message ID: '+(result.messageId||'n/a'));
+    if(String(result.environment||'').toLowerCase()==='sandbox'){
+      alert('SMS accepted by Africa\'s Talking Sandbox. Check the Sandbox simulator/inbox. It will not arrive on the real phone. Message ID: '+(result.messageId||'n/a'));
+    }else{
+      alert('SMS accepted by Africa\'s Talking. Message ID: '+(result.messageId||'n/a'));
+    }
   }catch(e){alert(e.message)}finally{if(button)button.disabled=false}
 }
 function smsSettings(){
   const s=D.smsConfig||{};
   const template=s.assignmentTemplate||'You have a new delivery assignment from {restaurant}. Order {order}. Open your Rider Dashboard to view and accept it.';
   const effective=s.effectiveSenderId||'Not configured';
-  return '<section class="manager-panel sms-settings-panel"><div class="panel-title"><div><span class="eyebrow">SMS NOTIFICATIONS</span><h2>Rider assignment messages</h2><p>Configure how this restaurant’s riders are notified when they are assigned a delivery.</p></div><span class="sms-effective-badge">'+esc(effective)+'</span></div>'+
+  const environment=String(s.environment||'production').toUpperCase();
+  const sandboxNote=environment==='SANDBOX'
+    ? '<div class="sms-sandbox-note"><strong>PHASE 1 · SANDBOX TESTING</strong><span>Messages go to the Africa\'s Talking simulator, not a real phone. Sender IDs are intentionally not attached in Sandbox.</span></div>'
+    : '';
+  return '<section class="manager-panel sms-settings-panel"><div class="panel-title"><div><span class="eyebrow">SMS NOTIFICATIONS</span><h2>Rider assignment messages</h2><p>Configure how this restaurant’s riders are notified when they are assigned a delivery.</p></div><div class="sms-status-stack"><span class="sms-environment-badge">'+esc(environment)+'</span><span class="sms-effective-badge">'+esc(effective)+'</span></div></div>'+sandboxNote+
   '<div class="sms-settings-grid"><section><h3>Sender ID</h3><p class="sms-help">The restaurant override is used when it is set. Otherwise the platform Sender ID from Render is used. Only use a Sender ID that Africa\'s Talking has approved for this account.</p><label>Restaurant Sender ID<input id="sms-sender-id" maxlength="11" value="'+esc(s.senderId||'')+'" placeholder="Leave blank to use system default"></label><small>Maximum 11 characters, no spaces. The ID must already be registered with Africa\'s Talking.</small><div class="sms-system-default"><span>System default</span><strong>'+esc(s.systemSenderId||'Not configured')+'</strong></div></section>'+
   '<section><h3>Assignment message</h3><label class="sms-toggle"><input id="sms-enabled" type="checkbox" '+(s.enabled!==false?'checked':'')+'><span><b>Send SMS automatically</b><small>Send immediately after a rider is assigned.</small></span></label><label>Message template<textarea id="sms-template" maxlength="320">'+esc(template)+'</textarea></label><small>Variables: {restaurant}, {order}, {rider}, {dashboard}</small></section></div>'+
   '<div class="sms-settings-actions"><button id="sms-save-button" class="btn" onclick="saveSmsSettings()">SAVE SMS SETTINGS</button></div>'+

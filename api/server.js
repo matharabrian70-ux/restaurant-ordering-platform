@@ -2203,7 +2203,7 @@ app.post('/api/platform/login', authRateLimit,async(req,res)=>{
       await pool.query('update platform_admin_users set password_hash=$1 where id=$2',[hashManagerPassword(password),admin.id]);
     }
     const token=crypto.randomBytes(32).toString('hex');
-    await pool.query("insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))",[admin.id,hashSessionToken(token)]);
+    await pool.query("insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))",[admin.id,hashSessionToken(token),SESSION_TTLS.controlHours]);
     await pool.query('update platform_admin_users set last_login_at=now() where id=$1',[admin.id]);
     await recordPlatformAudit(admin.id,null,'PLATFORM_LOGIN','Platform owner signed in',{});
     res.json({token,admin:{id:admin.id,name:admin.name,email:admin.email}});

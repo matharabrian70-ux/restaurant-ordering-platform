@@ -17,7 +17,7 @@ function refundTimingText(status){
   if(s==='NEEDS-ATTENTION') return 'Paystack needs additional customer bank details before the refund can continue.';
   return 'Paystack currently states that customers can expect refunds within 3–10 working days. The exact timing depends on the payment processor and bank.';
 }
-async function loadRefunds(id){return fetch(`${ORDER_API_BASE}/api/orders/${encodeURIComponent(id)}/refunds`).then(r=>r.ok?r.json():[]).catch(()=>[]);}
+async function loadRefunds(id){return fetch(`${ORDER_API_BASE}/api/orders/${encodeURIComponent(id)}/refunds`,{headers:{Authorization:'Bearer '+getCustomerOrderToken()}}).then(r=>r.ok?r.json():[]).catch(()=>[]);}
 async function destroyCustomerLiveMap(){
   if(customerLiveMap){try{customerLiveMap.remove();}catch{}}
   customerLiveMap=null;customerLiveMarker=null;customerLiveDestinationMarker=null;customerLiveMapOrderId=null;
@@ -31,7 +31,7 @@ async function initCustomerLiveMap(order){
   if(!mapEl)return;
   try{
     const L=await loadLeaflet();
-    const response=await fetch(ORDER_API_BASE+'/api/orders/'+encodeURIComponent(order.id)+'/live-location');
+    const response=await fetch(ORDER_API_BASE+'/api/orders/'+encodeURIComponent(order.id)+'/live-location',{headers:{Authorization:'Bearer '+getCustomerOrderToken()}});
     if(!response.ok){
       if(statusEl)statusEl.textContent='Waiting for rider location…';
       customerLiveMap=L.map(mapEl,{zoomControl:true,attributionControl:true}).setView(
@@ -71,10 +71,10 @@ async function cancelCustomerOrder(id){
 }
 function showRefundMessage(text){const existing=document.getElementById('refund-toast');if(existing)existing.remove();document.body.insertAdjacentHTML('beforeend',`<div id="refund-toast" class="panel" style="position:fixed;left:20px;right:20px;bottom:20px;z-index:30;box-shadow:0 15px 40px rgba(0,0,0,.18)"><strong>${text}</strong></div>`);setTimeout(()=>document.getElementById('refund-toast')?.remove(),5000);}
 
-async function markOrderReceived(id,b){id=id||new URLSearchParams(location.search).get('id')||localStorage.getItem('doe_last_order');if(!id)return;b.disabled=true;b.textContent="UPDATING…";try{await fetch(ORDER_API_BASE+"/api/orders/"+encodeURIComponent(id)+"/confirm-delivery",{method:"POST",headers:{"Content-Type":"application/json"}});await renderRemoteOrder(false)}catch(err){b.disabled=false;b.textContent="MARK DELIVERED";alert(err.message||"Could not update the order.")}}
+async function markOrderReceived(id,b){id=id||new URLSearchParams(location.search).get('id')||localStorage.getItem('doe_last_order');if(!id)return;b.disabled=true;b.textContent="UPDATING…";try{await fetch(ORDER_API_BASE+"/api/orders/"+encodeURIComponent(id)+"/confirm-delivery",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+getCustomerOrderToken()}});await renderRemoteOrder(false)}catch(err){b.disabled=false;b.textContent="MARK DELIVERED";alert(err.message||"Could not update the order.")}}
 function connectCustomerEvents(orderId){
   const old=window.customerOrderEvents; if(old)old.close();
-  const source=new EventSource(`${ORDER_API_BASE}/api/events?businessId=${encodeURIComponent(window.CUSTOMER_ORDER_BUSINESS_ID||'11111111-1111-4111-8111-111111111111')}&orderId=${encodeURIComponent(orderId)}`);
+  const source=new EventSource(`${ORDER_API_BASE}/api/events?businessId=${encodeURIComponent(window.CUSTOMER_ORDER_BUSINESS_ID||'11111111-1111-4111-8111-111111111111')}&orderId=${encodeURIComponent(orderId)}&orderToken=${encodeURIComponent(getCustomerOrderToken())}`);
   window.customerOrderEvents=source;
   source.addEventListener('order.updated',()=>renderRemoteOrder(false));
   source.addEventListener('delivery.location',e=>{try{updateCustomerLiveLocation(JSON.parse(e.data||'{}'));}catch{}});
@@ -100,7 +100,7 @@ async function renderRemoteOrder(showLoading=true){
     if(status==='OUT_FOR_DELIVERY'&&o.rider_name)initCustomerLiveMap(o); else destroyCustomerLiveMap();
     connectCustomerEvents(id);
     if(paymentStatus!=='PAID'&&paymentStatus!=='REFUNDED'&&o.payment_method==='M-Pesa'&&localStorage.getItem('doe_last_payment_reference')&&status!=='CANCELLED'){
-      const reference=localStorage.getItem('doe_last_payment_reference');let attempts=0;const poll=async()=>{if(attempts++>=60)return;const check=await verifyPaystackPayment(reference).catch(()=>null);if(check?.status==='success'){localStorage.removeItem('doe_last_payment_reference');if(check.receiptToken){const u=new URL(location.href);u.searchParams.set('receipt',check.receiptToken);history.replaceState({},'',u.toString());}await renderRemoteOrder(false);return;}setTimeout(poll,3000);};setTimeout(poll,3000);
+      const reference=localStorage.getItem('doe_last_payment_reference');let attempts=0;const poll=async()=>{if(attempts++>=60)return;const check=await verifyPaystackPayment(reference,id).catch(()=>null);if(check?.status==='success'){localStorage.removeItem('doe_last_payment_reference');if(check.receiptToken){const u=new URL(location.href);u.searchParams.set('receipt',check.receiptToken);history.replaceState({},'',u.toString());}await renderRemoteOrder(false);return;}setTimeout(poll,3000);};setTimeout(poll,3000);
     }
   }catch(err){console.error(err);el.innerHTML='<div class="empty"><h2>We could not load this order.</h2><p>Please refresh and try again.</p><a class="btn" href="menu.html">Back to menu</a></div>';}
 }

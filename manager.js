@@ -212,7 +212,11 @@ async function sendSmsTest(){
   const button=document.getElementById('sms-test-button');if(button)button.disabled=true;
   try{
     const result=await api('/api/manager/sms-test',{method:'POST',body:JSON.stringify({phone,message})});
-    alert('SMS accepted by Africa\'s Talking. Message ID: '+(result.messageId||'n/a'));
+    if(String(result.environment||'').toLowerCase()==='sandbox'){
+      alert('SMS accepted by Africa\'s Talking Sandbox. Check the Sandbox simulator/inbox. It will not arrive on the real phone. Message ID: '+(result.messageId||'n/a'));
+    }else{
+      alert('SMS accepted by Africa\'s Talking. Message ID: '+(result.messageId||'n/a'));
+    }
   }catch(e){alert(e.message)}finally{if(button)button.disabled=false}
 }
 function smsSettings(){

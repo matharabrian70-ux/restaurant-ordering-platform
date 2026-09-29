@@ -9,7 +9,7 @@ import { registerMenuEngine } from './menu-engine.js';
 import { registerPosEngine } from './pos-engine.js';
 import { registerCustomerGrowth } from './customer-growth.js';
 import { registerAdvancedOperations } from './advanced-operations.js';
-import { registerIntelligence } from './intelligence.js';
+import { registerIntelligence, runIntelligenceSweep } from './intelligence.js';
 import { registerBrandingEngine } from './branding-engine.js';
 import { registerReceiptEngine, ensureReceipt } from './receipt-engine.js';
 
@@ -3389,6 +3389,8 @@ async function startServer(){
   await ensurePhase1SecuritySchema();
   await ensurePhase3SecuritySchema();
   await cleanupSecurityArtifacts();
+  await runIntelligenceSweep(pool);
+  setInterval(() => runIntelligenceSweep(pool), 6 * 60 * 60_000).unref?.();
   setInterval(cleanupSecurityArtifacts,30*60_000).unref?.();
   await ensureSmsSchema();
   await ensurePlatformObservabilitySchema();

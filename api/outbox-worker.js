@@ -31,7 +31,7 @@ async function processBatch(){
         await publish({...row,payload:row.payload});
         await pool.query(`update outbox_events set status='PUBLISHED',processed_at=now(),last_error=null where id=$1`,[row.id]);
       }catch(error){
-        await pool.query(`update outbox_events set status='FAILED',available_at=now()+interval '15 seconds',last_error=$2 where id=$1`,[row.id],error.message.slice(0,1000));
+        await pool.query(`update outbox_events set status='FAILED',available_at=now()+interval '15 seconds',last_error=$2 where id=$1`,[row.id,error.message.slice(0,1000)]);
       }
     }
   }catch(error){try{await client.query('rollback')}catch{}console.error('Outbox worker error',error)}

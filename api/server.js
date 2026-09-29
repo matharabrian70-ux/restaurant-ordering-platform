@@ -2611,6 +2611,25 @@ app.post('/api/platform/logout',requirePlatformAdmin,async(req,res)=>{
   try{await pool.query('delete from platform_admin_sessions where id=$1',[req.platformAdmin.session_id]);res.json({ok:true});}
   catch(e){res.status(500).json({error:'Unable to sign out'});}
 });
+app.get('/api/platform/external-api-usage',requirePlatformAdmin,async(req,res)=>{
+  try{
+    const businessId=String(req.query.businessId||'').trim();
+    const limit=Math.min(Math.max(Number(req.query.limit||100),1),500);
+    const usage=await pool.query(`select u.business_id,b.name as business_name,u.provider,u.operation,u.period_type,u.period_key,u.request_count,u.updated_at
+      from external_api_usage_buckets u join businesses b on b.id=u.business_id
+      ${businessId?'where u.business_id=$1':''}
+      order by u.updated_at desc limit ${businessId?'$2':'$1'}`,businessId?[businessId,limit]:[limit]);
+    const alerts=await pool.query(`select a.*,b.name as business_name from external_api_usage_alerts a join businesses b on b.id=a.business_id
+      ${businessId?'where a.business_id=$1':''}
+      order by a.created_at desc limit ${businessId?'$2':'$1'}`,businessId?[businessId,limit]:[limit]);
+    res.json({usage:usage.rows,alerts:alerts.rows,quotas:{
+      googleRoutes:{daily:EXTERNAL_API_DAILY_ROUTE_QUOTA,monthly:EXTERNAL_API_MONTHLY_ROUTE_QUOTA},
+      sms:{daily:EXTERNAL_API_DAILY_SMS_QUOTA,monthly:EXTERNAL_API_MONTHLY_SMS_QUOTA},
+      alertPercent:EXTERNAL_API_ALERT_PERCENT
+    }});
+  }catch(e){res.status(500).json({error:e.message||'Unable to load external API usage'});}
+});
+
 app.get('/api/platform/packages',requirePlatformAdmin,async(req,res)=>{
   try{const r=await pool.query('select key,name,description,monthly_price_kes,active,features from platform_packages where active=true order by monthly_price_kes,key');res.json(r.rows);}
   catch(e){res.status(500).json({error:e.message||'Unable to load packages'});}

@@ -657,7 +657,9 @@ function startRiderRealtime(){
   if(!token)return;
   const connect=()=>{
     if(!rider)return;
-    riderEvents=new EventSource(API_BASE_URL+'/api/riders/events?businessId='+encodeURIComponent(RIDER_BUSINESS_ID)+'&riderToken='+encodeURIComponent(token));
+    riderApi('/api/realtime-token',{method:'POST',body:JSON.stringify({scope:'RIDER'})}).then(tokenData=>{
+      if(!tokenData?.token)throw new Error('Realtime token unavailable');
+      riderEvents=new EventSource(API_BASE_URL+'/api/riders/events?realtimeToken='+encodeURIComponent(tokenData.token));
     const refresh=()=>loadRiderDashboard().catch(()=>{});
     ['rider.updated','order.updated','delivery.updated'].forEach(name=>riderEvents.addEventListener(name,e=>{
       try{
@@ -672,7 +674,8 @@ function startRiderRealtime(){
         refresh();
       }catch{refresh();}
     }));
-    riderEvents.onerror=()=>{if(riderEvents){riderEvents.close();riderEvents=null;}setTimeout(connect,3000);};
+      riderEvents.onerror=()=>{if(riderEvents){riderEvents.close();riderEvents=null;}setTimeout(connect,3000);};
+    }).catch(()=>setTimeout(connect,3000));
   };
   connect();
 }

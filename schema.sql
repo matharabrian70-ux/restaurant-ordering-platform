@@ -57,6 +57,11 @@ create table if not exists orders (
   customer_access_token_hash text
 );
 
+-- Existing production databases may have an older orders table created before
+-- customer access tokens were introduced. CREATE TABLE IF NOT EXISTS does not
+-- add new columns to an existing table, so keep this migration idempotent.
+alter table orders add column if not exists customer_access_token_hash text;
+
 create table if not exists order_items (
   id uuid primary key,
   order_id uuid not null references orders(id) on delete cascade,
@@ -114,6 +119,10 @@ create table if not exists refunds (
   updated_at timestamptz not null default now(),
   idempotency_key text
 );
+
+-- Existing production databases may have an older refunds table without the
+-- idempotency column. Add it before the index below is created.
+alter table refunds add column if not exists idempotency_key text;
 
 create table if not exists receipts (
   id uuid primary key,

@@ -1479,13 +1479,15 @@ app.post('/api/delivery/quote', quoteRateLimit, quoteBusinessRateLimit, async (r
   }catch(error){res.status(400).json({error:error.message||'Unable to calculate delivery fee'});}
 });
 
-app.post('/api/orders', rateLimit({windowMs:10*60_000,max:20,keyFn:req=>`orders:${clientIp(req)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts. Please wait before placing another order.'}), async (req, res) => {
+app.post('/api/orders', rateLimit({windowMs:10*60_000,max:20,keyFn:req=>`orders:${clientIp(req)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts. Please wait before placing another order.'}), rateLimit({windowMs:10*60_000,max:12,keyFn:req=>`order-fingerprint:${clientIp(req)}:${String(req.headers['user-agent']||'').slice(0,120)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts from this client. Please wait before trying again.'}), async (req, res) => {
   const client=await pool.connect();
   try{
     const {businessId,customer,items,paymentMethod,deliveryNote,quoteId}=req.body;
     const normalizedPaymentMethod=paymentMethod==='M-Pesa'?'M-Pesa':paymentMethod==='Card'?'Card':null;
     if(!businessId||!customer?.name||!customer?.phone||!customer?.email||!Array.isArray(items)||!items.length||!normalizedPaymentMethod) return res.status(400).json({error:'Missing order fields'});
     if(items.length>50) return res.status(400).json({error:'Too many order items'});
+    const pendingSpam=await pool.query(`select count(*)::int as count from orders o join customers c on c.id=o.customer_id where o.business_id=$1 and c.phone=$2 and o.status='NEW' and o.payment_status='PENDING' and o.created_at>now()-interval '30 minutes'`,[businessId,String(customer.phone).trim()]);
+    if(Number(pendingSpam.rows[0]?.count||0)>=5) return res.status(429).json({error:'Too many unpaid orders are already pending for this customer. Please complete or wait for an existing order.'});
     let deliveryFee=0,deliveryData=null;
     if(quoteId){
       const quote=await pool.query('select * from delivery_quotes where id=$1 and business_id=$2 and status=\'QUOTED\'',[quoteId,businessId]);

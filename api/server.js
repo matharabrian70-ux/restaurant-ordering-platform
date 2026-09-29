@@ -8,6 +8,7 @@ import { registerDeliveryEngine } from './delivery-engine.js';
 import { registerMenuEngine } from './menu-engine.js';
 import { registerPosEngine } from './pos-engine.js';
 import { registerCustomerGrowth } from './customer-growth.js';
+import { registerAdvancedOperations } from './advanced-operations.js';
 import { registerBrandingEngine } from './branding-engine.js';
 import { registerReceiptEngine, ensureReceipt } from './receipt-engine.js';
 
@@ -677,6 +678,12 @@ async function ensurePhaseASchema(){
 async function ensurePhaseFSchema(){
   const fs = await import('node:fs/promises');
   const sql = await fs.readFile(new URL('./migrations/003_phase_f_customer_growth.sql', import.meta.url), 'utf8');
+  await pool.query(sql);
+}
+
+async function ensurePhaseGSchema(){
+  const fs = await import('node:fs/promises');
+  const sql = await fs.readFile(new URL('./migrations/004_phase_g_advanced_operations.sql', import.meta.url), 'utf8');
   await pool.query(sql);
 }
 
@@ -3243,6 +3250,7 @@ registerDeliveryEngine(app,pool,requireManager);
 registerMenuEngine(app,pool,requireManager,broadcastRealtime);
 registerPosEngine(app,pool,{requireManager,broadcastRealtime});
 registerCustomerGrowth(app,pool);
+registerAdvancedOperations(app,pool);
 
 
 function integrationTypeLabel(type){
@@ -3367,6 +3375,7 @@ async function startServer(){
   await ensurePhaseASchema();
   await ensurePhaseBSchema();
   await ensurePhaseFSchema();
+  await ensurePhaseGSchema();
   await ensureIntegrationSchema();
   await ensurePhase1SecuritySchema();
   await ensurePhase3SecuritySchema();

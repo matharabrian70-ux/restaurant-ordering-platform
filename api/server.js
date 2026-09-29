@@ -633,6 +633,45 @@ async function guardExternalApiQuota(args){
   return result;
 }
 
+async function ensurePhaseASchema(){
+  await pool.query(`
+    alter table payments add column if not exists idempotency_key text;
+    alter table payments add column if not exists authorization_url text;
+    alter table payments add column if not exists payment_mode text;
+    create unique index if not exists payments_idempotency_key_idx on payments(idempotency_key) where idempotency_key is not null;
+    create table if not exists paystack_webhook_events (
+      id uuid primary key default gen_random_uuid(),
+      event_id text,
+      event_type text not null,
+      resource_id text,
+      payload jsonb not null,
+      received_at timestamptz not null default now(),
+      processed_at timestamptz,
+      unique(event_type,resource_id)
+    );
+    create index if not exists paystack_webhook_events_received_idx on paystack_webhook_events(received_at desc);
+    create table if not exists outbox_events (
+      id uuid primary key default gen_random_uuid(),
+      event_type text not null,
+      aggregate_type text,
+      aggregate_id uuid,
+      business_id uuid references businesses(id) on delete cascade,
+      payload jsonb not null default '{}'::jsonb,
+      status text not null default 'PENDING',
+      attempts integer not null default 0,
+      available_at timestamptz not null default now(),
+      processed_at timestamptz,
+      last_error text,
+      created_at timestamptz not null default now()
+    );
+    create index if not exists outbox_events_pending_idx on outbox_events(status,available_at,created_at);
+    alter table payments drop constraint if exists payments_amount_nonnegative;
+    alter table payments add constraint payments_amount_nonnegative check (amount >= 0) not valid;
+    alter table refunds drop constraint if exists refunds_amount_nonnegative;
+    alter table refunds add constraint refunds_amount_nonnegative check (amount > 0) not valid;
+  `);
+}
+
 async function ensurePhase1SecuritySchema() {
   await pool.query(`
     alter table orders add column if not exists customer_access_token_hash text;
@@ -1477,6 +1516,11 @@ async function markPaymentSuccessful(reference, paystackData = null) {
     paidOrder = updated.rows[0];
     await ensureReceipt(client,payment.order_id);
     cancelledOrderId = payment.order_status === 'CANCELLED' ? payment.order_id : null;
+    if(paidOrder){
+      await client.query(`insert into outbox_events(event_type,aggregate_type,aggregate_id,business_id,payload)
+        values('payment.confirmed','ORDER',$1,$2,$3)`,
+        [paidOrder.id,paidOrder.business_id,{orderId:paidOrder.id,orderNumber:paidOrder.order_number,paymentStatus:'PAID'}]);
+    }
     await client.query('commit');
     if (paidOrder) broadcastOrder(paidOrder, { reason: 'payment.confirmed', notification: 'New paid order' });
     if (cancelledOrderId) await initiateRefundForOrder(cancelledOrderId, 'Customer cancelled before payment completed', 'Automatic refund because the order was cancelled before restaurant acceptance');
@@ -1766,34 +1810,75 @@ app.post('/api/orders', sharedRateLimit({windowMs:10*60_000,max:20,keyFn:req=>`o
   finally{client.release();}
 });
 app.post('/api/payments/paystack/initialize', requireCustomerOrderBody, async (req,res)=>{
+  const idempotencyKey=String(req.headers['idempotency-key']||req.body?.idempotencyKey||'').trim();
+  if(!idempotencyKey||idempotencyKey.length>200)return res.status(400).json({error:'Idempotency-Key is required for payment initialization'});
+  const {orderId}=req.body;
+  if(!orderId)return res.status(400).json({error:'orderId is required'});
+  const client=await pool.connect();
+  let order;
   try{
-    const {orderId}=req.body;
-    if(!orderId) return res.status(400).json({error:'orderId is required'});
-    const result=await pool.query(`select o.id,o.order_number,o.total,o.food_subtotal,o.delivery_fee,o.payment_status,o.payment_method,o.status,c.email,c.phone,b.paystack_subaccount_code from orders o join customers c on c.id=o.customer_id join businesses b on b.id=o.business_id where o.id=$1`,[orderId]);
-    if(!result.rowCount) return res.status(404).json({error:'Order not found'});
-    const order=result.rows[0];
-    if(order.status==='CANCELLED') return res.status(409).json({error:'Order is cancelled'});
-    if(order.payment_status==='PAID') return res.json({paid:true,orderId});
-    const reference=`SB-${orderId.replace(/-/g,'')}-${Date.now()}`;
-    await pool.query(`update payments set provider_reference=$1,status='PENDING' where order_id=$2 and provider='PAYSTACK'`,[reference,orderId]);
-    const split=order.paystack_subaccount_code?{type:'flat',bearer_type:'account',subaccounts:[{subaccount:order.paystack_subaccount_code,share:Math.round(Number(order.food_subtotal)*100)}]}:null;
+    await client.query('begin');
+    await client.query('select pg_advisory_xact_lock(hashtext($1))',[String(orderId)]);
+    const result=await client.query(`select o.id,o.order_number,o.total,o.food_subtotal,o.delivery_fee,o.payment_status,o.payment_method,o.status,
+      c.email,c.phone,b.paystack_subaccount_code,p.id as payment_id,p.provider_reference,p.status as payment_state,
+      p.idempotency_key,p.authorization_url,p.payment_mode
+      from orders o join customers c on c.id=o.customer_id join businesses b on b.id=o.business_id
+      join payments p on p.order_id=o.id and p.provider='PAYSTACK'
+      where o.id=$1 for update`,[orderId]);
+    if(!result.rowCount){await client.query('rollback');return res.status(404).json({error:'Order or payment not found'});}
+    order=result.rows[0];
+    if(order.status==='CANCELLED'){await client.query('rollback');return res.status(409).json({error:'Order is cancelled'});}
+    if(order.payment_status==='PAID'){await client.query('commit');return res.json({paid:true,orderId});}
+    if(order.idempotency_key&&order.idempotency_key!==idempotencyKey&&order.provider_reference&&['INITIALIZING','PENDING'].includes(String(order.payment_state||'').toUpperCase())){
+      await client.query('rollback');
+      return res.status(409).json({error:'A payment is already being initialized for this order'});
+    }
+    if(order.idempotency_key===idempotencyKey&&order.provider_reference){
+      await client.query('commit');
+      if(order.payment_mode==='mobile_money')return res.json({mode:'mobile_money',orderId,reference:order.provider_reference,status:order.payment_state,displayText:'Check your phone and approve the M-Pesa payment.',idempotent:true});
+      return res.json({mode:'redirect',orderId,reference:order.provider_reference,authorizationUrl:order.authorization_url,idempotent:true});
+    }
+    await client.query(`update payments set idempotency_key=$1,status='INITIALIZING' where id=$2`,[idempotencyKey,order.payment_id]);
+    await client.query('commit');
+  }catch(error){
+    try{await client.query('rollback')}catch{}
+    return res.status(500).json({error:error.message||'Unable to reserve payment intent'});
+  }finally{client.release();}
+
+  const reference=`SB-${orderId.replace(/-/g,'')}-${crypto.randomBytes(10).toString('hex')}`;
+  const split=order.paystack_subaccount_code?{type:'flat',bearer_type:'account',subaccounts:[{subaccount:order.paystack_subaccount_code,share:Math.round(Number(order.food_subtotal)*100)}]}:null;
+  try{
     if(order.payment_method==='M-Pesa'){
       const payload={email:order.email,amount:String(Math.round(Number(order.total)*100)),currency:'KES',reference,mobile_money:{phone:normalizeKenyanPhone(order.phone),provider:'mpesa'}};
-      if(split) payload.split=split;
+      if(split)payload.split=split;
       const charge=await paystackRequest('/charge',{method:'POST',body:JSON.stringify(payload)});
-      if(charge.data?.reference&&charge.data.reference!==reference) await pool.query(`update payments set provider_reference=$1 where order_id=$2 and provider='PAYSTACK'`,[charge.data.reference,orderId]);
-      return res.json({mode:'mobile_money',orderId,reference:charge.data.reference||reference,status:charge.data.status,displayText:charge.data.display_text||'Check your phone and approve the M-Pesa payment.'});
+      const providerReference=charge.data?.reference||reference;
+      await pool.query(`update payments set provider_reference=$1,status='PENDING',payment_mode='mobile_money' where order_id=$2 and provider='PAYSTACK' and idempotency_key=$3`,[providerReference,orderId,idempotencyKey]);
+      return res.json({mode:'mobile_money',orderId,reference:providerReference,status:charge.data?.status,displayText:charge.data?.display_text||'Check your phone and approve the M-Pesa payment.'});
     }
-    const payload={email:order.email,amount:String(Math.round(Number(order.total)*100)),currency:'KES',reference,channels:['card'],callback_url:`${process.env.API_PUBLIC_URL||'https://restaurant-ordering-api-ow3p.onrender.com'}/api/payments/paystack/callback`,metadata:{order_id:order.id,order_number:order.order_number}};
-    if(split) payload.split=split;
+    const apiPublicUrl=process.env.API_PUBLIC_URL||'https://restaurant-ordering-api-ow3p.onrender.com';
+    const payload={email:order.email,amount:String(Math.round(Number(order.total)*100)),currency:'KES',reference,channels:['card'],callback_url:apiPublicUrl+'/api/payments/paystack/callback',metadata:{order_id:order.id,order_number:order.order_number}};
+    if(split)payload.split=split;
     const transaction=await paystackRequest('/transaction/initialize',{method:'POST',body:JSON.stringify(payload)});
+    await pool.query(`update payments set provider_reference=$1,status='PENDING',authorization_url=$2,payment_mode='redirect' where order_id=$3 and provider='PAYSTACK' and idempotency_key=$4`,[transaction.data.reference,transaction.data.authorization_url,orderId,idempotencyKey]);
     return res.json({mode:'redirect',orderId,reference:transaction.data.reference,authorizationUrl:transaction.data.authorization_url});
-  }catch(error){res.status(500).json({error:error.message||'Unable to initialize payment'});}
+  }catch(error){
+    await pool.query(`update payments set status='PENDING' where order_id=$1 and provider='PAYSTACK' and idempotency_key=$2 and status='INITIALIZING'`,[orderId,idempotencyKey]).catch(()=>{});
+    res.status(502).json({error:error.message||'Unable to initialize payment'});
+  }
 });
 app.get('/api/payments/paystack/callback', async (req, res) => { const reference = String(req.query.reference || ''); if (!reference) return res.redirect(`${FRONTEND_URL}/order.html?payment=missing`); try { const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' }); const data = verified.data; if (data?.status !== 'success') throw new Error('Payment was not successful'); const orderId = await markPaymentSuccessful(reference, data); if (!orderId) return res.redirect(`${FRONTEND_URL}/order.html?payment=not-found`); const receipt = await pool.query('select receipt_access_token from receipts where order_id=$1',[orderId]); const token = receipt.rows[0]?.receipt_access_token || ''; return res.redirect(`${FRONTEND_URL}/order.html?id=${encodeURIComponent(orderId)}&payment=success${token?'&receipt='+encodeURIComponent(token):''}`); } catch { const payment = await pool.query(`select order_id from payments where provider='PAYSTACK' and provider_reference=$1`, [reference]); const orderId = payment.rows[0]?.order_id; const target = orderId ? `${FRONTEND_URL}/order.html?id=${encodeURIComponent(orderId)}&payment=failed` : `${FRONTEND_URL}/order.html?payment=failed`; return res.redirect(target); } });
 app.post('/api/payments/paystack/verify', requireCustomerOrderBody, async (req, res) => { try { const reference = String(req.body.reference || ''); if (!reference) return res.status(400).json({ error: 'reference is required' }); const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' }); if (verified.data?.status === 'success') { const orderId = await markPaymentSuccessful(reference, verified.data); const receipt = orderId ? await pool.query('select receipt_access_token from receipts where order_id=$1',[orderId]) : null; return res.json({ status: 'success', orderId, receiptToken: receipt?.rows[0]?.receipt_access_token || null }); } res.json({ status: verified.data?.status || 'pending' }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to verify payment' }); } });
 app.get('/api/payments/paystack/webhook', (_req, res) => { res.status(405).json({ error: 'Webhook endpoint accepts POST requests from Paystack.' }); });
-app.post('/api/payments/paystack/webhook', async (req, res) => { const signature = req.headers['x-paystack-signature']; const secret = process.env.PAYSTACK_SECRET_KEY; if (!signature || !secret || !req.rawBody) return res.sendStatus(401); const expected = crypto.createHmac('sha512', secret).update(req.rawBody).digest('hex'); const providedBuffer = Buffer.from(String(signature), 'utf8'); const expectedBuffer = Buffer.from(expected, 'utf8'); if (providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) return res.sendStatus(401); try { const event = req.body; if (event.event === 'charge.success' && event.data?.reference && event.data?.status === 'success') await markPaymentSuccessful(event.data.reference, event.data); if (event.event?.startsWith('refund.') && event.data) await updateRefundFromWebhook(event.data); return res.sendStatus(200); } catch (error) { console.error('Paystack webhook processing failed:', error.message); return res.sendStatus(500); } });
+app.post('/api/payments/paystack/webhook', async (req, res) => { const signature = req.headers['x-paystack-signature']; const secret = process.env.PAYSTACK_SECRET_KEY; if (!signature || !secret || !req.rawBody) return res.sendStatus(401); const expected = crypto.createHmac('sha512', secret).update(req.rawBody).digest('hex'); const providedBuffer = Buffer.from(String(signature), 'utf8'); const expectedBuffer = Buffer.from(expected, 'utf8'); if (providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) return res.sendStatus(401); try { const event = req.body;
+    const resourceId=String(event?.data?.id||event?.data?.reference||event?.data?.transaction_reference||'');
+    if(resourceId){
+      const seen=await pool.query(`insert into paystack_webhook_events(event_id,event_type,resource_id,payload)
+        values($1,$2,$3,$4) on conflict(event_type,resource_id) do nothing returning id`,
+        [String(event?.id||'')||null,String(event?.event||'UNKNOWN'),resourceId,event]);
+      if(!seen.rowCount)return res.sendStatus(200);
+    }
+    if (event.event === 'charge.success' && event.data?.reference && event.data?.status === 'success') await markPaymentSuccessful(event.data.reference, event.data); if (event.event?.startsWith('refund.') && event.data) await updateRefundFromWebhook(event.data); return res.sendStatus(200); } catch (error) { console.error('Paystack webhook processing failed:', error.message); return res.sendStatus(500); } });
 app.post('/api/admin/refunds', async (req, res) => {
   if (!requireRefundAdmin(req, res)) return;
   const client=await pool.connect();
@@ -3263,6 +3348,7 @@ async function cleanupSecurityArtifacts(){
   catch(error){ console.error('Security cleanup warning:',error.message); }
 }
 async function startServer(){
+  await ensurePhaseASchema();
   await ensureIntegrationSchema();
   await ensurePhase1SecuritySchema();
   await ensurePhase3SecuritySchema();

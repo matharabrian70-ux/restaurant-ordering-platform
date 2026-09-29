@@ -182,7 +182,7 @@ async function startDemoTracking(){
   if(riderDemoTimer)clearInterval(riderDemoTimer);
   destroyRiderMap();panel.classList.add('hidden');
   const overlay=document.createElement('div');overlay.id='rider-demo-map-overlay';overlay.className='rider-demo-map-overlay';
-  overlay.innerHTML='<div class="rider-demo-map-head"><div><span class="eyebrow">DEMO TRACKING</span><strong>Road-following rider simulation</strong><small>Real routed example · no real order is affected</small></div><button type="button" onclick="stopDemoTracking()" aria-label="Close demo">×</button></div><div class="rider-demo-status" id="rider-demo-status">BUILDING ROAD ROUTE…</div><div id="rider-demo-map" class="rider-demo-map"></div><button type="button" class="rider-demo-exit" onclick="stopDemoTracking()">EXIT DEMO</button>';
+  overlay.innerHTML='<div class="rider-demo-map-head"><div><span class="eyebrow">DEMO TRACKING</span><strong>Road-following rider simulation</strong><small>Real routed example · no real order is affected</small></div><button type="button" data-action="stopDemoTracking()" aria-label="Close demo">×</button></div><div class="rider-demo-status" id="rider-demo-status">BUILDING ROAD ROUTE…</div><div id="rider-demo-map" class="rider-demo-map"></div><button type="button" class="rider-demo-exit" data-action="stopDemoTracking()">EXIT DEMO</button>';
   document.body.appendChild(overlay);
   try{
     const data=await riderApi('/api/riders/'+encodeURIComponent(rider.id)+'/demo-route');
@@ -232,7 +232,7 @@ function showDeliveryAssignmentPopup(job){
     '<div class="rider-assignment-order"><strong>'+esc(job.order_number)+'</strong><span>'+esc(job.restaurant_name||'Restaurant')+'</span></div>'+
     '<div class="rider-assignment-grid"><div><small>CUSTOMER</small><strong>'+esc(job.customer_name||'Customer')+'</strong></div><div><small>DELIVERY FEE</small><strong>'+riderMoney(job.delivery_fee)+'</strong></div><div><small>DISTANCE</small><strong>'+((Number(job.route_distance_meters||0)/1000).toFixed(1))+' km</strong></div><div><small>ETA</small><strong>'+((Number(job.route_duration_seconds||0)/60).toFixed(0))+' min</strong></div></div>'+
     '<div class="rider-assignment-route"><div><span class="route-dot pickup"></span><div><small>PICK UP</small><strong>'+esc(job.pickup_address||job.restaurant_name||'Restaurant')+'</strong></div></div><div class="route-line"></div><div><span class="route-dot dropoff"></span><div><small>DELIVER TO</small><strong>'+esc(job.delivery_address||'Customer location')+'</strong></div></div></div>'+
-    '<div class="rider-assignment-actions"><button type="button" class="rider-assignment-decline" onclick="declineAssignmentPopup(\''+esc(job.trip_id||'')+'\')">DECLINE</button><button type="button" class="rider-assignment-accept" onclick="acceptAssignmentPopup(\''+esc(job.trip_id||'')+'\')">ACCEPT ORDER</button></div>'+
+    '<div class="rider-assignment-actions"><button type="button" class="rider-assignment-decline" data-action="declineAssignmentPopup(\''+esc(job.trip_id||'')+'\')">DECLINE</button><button type="button" class="rider-assignment-accept" data-action="acceptAssignmentPopup(\''+esc(job.trip_id||'')+'\')">ACCEPT ORDER</button></div>'+
     '</section>';
   document.body.appendChild(el);playAssignmentSound();
 }
@@ -287,12 +287,12 @@ async function renderRiderProfileModal(){
   const avatar=r.profile_image_url
     ? '<img id="rider-profile-preview-image" src="'+esc(r.profile_image_url)+'" alt="Rider profile photo">'
     : '<span id="rider-profile-preview-fallback" class="rider-profile-preview-fallback">'+esc((r.name||'?')[0])+'</span>';
-  const html='<div id="rider-profile-overlay" class="rider-profile-overlay" onclick="if(event.target===this)closeRiderProfile()">'+
+  const html='<div id="rider-profile-overlay" class="rider-profile-overlay" data-action="if(event.target===this)closeRiderProfile()">'+
     '<section class="rider-profile-modal" role="dialog" aria-modal="true" aria-label="Rider profile">'+
-    '<button type="button" class="rider-profile-close" onclick="closeRiderProfile()" aria-label="Close profile">×</button>'+
-    '<div class="rider-profile-hero"><button type="button" class="rider-profile-avatar-button" onclick="openProfilePictureViewer()" aria-label="View profile picture"><div class="rider-profile-avatar">'+avatar+'</div><span class="rider-profile-avatar-edit">+</span></button>'+
+    '<button type="button" class="rider-profile-close" data-action="closeRiderProfile()" aria-label="Close profile">×</button>'+
+    '<div class="rider-profile-hero"><button type="button" class="rider-profile-avatar-button" data-action="openProfilePictureViewer()" aria-label="View profile picture"><div class="rider-profile-avatar">'+avatar+'</div><span class="rider-profile-avatar-edit">+</span></button>'+
     '<div><span class="eyebrow">RIDER PROFILE</span><h2>'+esc(r.name||'Rider')+'</h2><p class="muted">Manage your personal, contact and payment details.</p></div></div>'+
-    '<input id="rider-profile-picture-input" type="file" accept="image/*" class="rider-profile-picture-input" onchange="handleProfilePicture(event)">'+
+    '<input id="rider-profile-picture-input" type="file" accept="image/*" class="rider-profile-picture-input" data-change="handleProfilePicture(event)">'+
     '<div class="rider-profile-picture-actions"><small>Tap the profile photo above to view it larger and manage your picture.</small></div>'+
     '<div id="rider-profile-message" class="rider-profile-message hidden"></div>'+
     '<form id="rider-profile-form" class="rider-profile-form" onsubmit="saveRiderProfile(event)">'+
@@ -301,8 +301,8 @@ async function renderRiderProfileModal(){
     '<div class="rider-profile-section"><span class="eyebrow">PAYMENT DETAILS</span><label>Payout / M-Pesa number<input name="payout_phone" type="tel" inputmode="tel" value="'+esc(r.payout_phone||r.phone||'')+'" required><small>Used for rider delivery earnings when automatic payouts are enabled.</small></label></div>'+
     '<div class="rider-profile-section"><span class="eyebrow">VEHICLE DETAILS</span><label>Vehicle type<input name="vehicle_type" value="'+esc(r.vehicle_type||'Motorbike')+'"></label><label>Number plate<input name="number_plate" value="'+esc(r.number_plate||'')+'" placeholder="KXX 123X"></label></div>'+
     '<div class="rider-profile-section"><span class="eyebrow">SECURITY</span><label>Current password<input name="current_password" type="password" autocomplete="current-password" placeholder="Required only to change password"></label><label>New password<input name="new_password" type="password" autocomplete="new-password" placeholder="Leave blank to keep current password"></label></div>'+
-    '<div class="rider-profile-actions"><button type="button" class="rider-profile-secondary" onclick="closeRiderProfile()">CANCEL</button><button type="submit" class="rider-profile-save" id="rider-profile-save">SAVE CHANGES</button></div></form>'+
-    '<button type="button" class="rider-profile-logout" onclick="logoutRider()">SIGN OUT OF RIDER ACCOUNT</button></section></div>';
+    '<div class="rider-profile-actions"><button type="button" class="rider-profile-secondary" data-action="closeRiderProfile()">CANCEL</button><button type="submit" class="rider-profile-save" id="rider-profile-save">SAVE CHANGES</button></div></form>'+
+    '<button type="button" class="rider-profile-logout" data-action="logoutRider()">SIGN OUT OF RIDER ACCOUNT</button></section></div>';
   document.body.insertAdjacentHTML('beforeend',html);
 }
 function openProfilePicturePicker(){document.getElementById('rider-profile-picture-input')?.click();}
@@ -316,12 +316,12 @@ async function openProfilePictureViewer(){
   const visual=hasPhoto
     ? '<img class="rider-picture-viewer-image" src="'+esc(rider.profile_image_url)+'" alt="Rider profile picture">'
     : '<div class="rider-picture-viewer-fallback">'+esc((rider?.name||'?')[0])+'</div>';
-  const viewer='<div id="rider-picture-viewer" class="rider-picture-viewer" onclick="if(event.target===this)closeProfilePictureViewer()">'+
-    '<div class="rider-picture-viewer-card"><button type="button" class="rider-picture-viewer-close" onclick="closeProfilePictureViewer()" aria-label="Close profile picture">×</button>'+
+  const viewer='<div id="rider-picture-viewer" class="rider-picture-viewer" data-action="if(event.target===this)closeProfilePictureViewer()">'+
+    '<div class="rider-picture-viewer-card"><button type="button" class="rider-picture-viewer-close" data-action="closeProfilePictureViewer()" aria-label="Close profile picture">×</button>'+
     '<span class="eyebrow">PROFILE PICTURE</span><div class="rider-picture-viewer-image-wrap">'+visual+'</div>'+
     '<h3>'+esc(rider?.name||'Rider')+'</h3><p class="muted">Manage the picture shown on your rider dashboard.</p>'+
-    '<div class="rider-picture-viewer-actions"><button type="button" class="rider-picture-change" onclick="openProfilePicturePicker()">ADD / CHANGE PROFILE PICTURE</button>'+
-    (hasPhoto?'<button type="button" class="rider-picture-remove" onclick="removeProfilePictureNow()">REMOVE PROFILE PICTURE</button>':'')+
+    '<div class="rider-picture-viewer-actions"><button type="button" class="rider-picture-change" data-action="openProfilePicturePicker()">ADD / CHANGE PROFILE PICTURE</button>'+
+    (hasPhoto?'<button type="button" class="rider-picture-remove" data-action="removeProfilePictureNow()">REMOVE PROFILE PICTURE</button>':'')+
     '</div><div id="rider-picture-viewer-status" class="rider-picture-viewer-status"></div></div></div>';
   document.body.insertAdjacentHTML('beforeend',viewer);
 }
@@ -391,7 +391,7 @@ function updateRiderProfileButton(){
   button.innerHTML=riderAvatarMarkup('rider-nav-avatar');
   button.setAttribute('aria-label','Open rider profile');
   button.classList.remove('hidden');
-  button.onclick=async(event)=>{
+  button.data-action=async(event)=>{
     event.preventDefault();event.stopPropagation();
     try{await renderRiderProfileModal();}
     catch(err){alert(err.message||'Unable to open rider profile.');}
@@ -516,17 +516,17 @@ function activeCard(a){
   if(!a)return '<div class="empty" style="padding:30px 10px"><h3>No active delivery.</h3><p>When the restaurant assigns a job to you, it will appear here.</p></div>';
   const current=(a.delivery_status||'ASSIGNED');
   let action='';
-  if(current==='ASSIGNED') action='<div class="rider-assigned-actions"><button class="rider-decline-inline" onclick="declineTrip(\''+a.trip_id+'\')">DECLINE</button><button onclick="acceptTrip(\''+a.trip_id+'\')">ACCEPT DELIVERY</button></div>';
-  else if(current==='ACCEPTED') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'ARRIVED_AT_RESTAURANT\')">ARRIVED AT RESTAURANT</button>';
-  else if(current==='ARRIVED_AT_RESTAURANT') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'PICKED_UP\')">PICKED UP</button>';
-  else if(current==='PICKED_UP') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'ON_THE_WAY\')">ON THE WAY</button>';
-  else if(current==='ON_THE_WAY') action='<button onclick="setTripStatus(\''+a.trip_id+'\',\'DELIVERED\')">MARK DELIVERED</button>';
+  if(current==='ASSIGNED') action='<div class="rider-assigned-actions"><button class="rider-decline-inline" data-action="declineTrip(\''+a.trip_id+'\')">DECLINE</button><button data-action="acceptTrip(\''+a.trip_id+'\')">ACCEPT DELIVERY</button></div>';
+  else if(current==='ACCEPTED') action='<button data-action="setTripStatus(\''+a.trip_id+'\',\'ARRIVED_AT_RESTAURANT\')">ARRIVED AT RESTAURANT</button>';
+  else if(current==='ARRIVED_AT_RESTAURANT') action='<button data-action="setTripStatus(\''+a.trip_id+'\',\'PICKED_UP\')">PICKED UP</button>';
+  else if(current==='PICKED_UP') action='<button data-action="setTripStatus(\''+a.trip_id+'\',\'ON_THE_WAY\')">ON THE WAY</button>';
+  else if(current==='ON_THE_WAY') action='<button data-action="setTripStatus(\''+a.trip_id+'\',\'DELIVERED\')">MARK DELIVERED</button>';
   const mapAction=current!=='ASSIGNED'?'<a class="rider-map-action" href="'+mapsUrl(a.pickup_address,a.delivery_address)+'" target="_blank" rel="noopener">GOOGLE MAPS</a>':'';
   return '<article class="rider-card rider-active-card"><div class="rider-active-top"><div><span class="eyebrow">ACTIVE DELIVERY</span><h3>'+esc(a.order_number)+'</h3></div><span class="rider-active-status">'+esc(current.replaceAll('_',' '))+'</span></div>'+
     '<div class="rider-active-route"><div><small>FROM</small><strong>'+esc(a.pickup_address||'Restaurant')+'</strong></div><span>→</span><div><small>TO</small><strong>'+esc(a.delivery_address||a.delivery_note||'Customer location')+'</strong></div></div>'+
     '<div class="rider-active-info"><div><small>CUSTOMER</small><strong>'+esc(a.customer_name||'Customer')+'</strong></div><div><small>FEE</small><strong>'+riderMoney(a.delivery_fee)+'</strong></div><div><small>DISTANCE</small><strong>'+((Number(a.route_distance_meters||0)/1000).toFixed(1))+' km</strong></div></div>'+
     '<div class="rider-status-steps-wrap">'+statusSteps(current)+'</div><div class="rider-actions">'+action+mapAction+'</div></article>'+
-    (current!=='ASSIGNED'?'<section id="rider-live-route-panel" class="rider-live-route-panel"><div class="rider-live-route-head"><div><span class="eyebrow">LIVE ROUTE</span><h3>Delivery navigation</h3><p>Follow the same two-wheeler route used by the delivery system.</p></div><div class="rider-live-route-tools"><span id="rider-live-map-status" class="rider-live-map-status">LOADING…</span><button type="button" id="rider-map-fullscreen-button" class="rider-map-fullscreen-button" onclick="toggleRiderMapFullscreen()" aria-label="Open full screen map">⛶</button></div></div><div class="rider-live-map-wrap"><div id="rider-live-map" class="rider-live-map"></div><button type="button" id="rider-map-floating-exit" class="rider-map-floating-fullscreen" onclick="toggleRiderMapFullscreen()" aria-label="Open full screen map">⛶</button></div><div class="rider-live-route-note">Your live position follows your phone GPS while this delivery is active.</div><button type="button" class="rider-demo-launch" onclick="startDemoTracking()">TEST LIVE TRACKING (DEMO)</button></section>':'<button type="button" class="rider-demo-launch standalone" onclick="startDemoTracking()">TEST LIVE TRACKING (DEMO)</button>');
+    (current!=='ASSIGNED'?'<section id="rider-live-route-panel" class="rider-live-route-panel"><div class="rider-live-route-head"><div><span class="eyebrow">LIVE ROUTE</span><h3>Delivery navigation</h3><p>Follow the same two-wheeler route used by the delivery system.</p></div><div class="rider-live-route-tools"><span id="rider-live-map-status" class="rider-live-map-status">LOADING…</span><button type="button" id="rider-map-fullscreen-button" class="rider-map-fullscreen-button" data-action="toggleRiderMapFullscreen()" aria-label="Open full screen map">⛶</button></div></div><div class="rider-live-map-wrap"><div id="rider-live-map" class="rider-live-map"></div><button type="button" id="rider-map-floating-exit" class="rider-map-floating-fullscreen" data-action="toggleRiderMapFullscreen()" aria-label="Open full screen map">⛶</button></div><div class="rider-live-route-note">Your live position follows your phone GPS while this delivery is active.</div><button type="button" class="rider-demo-launch" data-action="startDemoTracking()">TEST LIVE TRACKING (DEMO)</button></section>':'<button type="button" class="rider-demo-launch standalone" data-action="startDemoTracking()">TEST LIVE TRACKING (DEMO)</button>');
 }
 function renderAvailable(list){
   if(!list.length)return '<p class="muted">No new assignments.</p>';
@@ -564,19 +564,19 @@ function renderRiderStats(data){
     return {date:d,key,earnings:dayEarnings(completed,key),deliveries:completed.filter(x=>localDateKey(x.completed_at)===key)};
   });
   document.getElementById('rider-stats').innerHTML=
-    '<button type="button" class="rider-stat-card" onclick="openRiderDay(\''+todayKey+'\')">'+
+    '<button type="button" class="rider-stat-card" data-action="openRiderDay(\''+todayKey+'\')">'+
       '<span class="muted">Today</span><strong>'+riderMoney(data.todayEarnings)+'</strong><small>'+todayList.length+' deliveries · View details</small>'+
     '</button>'+
-    '<button type="button" class="rider-stat-card" onclick="openRiderWeek()">'+
+    '<button type="button" class="rider-stat-card" data-action="openRiderWeek()">'+
       '<span class="muted">This week</span><strong>'+riderMoney(data.weekEarnings)+'</strong><small>'+weekList.reduce((n,x)=>n+x.deliveries.length,0)+' deliveries · View week</small>'+
     '</button>'+
-    '<button type="button" class="rider-stat-card" onclick="openRiderCompleted()">'+
+    '<button type="button" class="rider-stat-card" data-action="openRiderCompleted()">'+
       '<span class="muted">Completed</span><strong>'+completed.length+'</strong><small>Recent trips · View all</small>'+
     '</button>';
 }
 function renderHistory(list){
   if(!list.length)return '<p class="muted">No completed deliveries yet.</p>';
-  return list.slice(0,20).map(a=>'<button type="button" class="rider-history-row" onclick="openDeliveryDetail(\''+esc(a.order_number)+'\')"><span><strong>'+esc(a.order_number)+'</strong><small>'+formatDateTime(a.completed_at)+' · '+(Number(a.distance_meters||0)/1000).toFixed(1)+' km</small></span><strong>'+riderMoney(a.earning)+'</strong></button>').join('');
+  return list.slice(0,20).map(a=>'<button type="button" class="rider-history-row" data-action="openDeliveryDetail(\''+esc(a.order_number)+'\')"><span><strong>'+esc(a.order_number)+'</strong><small>'+formatDateTime(a.completed_at)+' · '+(Number(a.distance_meters||0)/1000).toFixed(1)+' km</small></span><strong>'+riderMoney(a.earning)+'</strong></button>').join('');
 }
 function closeRiderOverlay(){document.getElementById('rider-detail-overlay')?.remove();}
 function openDeliveryDetail(orderNumber){
@@ -585,9 +585,9 @@ function openDeliveryDetail(orderNumber){
   closeRiderOverlay();
   const duration=data.trip_minutes!=null?Math.max(0,Math.round(Number(data.trip_minutes)))+' min':'Not recorded';
   const distance=(Number(data.distance_meters||0)/1000).toFixed(1)+' km';
-  const html='<div id="rider-detail-overlay" class="rider-detail-overlay" onclick="if(event.target===this)closeRiderOverlay()">'+
+  const html='<div id="rider-detail-overlay" class="rider-detail-overlay" data-action="if(event.target===this)closeRiderOverlay()">'+
     '<section class="rider-detail-modal" role="dialog" aria-modal="true" aria-label="Delivery details">'+
-      '<button class="rider-detail-close" type="button" onclick="closeRiderOverlay()" aria-label="Close">×</button>'+
+      '<button class="rider-detail-close" type="button" data-action="closeRiderOverlay()" aria-label="Close">×</button>'+
       '<p class="eyebrow">DELIVERY COMPLETED</p><h2>'+esc(data.order_number)+'</h2>'+
       '<p class="muted">Non-sensitive delivery summary</p>'+
       '<div class="rider-detail-grid">'+
@@ -610,17 +610,17 @@ function openRiderDay(key){
 function openRiderWeek(){
   const list=window.__riderDashboardData?.completed||[];
   const days=weekDates().map(d=>({date:d,key:localDateKey(d),deliveries:list.filter(x=>localDateKey(x.completed_at)===localDateKey(d)),earnings:dayEarnings(list,localDateKey(d))}));
-  const rows=days.map(x=>'<button type="button" class="rider-week-row" onclick="openRiderDay(\''+x.key+'\')"><span><strong>'+x.date.toLocaleDateString([], {weekday:'long'})+'</strong><small>'+x.date.toLocaleDateString([], {day:'numeric',month:'short'})+' · '+x.deliveries.length+' deliveries</small></span><strong>'+riderMoney(x.earnings)+'</strong></button>').join('');
+  const rows=days.map(x=>'<button type="button" class="rider-week-row" data-action="openRiderDay(\''+x.key+'\')"><span><strong>'+x.date.toLocaleDateString([], {weekday:'long'})+'</strong><small>'+x.date.toLocaleDateString([], {day:'numeric',month:'short'})+' · '+x.deliveries.length+' deliveries</small></span><strong>'+riderMoney(x.earnings)+'</strong></button>').join('');
   closeRiderOverlay();
-  document.body.insertAdjacentHTML('beforeend','<div id="rider-detail-overlay" class="rider-detail-overlay" onclick="if(event.target===this)closeRiderOverlay()"><section class="rider-detail-modal rider-week-modal"><button class="rider-detail-close" type="button" onclick="closeRiderOverlay()">×</button><p class="eyebrow">THIS WEEK</p><h2>Weekly earnings</h2><p class="muted">Monday to Sunday. Select a day to view its deliveries.</p><div class="rider-week-list">'+rows+'</div></section></div>');
+  document.body.insertAdjacentHTML('beforeend','<div id="rider-detail-overlay" class="rider-detail-overlay" data-action="if(event.target===this)closeRiderOverlay()"><section class="rider-detail-modal rider-week-modal"><button class="rider-detail-close" type="button" data-action="closeRiderOverlay()">×</button><p class="eyebrow">THIS WEEK</p><h2>Weekly earnings</h2><p class="muted">Monday to Sunday. Select a day to view its deliveries.</p><div class="rider-week-list">'+rows+'</div></section></div>');
 }
 function openRiderCompleted(){
   openRiderListOverlay('Completed deliveries','Recent delivery history',window.__riderDashboardData?.completed||[]);
 }
 function openRiderListOverlay(title,subtitle,list){
   closeRiderOverlay();
-  const rows=list.length?list.map(a=>'<button type="button" class="rider-history-row" onclick="openDeliveryDetail(\''+esc(a.order_number)+'\')"><span><strong>'+esc(a.order_number)+'</strong><small>'+formatDateTime(a.completed_at)+' · '+(Number(a.distance_meters||0)/1000).toFixed(1)+' km</small></span><strong>'+riderMoney(a.earning)+'</strong></button>').join(''):'<div class="rider-empty-day">No completed deliveries for this day.</div>';
-  document.body.insertAdjacentHTML('beforeend','<div id="rider-detail-overlay" class="rider-detail-overlay" onclick="if(event.target===this)closeRiderOverlay()"><section class="rider-detail-modal"><button class="rider-detail-close" type="button" onclick="closeRiderOverlay()">×</button><p class="eyebrow">DELIVERY HISTORY</p><h2>'+esc(title)+'</h2><p class="muted">'+esc(subtitle)+'</p><div class="rider-history-list">'+rows+'</div></section></div>');
+  const rows=list.length?list.map(a=>'<button type="button" class="rider-history-row" data-action="openDeliveryDetail(\''+esc(a.order_number)+'\')"><span><strong>'+esc(a.order_number)+'</strong><small>'+formatDateTime(a.completed_at)+' · '+(Number(a.distance_meters||0)/1000).toFixed(1)+' km</small></span><strong>'+riderMoney(a.earning)+'</strong></button>').join(''):'<div class="rider-empty-day">No completed deliveries for this day.</div>';
+  document.body.insertAdjacentHTML('beforeend','<div id="rider-detail-overlay" class="rider-detail-overlay" data-action="if(event.target===this)closeRiderOverlay()"><section class="rider-detail-modal"><button class="rider-detail-close" type="button" data-action="closeRiderOverlay()">×</button><p class="eyebrow">DELIVERY HISTORY</p><h2>'+esc(title)+'</h2><p class="muted">'+esc(subtitle)+'</p><div class="rider-history-list">'+rows+'</div></section></div>');
 }
 async function loadRiderDashboard(){
   const data=await dashboardData();maybeNotify(data.active);
@@ -640,7 +640,7 @@ async function bootRider(){
   try{
     rider=await riderApi('/api/riders/me');
     document.getElementById('rider-login').classList.add('hidden');document.getElementById('rider-app').classList.remove('hidden');updateRiderProfileButton();
-    document.getElementById('rider-header').innerHTML='<div class="rider-identity-card"><div class="rider-presence-indicator"><span id="rider-presence-dot" class="presence-dot is-offline"></span><span id="rider-presence-text">OFFLINE</span></div><div class="rider-profile-line">'+riderAvatarMarkup('rider-identity-avatar')+'<div><p class="eyebrow">RIDER OPERATIONS</p><h1>'+esc(rider.name)+'</h1><p class="muted">'+esc(rider.vehicle_type)+' · '+esc(rider.number_plate||'Plate not set')+' · '+esc(rider.payout_phone||rider.phone)+'</p></div></div><div class="rider-availability"><span class="availability-label">DELIVERY AVAILABILITY</span><button id="online-button" class="availability-button is-offline" type="button" aria-pressed="false" onclick="toggleOnline()" title="Press to change your delivery availability">GO ONLINE</button><p>Go online when you are ready to receive delivery assignments.</p></div></div>';
+    document.getElementById('rider-header').innerHTML='<div class="rider-identity-card"><div class="rider-presence-indicator"><span id="rider-presence-dot" class="presence-dot is-offline"></span><span id="rider-presence-text">OFFLINE</span></div><div class="rider-profile-line">'+riderAvatarMarkup('rider-identity-avatar')+'<div><p class="eyebrow">RIDER OPERATIONS</p><h1>'+esc(rider.name)+'</h1><p class="muted">'+esc(rider.vehicle_type)+' · '+esc(rider.number_plate||'Plate not set')+' · '+esc(rider.payout_phone||rider.phone)+'</p></div></div><div class="rider-availability"><span class="availability-label">DELIVERY AVAILABILITY</span><button id="online-button" class="availability-button is-offline" type="button" aria-pressed="false" data-action="toggleOnline()" title="Press to change your delivery availability">GO ONLINE</button><p>Go online when you are ready to receive delivery assignments.</p></div></div>';
     await loadRiderDashboard();startRiderRealtime();
     clearInterval(pollTimer);
     pollTimer=setInterval(async()=>{

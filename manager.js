@@ -9,9 +9,13 @@ function tone(ctx,gain,oscType,freq,start,duration,slide=0){const o=ctx.createOs
 function playOrderAlert(force=false){const p=alertPrefs();if(!force&&!p.enabled)return;try{primeAlertAudio();const ctx=alertAudioContext;if(!ctx)return;const now=ctx.currentTime+.01,v=.22*p.volume;const s=p.sound;if(s==='classic'){tone(ctx,v,'sine',880,now,.16,90);tone(ctx,v*.75,'sine',1175,now+.12,.22,70)}else if(s==='double'){tone(ctx,v,'sine',740,now,.14,50);tone(ctx,v,'sine',740,now+.18,.14,50);tone(ctx,v*.8,'sine',1047,now+.36,.22,80)}else if(s==='chime'){tone(ctx,v*.8,'sine',659,now,.18,40);tone(ctx,v,'sine',784,now+.12,.24,40);tone(ctx,v*.8,'sine',988,now+.28,.34,60)}else if(s==='priority'){tone(ctx,v,'triangle',988,now,.12,120);tone(ctx,v,'triangle',1319,now+.11,.16,100);tone(ctx,v*.8,'sine',1568,now+.24,.25,80)}else{tone(ctx,v,'sine',587,now,.16,30);tone(ctx,v,'sine',784,now+.12,.2,50);tone(ctx,v*.75,'sine',988,now+.27,.32,40)}}catch{}}
 function startManagerRealtime(){
   if(managerEvents||!currentManager)return;
-  const connect=()=>{
+  const connect=async()=>{
     if(!currentManager)return;
-    managerEvents=new EventSource(API_BASE_URL+'/api/events?businessId='+encodeURIComponent(B));
+    try{
+      const tokenData=await api('/api/realtime-token',{method:'POST',body:JSON.stringify({scope:'MANAGER'})});
+      if(!tokenData?.token)return;
+      managerEvents=new EventSource(API_BASE_URL+'/api/events?realtimeToken='+encodeURIComponent(tokenData.token));
+    }catch{window.managerRealtimeRetry=setTimeout(connect,3000);return;}
     const refresh=()=>{clearTimeout(window.managerRealtimeRetry);(Promise.resolve()).then(()=>load());};
     managerEvents.addEventListener('order.updated',e=>{try{const d=JSON.parse(e.data||'{}');if(d.status==='NEW'&&d.paymentStatus==='PAID'){const key=String(d.orderId||'');if(!alertedOrders.has(key)){alertedOrders.set(key,Date.now());playOrderAlert();setTimeout(()=>alertedOrders.delete(key),15000)}}refresh();}catch{}});
     managerEvents.addEventListener('rider.updated',()=>syncRiderListInPlace());

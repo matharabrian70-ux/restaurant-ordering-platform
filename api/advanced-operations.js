@@ -85,6 +85,8 @@ export function registerAdvancedOperations(app,pool){
       if(!raw.startsWith('Bearer '))return res.status(401).json({error:'Manager session required'});
       const r=await pool.query('select ms.manager_id,mu.business_id,mu.role from manager_sessions ms join manager_users mu on mu.id=ms.manager_id where ms.token_hash=$1 and ms.expires_at>now() and mu.active=true limit 1',[hash(raw.slice(7).trim())]);
       if(!r.rowCount)return res.status(401).json({error:'Manager session expired'});
+      const requestedBusinessId=String(req.body?.businessId||req.query?.businessId||req.params?.businessId||'');
+      if(requestedBusinessId&&requestedBusinessId!==String(r.rows[0].business_id))return res.status(403).json({error:'You can only access your own restaurant'});
       req.manager={id:r.rows[0].manager_id,businessId:r.rows[0].business_id,role:r.rows[0].role};next();
     }catch{res.status(500).json({error:'Unable to verify manager session'})}
   }
@@ -92,8 +94,10 @@ export function registerAdvancedOperations(app,pool){
     try{
       const raw=String(req.headers.authorization||'');
       if(!raw.startsWith('Bearer '))return res.status(401).json({error:'Rider session required'});
-      const r=await pool.query('select rs.rider_id,r.business_id from rider_sessions rs join riders r on r.id=rs.rider_id where rs.token_hash=$1 and rs.expires_at>now() limit 1',[hash(raw.slice(7).trim())]);
-      if(!r.rowCount)return res.status(401).json({error:'Rider session expired'});
+      const r=await pool.query('select rs.rider_id,r.business_id,r.active from rider_sessions rs join riders r on r.id=rs.rider_id where rs.token_hash=$1 and rs.expires_at>now() and r.active=true limit 1',[hash(raw.slice(7).trim())]);
+      if(!r.rowCount)return res.status(401).json({error:'Rider session expired or rider is inactive'});
+      const requestedBusinessId=String(req.body?.businessId||req.query?.businessId||req.params?.businessId||'');
+      if(requestedBusinessId&&requestedBusinessId!==String(r.rows[0].business_id))return res.status(403).json({error:'You can only access your own restaurant rider resources'});
       req.rider={id:r.rows[0].rider_id,businessId:r.rows[0].business_id};next();
     }catch{res.status(500).json({error:'Unable to verify rider session'})}
   }

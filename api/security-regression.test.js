@@ -148,3 +148,9 @@ test('Shared throttling: sensitive limits use PostgreSQL-backed state', () => {
   has(server, 'sms-spend:');
   has(server, 'Global request limiting remains local');
 });
+
+test('Security audit: manager rider trip history is tenant-bound', () => {
+  has(server, "r.business_id=$2");
+  has(server, "o.business_id=$2");
+  has(server, "req.manager.business_id");
+});

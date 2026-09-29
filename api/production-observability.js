@@ -172,6 +172,25 @@ export function registerProductionObservability(app, pool, {
     checks.mapsConfigured = dependencies.maps;
     checks.smsConfigured = dependencies.sms;
 
+    if (checks.database) {
+      try {
+        const [criticalIncidents, refunds, pendingPayments, stuckOrders] = await Promise.all([
+          pool.query("select count(*)::int as count from platform_incidents where status='OPEN' and severity='CRITICAL'"),
+          pool.query("select count(*)::int as count from refunds where status='NEEDS-ATTENTION'"),
+          pool.query("select count(*)::int as count from orders where payment_status='PENDING' and status<>'CANCELLED' and created_at < now()-interval '30 minutes'"),
+          pool.query("select count(*)::int as count from orders where status in ('ACCEPTED','OUT_FOR_DELIVERY') and created_at < now()-interval '6 hours'")
+        ]);
+        checks.noCriticalIncidents = Number(criticalIncidents.rows[0]?.count || 0) === 0;
+        checks.noRefundReconciliationBlockers = Number(refunds.rows[0]?.count || 0) === 0;
+        checks.noStalePayments = Number(pendingPayments.rows[0]?.count || 0) === 0;
+        checks.noStuckActiveOrders = Number(stuckOrders.rows[0]?.count || 0) === 0;
+      } catch {
+        checks.reconciliationChecks = false;
+      }
+    } else {
+      checks.reconciliationChecks = false;
+    }
+
     const gatePassed = Object.values(checks).every(Boolean);
     res.status(gatePassed ? 200 : 503).json({
       gatePassed,

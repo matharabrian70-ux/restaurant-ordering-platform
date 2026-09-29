@@ -1636,6 +1636,7 @@ setInterval(()=>{
   const now=Date.now();
   for(const [key,value] of deliveryQuoteCache) if(now>=value.expiresAt) deliveryQuoteCache.delete(key);
 },60_000).unref?.();
+setInterval(async()=>{try{await pool.query("delete from realtime_access_tokens where expires_at<now()");await pool.query("delete from external_api_usage_buckets where updated_at<now()-interval '400 days'");await pool.query("delete from external_api_usage_alerts where created_at<now()-interval '400 days'")}catch{}} ,60*60_000).unref?.();
 app.post('/api/delivery/quote', quoteRateLimit, quoteBusinessRateLimit, async (req,res)=>{
   try{
     const business=String(req.body.businessId||'').trim();
@@ -1651,7 +1652,18 @@ app.post('/api/delivery/quote', quoteRateLimit, quoteBusinessRateLimit, async (r
     if(!cached||cached.expiresAt<=Date.now()) deliveryQuoteCache.set(key,{quote:q,expiresAt:Date.now()+DELIVERY_QUOTE_CACHE_SECONDS*1000});
     const saved=await pool.query(`insert into delivery_quotes(id,business_id,pickup_address,delivery_address,distance_meters,duration_seconds,fuel_price_kes,base_fee_kes,distance_fee_kes,time_fee_kes,demand_multiplier,delivery_fee_kes) values(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *`,[business,pickup,delivery,q.distanceMeters,q.durationSeconds,q.fuelPriceKes,q.baseFeeKes,q.distanceFeeKes,q.timeFeeKes,q.demandMultiplier,q.deliveryFeeKes]);
     res.json({quoteId:saved.rows[0].id,...q,deliveryFee:saved.rows[0].delivery_fee_kes,currency:'KES'});
-  }catch(error){res.status(400).json({error:error.message||'Unable to calculate delivery fee'});}
+  }catch(error){
+    if(error.code==='EXTERNAL_API_QUOTA_EXCEEDED'){
+      try{
+        const fallback=await pool.query(`select * from delivery_quotes where business_id=$1 and pickup_address=$2 and delivery_address=$3 and status='QUOTED' and created_at>now()-interval '30 minutes' order by created_at desc limit 1`,[business,pickup,delivery]);
+        if(fallback.rowCount){
+          const q=fallback.rows[0];
+          return res.json({quoteId:q.id,distanceMeters:Number(q.distance_meters||0),durationSeconds:Number(q.duration_seconds||0),fuelPriceKes:Number(q.fuel_price_kes||0),baseFeeKes:Number(q.base_fee_kes||0),distanceFeeKes:Number(q.distance_fee_kes||0),timeFeeKes:Number(q.time_fee_kes||0),demandMultiplier:Number(q.demand_multiplier||1),deliveryFeeKes:Number(q.delivery_fee_kes||0),deliveryFee:Number(q.delivery_fee_kes||0),currency:'KES',fallback:'CACHED_QUOTE'});
+        }
+      }catch{}
+    }
+    res.status(error.status||400).json({error:error.message||'Unable to calculate delivery fee',code:error.code||undefined});
+  }
 });
 
 app.post('/api/orders', sharedRateLimit({windowMs:10*60_000,max:20,keyFn:req=>`orders:${clientIp(req)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts. Please wait before placing another order.'}), sharedRateLimit({windowMs:10*60_000,max:12,keyFn:req=>`order-fingerprint:${clientIp(req)}:${String(req.headers['user-agent']||'').slice(0,120)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts from this client. Please wait before trying again.'}), async (req, res) => {

@@ -140,3 +140,11 @@ test('Post-Phase 5: customer-facing dynamic HTML is escaped', () => {
   assert.match(orderUi, /escapeOrderHtml/);
   assert.doesNotMatch(orderUi, /insertAdjacentHTML/);
 });
+test('Shared throttling: sensitive limits use PostgreSQL-backed state', () => {
+  has(server, 'security_rate_limit_buckets');
+  has(server, 'consumeSharedRateLimit');
+  has(server, 'sharedRateLimit');
+  has(server, 'on conflict(key) do update');
+  has(server, 'sms-spend:');
+  has(server, 'Global request limiting remains local');
+});

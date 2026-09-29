@@ -20,6 +20,10 @@ function startManagerRealtime(){
     managerEvents.addEventListener('rider.updated',()=>syncRiderListInPlace());
     ['delivery.updated','refund.updated','payment.updated','station.updated','menu.updated','promotion.updated','branch.updated'].forEach(name=>managerEvents.addEventListener(name,refresh));
     managerEvents.onerror=()=>{if(managerEvents){managerEvents.close();managerEvents=null;}window.managerRealtimeRetry=setTimeout(connect,3000);};
+    }catch(e){
+      managerEvents=null;
+      window.managerRealtimeRetry=setTimeout(connect,3000);
+    }
   };
   connect();
 }

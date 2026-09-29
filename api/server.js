@@ -13,9 +13,18 @@ import { registerIntelligence, runIntelligenceSweep } from './intelligence.js';
 import { registerBrandingEngine } from './branding-engine.js';
 import { registerReceiptEngine, ensureReceipt } from './receipt-engine.js';
 import { runSelfHealingSweep } from './self-healing.js';
+import { registerProductionObservability } from './production-observability.js';
 
 const { Pool } = pg;
 const app = express();
+// Phase O correlation IDs provide a lightweight trace across production requests without persisting request payloads.
+app.use((req, res, next) => {
+  const supplied = String(req.get('X-Correlation-ID') || '').trim();
+  const id = /^[A-Za-z0-9._:-]{8,128}$/.test(supplied) ? supplied : crypto.randomUUID();
+  req.correlationId = id;
+  res.setHeader('X-Correlation-ID', id);
+  next();
+});
 const port = Number(process.env.PORT || 3000);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false });
 const PAYSTACK_API = 'https://api.paystack.co';
@@ -3625,6 +3634,7 @@ registerPosEngine(app,pool,{requireManager,broadcastRealtime});
 registerCustomerGrowth(app,pool);
 registerAdvancedOperations(app,pool);
 registerIntelligence(app,pool);
+registerProductionObservability(app,pool,{requirePlatformAdmin,requirePlatformRole,recordSystemIncident});
 
 
 function integrationTypeLabel(type){

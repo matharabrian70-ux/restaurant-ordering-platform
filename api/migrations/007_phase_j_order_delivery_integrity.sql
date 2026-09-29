@@ -1,12 +1,14 @@
 -- Phase J: Order & Delivery Integrity
 -- Bounded, database-enforced lifecycle and quote expiry.
 
-alter table delivery_quotes
-  add column if not exists expires_at timestamptz not null default (now() + interval '15 minutes');
+alter table delivery_quotes add column if not exists expires_at timestamptz;
 
 update delivery_quotes
-   set expires_at = coalesce(expires_at, created_at + interval '15 minutes')
+   set expires_at = created_at + interval '15 minutes'
  where expires_at is null;
+
+alter table delivery_quotes alter column expires_at set default (now() + interval '15 minutes');
+alter table delivery_quotes alter column expires_at set not null;
 
 create index if not exists delivery_quotes_active_expiry_idx
   on delivery_quotes(business_id,status,expires_at)

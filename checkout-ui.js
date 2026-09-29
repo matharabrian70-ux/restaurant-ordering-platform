@@ -45,6 +45,11 @@ async function renderCheckoutUpgrade(){
     quoteButton.disabled=true; error.textContent=customerLat!==null?'Calculating delivery fee…':'Calculating delivery fee…';
     try{
       quote=await getDeliveryQuote({pickupAddress:business.pickup_address||'Savanna Bites, Nairobi, Kenya',deliveryAddress:address,latitude:customerLat,longitude:customerLng});
+      let zone=null;
+      if(customerLat!==null&&customerLng!==null){
+        try{zone=await apiRequest('/api/delivery/zones/quote',{method:'POST',body:JSON.stringify({businessId:BUSINESS_ID,latitude:customerLat,longitude:customerLng,orderAmount:subtotal})});}catch{}
+      }
+      if(zone){quote={...quote,deliveryFee:zone.deliveryFee,zoneName:zone.zoneName};}
       document.getElementById('delivery-fee').textContent=money(quote.deliveryFee);
       document.getElementById('checkout-total').textContent=money(subtotal+Number(quote.deliveryFee));
       document.getElementById('route-summary').textContent=`${Number(quote.km).toFixed(1)} km · about ${Math.max(1,Math.round(Number(quote.minutes)))} min · ${escapeCheckoutHtml(quote.branchName||'Best available branch')} · ${quote.pricingMode==='AUTO'?'automatic platform pricing':'restaurant pricing rules'}`;

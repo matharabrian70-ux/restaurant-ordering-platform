@@ -45,6 +45,18 @@ function haversineMeters(lat1, lng1, lat2, lng2) {
   return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
 }
 
+function pointInPolygon(lat,lng,points){
+  if(!Array.isArray(points)||points.length<3)return false;
+  let inside=false;
+  for(let i=0,j=points.length-1;i<points.length;j=i++){
+    const yi=Number(points[i]?.lat),xi=Number(points[i]?.lng),yj=Number(points[j]?.lat),xj=Number(points[j]?.lng);
+    if(![yi,xi,yj,xj].every(Number.isFinite))continue;
+    const hit=((yi>lat)!==(yj>lat))&&(lng<(xj-xi)*(lat-yi)/(yj-yi)+xi);
+    if(hit)inside=!inside;
+  }
+  return inside;
+}
+
 function validateGpsSample({lat,lng,accuracy,previous=null,nowMs=Date.now()}) {
   if(!Number.isFinite(lat)||!Number.isFinite(lng)||lat<-90||lat>90||lng<-180||lng>180) return {ok:false,error:'Valid latitude and longitude are required'};
   if(Number.isFinite(accuracy) && (accuracy<0||accuracy>RIDER_GPS_MAX_ACCURACY_METERS)) return {ok:false,error:'GPS accuracy is too low for reliable rider positioning'};
@@ -1969,6 +1981,7 @@ app.post('/api/orders',
       const quote=await client.query(
         `select * from delivery_quotes
           where id=$1 and business_id=$2 and status='QUOTED' and order_id is null
+            and expires_at>now()
           for update`,
         [quoteId,businessId]
       );
@@ -2017,6 +2030,30 @@ app.post('/api/orders',
       trustedItems.push({productId,productName:product.name,quantity,unitPrice,options:submittedOptions});
     }
     foodSubtotal=Math.round(foodSubtotal*100)/100;
+
+    if (deliveryData) {
+      const zoneRows=await client.query(
+        `select * from delivery_zones
+          where business_id=$1 and active=true
+          order by priority desc`,
+        [businessId]
+      );
+      if(zoneRows.rowCount){
+        const lat=Number(deliveryData.customer_lat),lng=Number(deliveryData.customer_lng);
+        if(!Number.isFinite(lat)||!Number.isFinite(lng)) throw new Error('Delivery location coordinates are required for this restaurant');
+        const matches=zoneRows.rows.filter(z=>
+          z.zone_type==='RADIUS'
+            ? Number.isFinite(Number(z.center_latitude)) &&
+              Number.isFinite(Number(z.center_longitude)) &&
+              haversineMeters(Number(z.center_latitude),Number(z.center_longitude),lat,lng)<=Number(z.radius_meters)
+            : pointInPolygon(lat,lng,z.polygon)
+        );
+        if(!matches.length) throw new Error('Delivery location is outside the configured delivery zones');
+        const zone=matches[0];
+        if(foodSubtotal<Number(zone.minimum_order||0)) throw new Error('Order does not meet the delivery zone minimum order');
+        deliveryFee=Number(zone.fee||0);
+      }
+    }
 
     let coupon=null;
     let couponDiscount=0;
@@ -2126,7 +2163,7 @@ app.post('/api/orders',
   }catch(error){
     try{await client.query('rollback')}catch{}
     const status=error.message==='Invalid order item'?400:(
-      ['Coupon is invalid or expired','Order does not meet the coupon minimum','Coupon redemption limit has been reached','Coupon has already been used by this customer','Invalid order total','Menu item is unavailable'].includes(error.message)?400:500
+      ['Coupon is invalid or expired','Order does not meet the coupon minimum','Coupon redemption limit has been reached','Coupon has already been used by this customer','Invalid order total','Menu item is unavailable','Delivery location coordinates are required for this restaurant','Delivery location is outside the configured delivery zones','Order does not meet the delivery zone minimum order','Delivery quote expired, already used, or invalid'].includes(error.message)?400:500
     );
     res.status(status).json({error:status===400?error.message:'Unable to create order'});
   }finally{client.release();}

@@ -1,5 +1,25 @@
 (function(){
 'use strict';
+const trustedSanitizer=(()=>{
+  const sanitize=(input)=>{
+    const template=document.createElement('template');
+    template.innerHTML=String(input??'');
+    const blocked=new Set(['SCRIPT','IFRAME','OBJECT','EMBED','BASE','META','LINK']);
+    template.content.querySelectorAll('*').forEach(node=>{
+      if(blocked.has(node.tagName)){node.remove();return}
+      [...node.attributes].forEach(attr=>{
+        const name=attr.name.toLowerCase(),value=attr.value.trim();
+        if(name.startsWith('on')||name==='srcdoc'){node.removeAttribute(attr.name);return}
+        if(['href','src','action','formaction','xlink:href'].includes(name)&&/^(javascript|vbscript):/i.test(value))node.removeAttribute(attr.name);
+      });
+    });
+    return template.innerHTML;
+  };
+  try{
+    if(window.trustedTypes)return window.trustedTypes.createPolicy('default',{createHTML:sanitize});
+  }catch{}
+  return {createHTML:sanitize};
+})();
 function splitTop(input,separator=','){
   const out=[];let start=0,depth=0,quote=null,escape=false;
   for(let i=0;i<input.length;i++){

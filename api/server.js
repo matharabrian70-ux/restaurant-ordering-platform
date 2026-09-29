@@ -3756,7 +3756,7 @@ async function runIncidentSweep(){
   }
 
   try{
-    const [pending,stuck,failedOutbox,refunds]=await Promise.all([
+    const [pending,stuck,failedOutboxRows,refunds]=await Promise.all([
       pool.query("select count(*)::int as count from orders where payment_status='PENDING' and status<>'CANCELLED' and created_at < now()-interval '30 minutes'"),
       pool.query("select count(*)::int as count from orders where status in ('ACCEPTED','OUT_FOR_DELIVERY') and created_at < now()-interval '6 hours'"),
       pool.query("select count(*)::int as count from outbox_events where status='FAILED' and attempts >= 3"),
@@ -3764,7 +3764,7 @@ async function runIncidentSweep(){
     ]);
     const oldPayments=Number(pending.rows[0]?.count||0);
     const stuckOrders=Number(stuck.rows[0]?.count||0);
-    const failedOutbox=Number(failedOutbox.rows[0]?.count||0);
+    const failedOutbox=Number(failedOutboxRows.rows[0]?.count||0);
     const needsAttentionRefunds=Number(refunds.rows[0]?.count||0);
 
     if(oldPayments>0) await recordSystemIncident({source:'PAYMENTS',severity:'ERROR',message:String(oldPayments)+' order payment(s) have remained pending for more than 30 minutes. No payment is marked successful by the incident system.',metadata:{count:oldPayments}});

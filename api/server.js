@@ -392,25 +392,52 @@ app.use('/api/riders', requireRiderModule);
 // Server-Sent Events: one persistent connection replaces the dashboard's 5-second polling.
 const realtimeClients = new Set();
 const stationRealtimeClients = new Set();
-function sendRealtime(client, event, data) {
-  try {
-    client.res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  } catch {}
+const realtimeBusInstanceId = crypto.randomUUID();
+let realtimeBusClient = null;
+function sendRealtime(client,event,data){
+  try{client.res.write(`event: ${event}\\ndata: ${JSON.stringify(data)}\\n\\n`)}catch{}
 }
-function broadcastRealtime({ businessId, orderId = null, riderId = null, event = 'order.updated', data = {} }) {
-  for (const client of realtimeClients) {
-    if (client.businessId !== String(businessId)) continue;
-    if (client.orderId && orderId && client.orderId !== String(orderId)) continue;
-    if (client.orderId && !orderId) continue;
-    if (client.riderId && riderId && client.riderId !== String(riderId)) continue;
-    if (client.riderId && !riderId) continue;
-    sendRealtime(client, event, data);
+function sendLocalRealtime(message){
+  const businessId=String(message.businessId||''),orderId=message.orderId?String(message.orderId):null,riderId=message.riderId?String(message.riderId):null;
+  for(const client of realtimeClients){
+    if(client.businessId!==businessId)continue;
+    if(client.orderId&&orderId&&client.orderId!==orderId)continue;
+    if(client.orderId&&!orderId)continue;
+    if(client.riderId&&riderId&&client.riderId!==riderId)continue;
+    if(client.riderId&&!riderId)continue;
+    sendRealtime(client,message.event,message.data);
   }
-  for (const client of stationRealtimeClients) {
-    if (client.businessId !== String(businessId)) continue;
-    sendRealtime(client, event, data);
+  for(const client of stationRealtimeClients){
+    if(client.businessId!==businessId)continue;
+    sendRealtime(client,message.event,message.data);
   }
 }
+async function publishRealtimeBus(message){
+  if(!realtimeBusClient)return;
+  try{await realtimeBusClient.query('select pg_notify($1,$2)',['restaurant_realtime',JSON.stringify({instanceId:realtimeBusInstanceId,message})])}catch{}
+}
+function broadcastRealtime({businessId,orderId=null,riderId=null,event='order.updated',data={}}){
+  const message={businessId:String(businessId),orderId,riderId,event,data};
+  sendLocalRealtime(message);
+  void publishRealtimeBus(message);
+}
+async function startRealtimeBus(){
+  try{
+    const client=new pg.Client({connectionString:process.env.DATABASE_URL,ssl:process.env.NODE_ENV==='production'?{rejectUnauthorized:false}:false});
+    await client.connect();
+    await client.query('listen restaurant_realtime');
+    client.on('notification',notification=>{
+      try{
+        const payload=JSON.parse(notification.payload||'{}');
+        if(payload.instanceId===realtimeBusInstanceId)return;
+        sendLocalRealtime(payload.message||{});
+      }catch{}
+    });
+    client.on('error',()=>{});
+    realtimeBusClient=client;
+  }catch(error){console.error('Realtime shared bus unavailable; local realtime only:',error.message)}
+}
+
 function broadcastRider({ businessId, riderId, orderId = null, action, data = {} }) {
   broadcastRealtime({businessId,riderId,orderId,event:'rider.updated',data:{riderId,action,...data}});
 }
@@ -558,6 +585,18 @@ async function ensureRealtimeAndExternalApiSecuritySchema() {
     create index if not exists external_api_usage_alerts_business_idx on external_api_usage_alerts(business_id,created_at desc);
   `);
 }
+async function issueTelemetryAccessToken({scope,businessId=null}){
+  const token=crypto.randomBytes(32).toString('hex');
+  await pool.query(`insert into telemetry_access_tokens(token_hash,scope,business_id,expires_at)
+    values($1,$2,$3,now()+interval '10 minutes')`,[hashSessionToken(token),scope,businessId]);
+  return token;
+}
+async function getTelemetryAccessToken(token){
+  if(!token)return null;
+  const r=await pool.query('select * from telemetry_access_tokens where token_hash=$1 and expires_at>now() limit 1',[hashSessionToken(token)]);
+  return r.rows[0]||null;
+}
+
 async function issueRealtimeAccessToken({scope,businessId,orderId=null,riderId=null,stationId=null}) {
   const token=crypto.randomBytes(32).toString('hex');
   await pool.query(`insert into realtime_access_tokens(token_hash,scope,business_id,order_id,rider_id,station_id,expires_at)
@@ -939,7 +978,7 @@ async function requireManagerStation(req, res, next) {
 }
 async function getStationFromSession(req) {
   const raw = String(req.headers.authorization || '');
-  const token = raw.startsWith('Bearer ') ? raw.slice(7).trim() : String(req.query.stationToken || '').trim();
+  const token = raw.startsWith('Bearer ') ? raw.slice(7).trim() : '';
   if (!token) return null;
   const result = await pool.query(`select s.*,st.name,st.device_type,st.mode,st.business_id,st.active
     from station_sessions s join restaurant_order_stations st on st.id=s.station_id
@@ -2560,6 +2599,14 @@ async function ensurePlatformObservabilitySchema(){
     create unique index if not exists platform_incidents_fingerprint_idx on platform_incidents(fingerprint);
     create index if not exists platform_incidents_business_idx on platform_incidents(business_id,last_seen_at desc);
     create index if not exists platform_incidents_status_idx on platform_incidents(status,last_seen_at desc);
+    create table if not exists telemetry_access_tokens (
+      token_hash text primary key,
+      scope text not null check (scope in ('MANAGER','RIDER','STATION','PLATFORM')),
+      business_id uuid references businesses(id) on delete cascade,
+      expires_at timestamptz not null,
+      created_at timestamptz not null default now()
+    );
+    create index if not exists telemetry_access_tokens_expiry_idx on telemetry_access_tokens(expires_at);
   `);
 }
 
@@ -2794,11 +2841,41 @@ app.post('/api/platform/incidents/:id/resolve',requirePlatformAdmin,requirePlatf
   }catch(e){res.status(500).json({error:e.message||'Unable to resolve incident'});}
 });
 
+app.post('/api/telemetry-token',async(req,res)=>{
+  try{
+    const bearer=String(req.headers.authorization||'').startsWith('Bearer ')?String(req.headers.authorization).slice(7).trim():'';
+    if(!bearer)return res.status(401).json({error:'Authentication required'});
+    const scope=String(req.body?.scope||'').toUpperCase();
+    if(scope==='MANAGER'){
+      const manager=await getManagerFromSession({headers:{authorization:'Bearer '+bearer}});
+      if(!manager)return res.status(401).json({error:'Manager login required'});
+      return res.json({token:await issueTelemetryAccessToken({scope,businessId:manager.business_id}),expiresIn:600});
+    }
+    if(scope==='RIDER'){
+      const rider=await getRiderFromSession({headers:{authorization:'Bearer '+bearer}});
+      if(!rider)return res.status(401).json({error:'Rider login required'});
+      return res.json({token:await issueTelemetryAccessToken({scope,businessId:rider.business_id}),expiresIn:600});
+    }
+    if(scope==='STATION'){
+      const station=await getStationFromSession({headers:{authorization:'Bearer '+bearer}});
+      if(!station)return res.status(401).json({error:'Station login required'});
+      return res.json({token:await issueTelemetryAccessToken({scope,businessId:station.business_id}),expiresIn:600});
+    }
+    const platform=await getPlatformAdmin({headers:{authorization:'Bearer '+bearer}});
+    if(!platform)return res.status(401).json({error:'Platform login required'});
+    return res.json({token:await issueTelemetryAccessToken({scope:'PLATFORM'}),expiresIn:600});
+  }catch(error){res.status(500).json({error:error.message||'Unable to create telemetry token'});}
+});
+
 app.post('/api/platform/telemetry',telemetryRateLimit,async(req,res)=>{
   try{
+    const telemetryToken=String(req.headers.authorization||'').startsWith('Bearer ')?String(req.headers.authorization).slice(7).trim():'';
+    const telemetryAccess=await getTelemetryAccessToken(telemetryToken);
+    if(!telemetryAccess)return res.status(401).json({error:'Telemetry authorization required'});
     const message=String(req.body.message||'').trim().slice(0,1000);
     if(!message)return res.status(400).json({error:'Error message is required'});
-    const businessId=String(req.body.businessId||'').trim()||null;
+    const requestedBusinessId=String(req.body.businessId||'').trim()||null;
+    const businessId=telemetryAccess.scope==='PLATFORM' ? requestedBusinessId : (telemetryAccess.business_id ? String(telemetryAccess.business_id) : null);
     const source=String(req.body.source||'WEB').trim().slice(0,40)||'WEB';
     const dashboard=String(req.body.dashboard||'UNKNOWN').trim().slice(0,80)||'UNKNOWN';
     const severity=['INFO','WARN','ERROR','CRITICAL'].includes(String(req.body.severity||'ERROR').toUpperCase())?String(req.body.severity).toUpperCase():'ERROR';
@@ -3178,7 +3255,11 @@ app.get('/api/public/integrations/:token.js',(req,res)=>{
 });
 
 async function cleanupSecurityArtifacts(){
-  try{ await pool.query("update delivery_quotes set status='EXPIRED' where status='QUOTED' and created_at < now()-interval '30 minutes'"); }
+  try{
+    await pool.query("update delivery_quotes set status='EXPIRED' where status='QUOTED' and created_at < now()-interval '30 minutes'");
+    await pool.query("delete from telemetry_access_tokens where expires_at<=now()");
+    await pool.query("delete from realtime_access_tokens where expires_at<=now()");
+    await pool.query("delete from outbox_events where status='PUBLISHED' and processed_at < now()-interval '7 days'"); }
   catch(error){ console.error('Security cleanup warning:',error.message); }
 }
 async function startServer(){
@@ -3189,6 +3270,7 @@ async function startServer(){
   setInterval(cleanupSecurityArtifacts,30*60_000).unref?.();
   await ensureSmsSchema();
   await ensurePlatformObservabilitySchema();
+  await startRealtimeBus();
   app.listen(port, () => console.log(`Ordering API listening on ${port}`));
 }
 startServer().catch(error => { console.error('Unable to start ordering API', error); process.exit(1); });

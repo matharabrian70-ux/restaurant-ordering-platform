@@ -715,6 +715,18 @@ async function ensurePhaseGSchema(){
   await pool.query(sql);
 }
 
+async function ensurePhaseISchema(){
+  const fs = await import('node:fs/promises');
+  const sql = await fs.readFile(new URL('./migrations/006_phase_i_transaction_integrity.sql', import.meta.url), 'utf8');
+  await pool.query(sql);
+}
+
+async function ensurePhaseJSchema(){
+  const fs = await import('node:fs/promises');
+  const sql = await fs.readFile(new URL('./migrations/007_phase_j_order_delivery_integrity.sql', import.meta.url), 'utf8');
+  await pool.query(sql);
+}
+
 async function ensurePhaseHSchema(){
   const fs = await import('node:fs/promises');
   const sql = await fs.readFile(new URL('./migrations/005_phase_h_intelligence.sql', import.meta.url), 'utf8');
@@ -3716,6 +3728,8 @@ async function startServer(){
   await ensurePhaseFSchema();
   await ensurePhaseGSchema();
   await ensurePhaseHSchema();
+  await ensurePhaseISchema();
+  await ensurePhaseJSchema();
   await ensureIntegrationSchema();
   await ensurePhase1SecuritySchema();
   await ensurePhase3SecuritySchema();

@@ -64,6 +64,20 @@ alter table payments add constraint payments_amount_nonnegative
 alter table refunds drop constraint if exists refunds_amount_nonnegative;
 alter table refunds add constraint refunds_amount_nonnegative
   check (amount > 0) not valid;
-alter table orders drop constraint if exists orders_paid_requires_payment;
-alter table orders add constraint orders_paid_requires_payment
-  check (payment_status <> 'PAID' or status <> 'CANCELLED') not valid;
+create or replace function enforce_refund_total() returns trigger language plpgsql as $
+declare paid numeric(12,2); refunded numeric(12,2);
+begin
+  select amount into paid from payments where id=new.payment_id for update;
+  if paid is null then raise exception 'Refund payment does not exist'; end if;
+  select coalesce(sum(amount),0) into refunded from refunds
+    where payment_id=new.payment_id
+      and status in ('PENDING','PROCESSING','PROCESSED')
+      and id<>coalesce(new.id,'00000000-0000-0000-0000-000000000000');
+  if refunded + new.amount > paid + 0.0001 then raise exception 'Refund total exceeds payment amount'; end if;
+  return new;
+end; $;
+drop trigger if exists refunds_total_invariant on refunds;
+create constraint trigger refunds_total_invariant
+  after insert or update of amount,status on refunds
+  deferrable initially immediate
+  for each row execute function enforce_refund_total();

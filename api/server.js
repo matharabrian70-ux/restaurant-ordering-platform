@@ -1361,26 +1361,46 @@ app.get('/api/orders/:id/live-location',requireCustomerOrder,async(req,res)=>{
   }catch(e){res.status(500).json({error:'Unable to load live rider location'});}
 });
 
-app.get('/api/events', async (req, res) => {
-  const businessId = String(req.query.businessId || '');
-  const orderId = req.query.orderId ? String(req.query.orderId) : null;
-  const orderToken = String(req.query.orderToken || '').trim();
-  if (!businessId) return res.status(400).json({ error: 'businessId is required' });
-  if (orderId) {
-    if (!orderToken) return res.status(401).json({error:'Order access authorization required'});
-    const access=await pool.query('select id from orders where id=$1 and business_id=$2 and customer_access_token_hash=$3 limit 1',[orderId,businessId,hashSessionToken(orderToken)]);
-    if(!access.rowCount)return res.status(401).json({error:'Order access authorization required'});
-  }
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders?.();
-  const riderId = req.query.riderId ? String(req.query.riderId) : null;
-  const client = { res, businessId, orderId, riderId };
-  realtimeClients.add(client);
-  sendRealtime(client, 'connected', { ok: true });
-  const heartbeat = setInterval(() => sendRealtime(client, 'heartbeat', { at: new Date().toISOString() }), 25000);
-  req.on('close', () => { clearInterval(heartbeat); realtimeClients.delete(client); });
+app.post('/api/realtime-token', async (req,res)=>{
+  try{
+    const scope=String(req.body?.scope||'').toUpperCase();
+    const bearer=String(req.headers.authorization||'').startsWith('Bearer ')?String(req.headers.authorization).slice(7).trim():'';
+    if(!bearer)return res.status(401).json({error:'Authentication required'});
+    if(scope==='CUSTOMER_ORDER'){
+      const orderId=String(req.body?.orderId||'').trim();
+      const q=await pool.query('select id,business_id from orders where id=$1 and customer_access_token_hash=$2 limit 1',[orderId,hashSessionToken(bearer)]);
+      if(!q.rowCount)return res.status(401).json({error:'Order access authorization required'});
+      return res.json({token:await issueRealtimeAccessToken({scope,businessId:q.rows[0].business_id,orderId:q.rows[0].id}),expiresIn:REALTIME_TOKEN_TTL_SECONDS});
+    }
+    if(scope==='MANAGER'){
+      const manager=await getManagerFromSession({headers:{authorization:'Bearer '+bearer}});
+      if(!manager)return res.status(401).json({error:'Manager login required'});
+      return res.json({token:await issueRealtimeAccessToken({scope,businessId:manager.business_id}),expiresIn:REALTIME_TOKEN_TTL_SECONDS});
+    }
+    if(scope==='RIDER'){
+      const rider=await getRiderFromSession({headers:{authorization:'Bearer '+bearer}});
+      if(!rider)return res.status(401).json({error:'Rider login required'});
+      return res.json({token:await issueRealtimeAccessToken({scope,businessId:rider.business_id,riderId:rider.id}),expiresIn:REALTIME_TOKEN_TTL_SECONDS});
+    }
+    if(scope==='STATION'){
+      const station=await getStationFromSession({headers:{authorization:'Bearer '+bearer}});
+      if(!station)return res.status(401).json({error:'Station pairing required'});
+      return res.json({token:await issueRealtimeAccessToken({scope,businessId:station.business_id,stationId:station.station_id}),expiresIn:REALTIME_TOKEN_TTL_SECONDS});
+    }
+    return res.status(400).json({error:'Unsupported realtime scope'});
+  }catch(error){res.status(500).json({error:error.message||'Unable to create realtime token'});}
+});
+
+app.get('/api/events', async (req,res)=>{
+  try{
+    const access=await getRealtimeAccessToken(String(req.query.realtimeToken||'').trim());
+    if(!access||!['CUSTOMER_ORDER','MANAGER'].includes(access.scope))return res.status(401).json({error:'Realtime authorization required'});
+    const client={res,businessId:String(access.business_id),orderId:access.order_id?String(access.order_id):null,riderId:null};
+    res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache, no-transform');res.setHeader('Connection','keep-alive');res.flushHeaders?.();
+    realtimeClients.add(client);sendRealtime(client,'connected',{ok:true});
+    const heartbeat=setInterval(()=>sendRealtime(client,'heartbeat',{at:new Date().toISOString()}),25000);
+    req.on('close',()=>{clearInterval(heartbeat);realtimeClients.delete(client);});
+  }catch{res.status(500).json({error:'Unable to authorize realtime events'});}
 });
 
 async function initiateRefundForOrder(orderId, customerNote = 'Customer cancelled before restaurant acceptance', merchantNote = 'Automatic cancellation refund') {
@@ -1764,15 +1784,11 @@ app.post('/api/admin/refunds', async (req, res) => {
 
 app.get('/api/riders/events', requireRiderModule, async(req,res)=>{
   try{
-    const token=String(req.query.riderToken||'').trim();
-    if(!token)return res.status(401).json({error:'Rider login required'});
-    const rider=await getRiderFromSession({headers:{authorization:'Bearer '+token}});
-    if(!rider)return res.status(401).json({error:'Rider login required'});
-    const businessId=String(rider.business_id);
+    const access=await getRealtimeAccessToken(String(req.query.realtimeToken||'').trim());
+    if(!access||access.scope!=='RIDER')return res.status(401).json({error:'Realtime authorization required'});
+    const client={res,businessId:String(access.business_id),riderId:String(access.rider_id),orderId:null};
     res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache, no-transform');res.setHeader('Connection','keep-alive');res.flushHeaders?.();
-    const client={res,businessId,riderId:String(rider.id),orderId:null};
-    realtimeClients.add(client);
-    sendRealtime(client,'connected',{ok:true,riderId:rider.id});
+    realtimeClients.add(client);sendRealtime(client,'connected',{ok:true,riderId:access.rider_id});
     const heartbeat=setInterval(()=>sendRealtime(client,'heartbeat',{at:new Date().toISOString()}),25000);
     req.on('close',()=>{clearInterval(heartbeat);realtimeClients.delete(client);});
   }catch(error){res.status(500).json({error:error.message||'Unable to open rider events'});}
@@ -2418,12 +2434,16 @@ app.post('/api/station/orders/:id/confirm-delivery',requireStation,async(req,res
     res.json(result.order);
   }catch(error){res.status(500).json({error:error.message||'Unable to confirm delivery'});}
 });
-app.get('/api/station/events',requireStation,(req,res)=>{
-  res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache, no-transform');res.setHeader('Connection','keep-alive');res.flushHeaders?.();
-  const client={res,businessId:String(req.station.business_id),stationId:String(req.station.station_id)};
-  stationRealtimeClients.add(client);sendRealtime(client,'connected',{ok:true});
-  const heartbeat=setInterval(()=>sendRealtime(client,'heartbeat',{at:new Date().toISOString()}),25000);
-  req.on('close',()=>{clearInterval(heartbeat);stationRealtimeClients.delete(client);});
+app.get('/api/station/events',async(req,res)=>{
+  try{
+    const access=await getRealtimeAccessToken(String(req.query.realtimeToken||'').trim());
+    if(!access||access.scope!=='STATION')return res.status(401).json({error:'Realtime authorization required'});
+    const client={res,businessId:String(access.business_id),stationId:String(access.station_id)};
+    res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache, no-transform');res.setHeader('Connection','keep-alive');res.flushHeaders?.();
+    stationRealtimeClients.add(client);sendRealtime(client,'connected',{ok:true});
+    const heartbeat=setInterval(()=>sendRealtime(client,'heartbeat',{at:new Date().toISOString()}),25000);
+    req.on('close',()=>{clearInterval(heartbeat);stationRealtimeClients.delete(client);});
+  }catch(error){res.status(500).json({error:'Unable to authorize station events'});}
 });
 
 

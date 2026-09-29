@@ -153,7 +153,7 @@ export function registerAdvancedOperations(app,pool){
       const latitude=req.body.latitude===undefined?null:Number(req.body.latitude);
       const longitude=req.body.longitude===undefined?null:Number(req.body.longitude);
       const pricing=await calculateScheduledOrderPricing(pool,req.customer.businessId,items,{deliveryAddress,latitude,longitude});
-      const payload={items:pricing.items,deliveryAddress,deliveryNote,paymentMethod,subtotal:pricing.subtotal,deliveryFee:pricing.deliveryFee,total:pricing.total};
+      const payload={items:pricing.items,deliveryAddress,deliveryNote,paymentMethod,latitude:Number.isFinite(latitude)?latitude:null,longitude:Number.isFinite(longitude)?longitude:null,subtotal:pricing.subtotal,deliveryFee:pricing.deliveryFee,total:pricing.total};
       const saved=await pool.query('insert into scheduled_orders(business_id,customer_id,customer_name,phone,email,scheduled_for,order_payload,notes) values($1,$2,$3,$4,$5,$6,$7,$8) returning *',[req.customer.businessId,req.customer.id,req.customer.name,req.customer.phone,req.customer.email,when.toISOString(),payload,clean(req.body.notes,1000)||null]);
       res.status(201).json(saved.rows[0]);
     }catch(e){res.status(400).json({error:e.message||'Unable to create scheduled order'});}

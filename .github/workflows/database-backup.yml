@@ -1,0 +1,31 @@
+name: Database Backup
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 1 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Create encrypted backup archive
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          mkdir -p backup
+          pg_dump --format=custom --no-owner --no-privileges "$DATABASE_URL" > backup/restaurant-ordering.dump
+          tar -czf backup/restaurant-ordering.dump.tgz backup/restaurant-ordering.dump
+          rm backup/restaurant-ordering.dump
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: restaurant-ordering-db-${{ github.run_id }}
+          path: backup/restaurant-ordering.dump.tgz
+          retention-days: 30

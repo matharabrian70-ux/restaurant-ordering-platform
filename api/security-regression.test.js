@@ -43,7 +43,7 @@ test('Phase 2: CORS is allowlisted and security headers are present', () => {
 });
 
 test('Phase 2: rate limiting covers expensive and authentication paths', () => {
-  for (const value of ['authRateLimit','googleRateLimit','quoteRateLimit','smsTestRateLimit','stationPairRateLimit','orders:${clientIp','smsSpendBuckets','SMS_MAX_PER_RECIPIENT_PER_10_MIN','SMS_MAX_PER_BUSINESS_PER_10_MIN']) has(server, value);
+  for (const value of ['authRateLimit','googleRateLimit','quoteRateLimit','smsTestRateLimit','stationPairRateLimit','orders:${clientIp','consumeSmsBudget','SMS_MAX_PER_RECIPIENT_PER_10_MIN','SMS_MAX_PER_BUSINESS_PER_10_MIN']) has(server, value);
 });
 
 test('Phase 2: session TTLs are bounded and configurable', () => {
@@ -139,4 +139,18 @@ test('Post-Phase 5: customer-facing dynamic HTML is escaped', () => {
   assert.match(checkout, /escapeCheckoutHtml/);
   assert.match(orderUi, /escapeOrderHtml/);
   assert.doesNotMatch(orderUi, /insertAdjacentHTML/);
+});
+test('Shared throttling: sensitive limits use PostgreSQL-backed state', () => {
+  has(server, 'security_rate_limit_buckets');
+  has(server, 'consumeSharedRateLimit');
+  has(server, 'sharedRateLimit');
+  has(server, 'on conflict(key) do update');
+  has(server, 'sms-spend:');
+  has(server, 'Global request limiting remains local');
+});
+
+test('Security audit: manager rider trip history is tenant-bound', () => {
+  has(server, "r.business_id=$2");
+  has(server, "o.business_id=$2");
+  has(server, "req.manager.business_id");
 });

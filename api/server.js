@@ -95,48 +95,113 @@ setInterval(() => {
   }
 }, 60_000).unref?.();
 
+
+const sharedRateLimitFallback = new Map();
+
+async function consumeSharedRateLimit(key, windowMs, max) {
+  const now = Date.now();
+  const windowStarted = now;
+  try {
+    const result = await pool.query(`
+      insert into security_rate_limit_buckets(key, window_started_ms, count, updated_at)
+      values($1,$2,1,now())
+      on conflict(key) do update set
+        count = case
+          when security_rate_limit_buckets.window_started_ms + $3 <= $2 then 1
+          else security_rate_limit_buckets.count + 1
+        end,
+        window_started_ms = case
+          when security_rate_limit_buckets.window_started_ms + $3 <= $2 then $2
+          else security_rate_limit_buckets.window_started_ms
+        end,
+        updated_at = now()
+      returning count, window_started_ms
+    `, [String(key), windowStarted, windowMs]);
+    const row = result.rows[0];
+    const resetAt = Number(row.window_started_ms) + windowMs;
+    return { allowed: Number(row.count) <= max, count: Number(row.count), resetAt };
+  } catch (error) {
+    // PostgreSQL is the shared source of truth. If it is temporarily unavailable,
+    // keep a small per-process emergency limiter rather than disabling protection.
+    const fallbackKey = String(key);
+    let bucket = sharedRateLimitFallback.get(fallbackKey);
+    if (!bucket || now >= bucket.resetAt) {
+      bucket = { count: 0, resetAt: now + windowMs };
+      sharedRateLimitFallback.set(fallbackKey, bucket);
+    }
+    bucket.count += 1;
+    if (sharedRateLimitFallback.size > 10000) {
+      for (const [k, v] of sharedRateLimitFallback) if (now >= v.resetAt) sharedRateLimitFallback.delete(k);
+    }
+    return { allowed: bucket.count <= max, count: bucket.count, resetAt: bucket.resetAt, fallback: true };
+  }
+}
+
+function sharedRateLimit({ windowMs = 60_000, max = 60, keyFn = clientIp, message = 'Too many requests. Please try again later.' } = {}) {
+  return async (req, res, next) => {
+    const key = String(keyFn(req));
+    const result = await consumeSharedRateLimit(key, windowMs, max);
+    const remaining = Math.max(0, max - result.count);
+    res.setHeader('X-RateLimit-Limit', String(max));
+    res.setHeader('X-RateLimit-Remaining', String(remaining));
+    res.setHeader('X-RateLimit-Reset', String(Math.ceil(result.resetAt / 1000)));
+    if (!result.allowed) {
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1000))));
+      return res.status(429).json({ error: message });
+    }
+    next();
+  };
+}
+
+setInterval(async () => {
+  try {
+    await pool.query(`delete from security_rate_limit_buckets where updated_at < now() - interval '2 hours'`);
+  } catch {}
+}, 10 * 60_000).unref?.();
+
+// Global request limiting remains local to avoid a database query on every API request. Sensitive route-specific limits below use shared PostgreSQL state.
 const apiRateLimit = rateLimit({
   windowMs: 60_000,
   max: parsePositiveInt(process.env.API_RATE_LIMIT_PER_MINUTE, 180, 60, 600),
   keyFn: req => `${clientIp(req)}:${req.method}:${req.path}`,
 });
-const authRateLimit = rateLimit({
+const authRateLimit = sharedRateLimit({
   windowMs: 10 * 60_000,
   max: parsePositiveInt(process.env.AUTH_RATE_LIMIT_PER_10_MIN, 8, 3, 30),
   keyFn: req => `auth:${clientIp(req)}`,
   message: 'Too many login attempts. Please wait before trying again.',
 });
-const googleRateLimit = rateLimit({
+const googleRateLimit = sharedRateLimit({
   windowMs: 10 * 60_000,
   max: parsePositiveInt(process.env.GOOGLE_RATE_LIMIT_PER_10_MIN, 5, 2, 20),
   keyFn: req => `google:${clientIp(req)}`,
   message: 'Too many Google sign-in attempts. Please wait before trying again.',
 });
-const quoteRateLimit = rateLimit({
+const quoteRateLimit = sharedRateLimit({
   windowMs: 60_000,
   max: parsePositiveInt(process.env.DELIVERY_QUOTE_RATE_LIMIT_PER_MIN, 20, 5, 60),
   keyFn: req => `quote:${clientIp(req)}:${String(req.body?.businessId || '')}`,
   message: 'Too many delivery quote requests. Please wait before requesting another quote.',
 });
-const quoteBusinessRateLimit = rateLimit({
+const quoteBusinessRateLimit = sharedRateLimit({
   windowMs: 60_000,
   max: parsePositiveInt(process.env.DELIVERY_QUOTE_PER_BUSINESS_PER_MIN, 120, 20, 600),
   keyFn: req => `quote-business:${String(req.body?.businessId || '')}`,
   message: 'This restaurant is receiving too many delivery quote requests. Please try again shortly.',
 });
-const telemetryRateLimit = rateLimit({
+const telemetryRateLimit = sharedRateLimit({
   windowMs: 60_000,
   max: parsePositiveInt(process.env.TELEMETRY_RATE_LIMIT_PER_MIN, 20, 5, 120),
   keyFn: req => `telemetry:${clientIp(req)}`,
   message: 'Too many telemetry reports. Please try again shortly.',
 });
-const smsTestRateLimit = rateLimit({
+const smsTestRateLimit = sharedRateLimit({
   windowMs: 10 * 60_000,
   max: parsePositiveInt(process.env.SMS_TEST_RATE_LIMIT_PER_10_MIN, 3, 1, 10),
   keyFn: req => `sms-test:${clientIp(req)}`,
   message: 'Too many SMS test requests. Please wait before trying again.',
 });
-const stationPairRateLimit = rateLimit({
+const stationPairRateLimit = sharedRateLimit({
   windowMs: 10 * 60_000,
   max: 5,
   keyFn: req => `station-pair:${clientIp(req)}`,
@@ -433,6 +498,19 @@ async function requireCustomerOrderBody(req,res,next) {
     next();
   }catch{res.status(500).json({error:'Unable to verify order access'});}
 }
+async function ensureSharedSecuritySchema() {
+  await pool.query(`
+    create table if not exists security_rate_limit_buckets (
+      key text primary key,
+      window_started_ms bigint not null,
+      count integer not null default 0,
+      updated_at timestamptz not null default now()
+    );
+    create index if not exists security_rate_limit_buckets_updated_idx
+      on security_rate_limit_buckets(updated_at);
+  `);
+}
+
 async function ensurePhase1SecuritySchema() {
   await pool.query(`
     alter table orders add column if not exists customer_access_token_hash text;
@@ -591,26 +669,17 @@ async function getBusinessSmsSettings(businessId) {
   if(!r.rowCount) throw new Error('Restaurant not found');
   return r.rows[0];
 }
-const smsSpendBuckets = new Map();
-function consumeSmsBudget(key, windowMs, max) {
-  const now=Date.now();
-  let bucket=smsSpendBuckets.get(key);
-  if(!bucket || now>=bucket.resetAt){ bucket={count:0,resetAt:now+windowMs}; smsSpendBuckets.set(key,bucket); }
-  if(bucket.count>=max) return false;
-  bucket.count += 1;
-  return true;
+async function consumeSmsBudget(key, windowMs, max) {
+  const result = await consumeSharedRateLimit(`sms-spend:${key}`, windowMs, max);
+  return result.allowed;
 }
-setInterval(() => {
-  const now=Date.now();
-  for(const [key,bucket] of smsSpendBuckets) if(now>=bucket.resetAt) smsSpendBuckets.delete(key);
-},60_000).unref?.();
 
 async function sendSms({businessId,to,message,senderId=null,riderId=null,orderId=null,purpose='ASSIGNMENT'}) {
   const config=requireSmsConfig();
   const recipient=normalizeKenyanPhone(to);
   // Protect the paid provider from accidental retry loops and repeated assignment spam.
-  const recipientBudget = consumeSmsBudget(`recipient:${recipient}`, 10*60_000, parsePositiveInt(process.env.SMS_MAX_PER_RECIPIENT_PER_10_MIN, 3, 1, 10));
-  const businessBudget = consumeSmsBudget(`business:${businessId}`, 10*60_000, parsePositiveInt(process.env.SMS_MAX_PER_BUSINESS_PER_10_MIN, 30, 5, 200));
+  const recipientBudget = await consumeSmsBudget(`recipient:${recipient}`, 10*60_000, parsePositiveInt(process.env.SMS_MAX_PER_RECIPIENT_PER_10_MIN, 3, 1, 10));
+  const businessBudget = await consumeSmsBudget(`business:${businessId}`, 10*60_000, parsePositiveInt(process.env.SMS_MAX_PER_BUSINESS_PER_10_MIN, 30, 5, 200));
   if(!recipientBudget || !businessBudget) throw new Error('SMS sending is temporarily rate limited for this recipient or restaurant');
   const settings=await getBusinessSmsSettings(businessId);
 
@@ -1479,7 +1548,7 @@ app.post('/api/delivery/quote', quoteRateLimit, quoteBusinessRateLimit, async (r
   }catch(error){res.status(400).json({error:error.message||'Unable to calculate delivery fee'});}
 });
 
-app.post('/api/orders', rateLimit({windowMs:10*60_000,max:20,keyFn:req=>`orders:${clientIp(req)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts. Please wait before placing another order.'}), rateLimit({windowMs:10*60_000,max:12,keyFn:req=>`order-fingerprint:${clientIp(req)}:${String(req.headers['user-agent']||'').slice(0,120)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts from this client. Please wait before trying again.'}), async (req, res) => {
+app.post('/api/orders', sharedRateLimit({windowMs:10*60_000,max:20,keyFn:req=>`orders:${clientIp(req)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts. Please wait before placing another order.'}), sharedRateLimit({windowMs:10*60_000,max:12,keyFn:req=>`order-fingerprint:${clientIp(req)}:${String(req.headers['user-agent']||'').slice(0,120)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts from this client. Please wait before trying again.'}), async (req, res) => {
   const client=await pool.connect();
   try{
     const {businessId,customer,items,paymentMethod,deliveryNote,quoteId}=req.body;
@@ -1951,7 +2020,11 @@ app.get('/api/admin/riders',requireRiderModule,requireManager,async(req,res)=>{
   res.json(result.rows.map(r=>({...r,available:r.active&&r.online&&!r.busy,distance_km:Number(r.distance_meters)/1000})));
 });
 app.get('/api/admin/riders/:id/trips',requireRiderModule,requireManager,async(req,res)=>{
-  const result=await pool.query(`select t.id,t.assigned_at,t.completed_at,o.order_number,o.status,o.delivery_address,o.route_distance_meters,o.route_duration_seconds,o.delivery_fee,e.amount as rider_earning,e.status as earning_status from rider_trips t join orders o on o.id=t.order_id left join rider_earnings e on e.trip_id=t.id where t.rider_id=$1 order by t.assigned_at desc limit 200`,[req.params.id]);
+  const result=await pool.query(`select t.id,t.assigned_at,t.completed_at,o.order_number,o.status,o.delivery_address,o.route_distance_meters,o.route_duration_seconds,o.delivery_fee,e.amount as rider_earning,e.status as earning_status
+    from rider_trips t join riders r on r.id=t.rider_id join orders o on o.id=t.order_id
+    left join rider_earnings e on e.trip_id=t.id
+    where t.rider_id=$1 and r.business_id=$2 and o.business_id=$2
+    order by t.assigned_at desc limit 200`,[req.params.id,req.manager.business_id]);
   res.json(result.rows);
 });
 async function getRiderConnectionState(businessId, client=pool){
@@ -2878,6 +2951,7 @@ app.post('/api/platform/businesses/:id/integration',requirePlatformAdmin,require
     if(!allowed.includes(type))return res.status(400).json({error:'Invalid integration type'});
     if(business.rows[0].status!=='ACTIVE')return res.status(400).json({error:'Activate the restaurant before generating an integration'});
     await ensureIntegrationSchema();
+  await ensureSharedSecuritySchema();
     const token=crypto.randomBytes(24).toString('hex');
     const tokenHash=hashSessionToken(token);
     await pool.query(`insert into business_integrations(id,business_id,integration_type,status,public_token_hash,generated_at,revoked_at,updated_at)

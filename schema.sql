@@ -716,3 +716,15 @@ create index if not exists platform_audit_action_idx on platform_audit_events(ac
 update platform_packages set features=features || '{"digitalOrdering":true,"tenantIsolation":true,"websiteIntegration":true,"auditTrail":true}'::jsonb,updated_at=now() where key='STARTER';
 update platform_packages set features=features || '{"digitalOrdering":true,"advancedDelivery":true,"branchRouting":true,"riderModule":true,"riderTracking":true,"smsNotifications":true,"advancedAnalytics":true,"customDomain":true,"apiIntegrations":true,"auditTrail":true,"tenantIsolation":true,"websiteIntegration":true}'::jsonb,updated_at=now() where key='GROWTH';
 update platform_packages set features=features || '{"digitalOrdering":true,"advancedDelivery":true,"branchRouting":true,"riderModule":true,"riderTracking":true,"smsNotifications":true,"advancedAnalytics":true,"customDomain":true,"apiIntegrations":true,"auditTrail":true,"tenantIsolation":true,"websiteIntegration":true,"multiBranch":true,"prioritySupport":true,"automation":true}'::jsonb,updated_at=now() where key='PRO';
+
+
+-- Shared security throttling state. Sensitive API limits are stored in PostgreSQL
+-- so they remain effective across multiple API instances and process restarts.
+create table if not exists security_rate_limit_buckets (
+  key text primary key,
+  window_started_ms bigint not null,
+  count integer not null default 0,
+  updated_at timestamptz not null default now()
+);
+create index if not exists security_rate_limit_buckets_updated_idx
+  on security_rate_limit_buckets(updated_at);

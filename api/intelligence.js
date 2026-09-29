@@ -18,3 +18,17 @@ export function registerIntelligence(app,pool){
   app.get('/api/manager/intelligence/branches',manager,async(req,res)=>{const r=await pool.query(`select * from restaurant_branches where business_id=$1 order by name`,[req.manager.businessId]);res.json(r.rows)});
   app.post('/api/manager/intelligence/branches',manager,async(req,res)=>{const r=await pool.query(`insert into restaurant_branches(business_id,name,code,address,latitude,longitude) values($1,$2,$3,$4,$5,$6) returning *`,[req.manager.businessId,clean(req.body.name,120),clean(req.body.code,30).toUpperCase(),clean(req.body.address,500)||null,req.body.latitude??null,req.body.longitude??null]);res.status(201).json(r.rows[0])});
 }
+export async function runIntelligenceSweep(pool){
+  try{
+    const businesses=await pool.query('select id from businesses');
+    for(const b of businesses.rows){
+      const r=await pool.query("select coalesce(sum(total) filter(where payment_status='PAID'),0)::numeric revenue,count(*)::int orders_count,count(*) filter(where status='DELIVERED')::int completed_orders from orders where business_id=$1 and created_at>=current_date and created_at<current_date+interval '1 day'",[b.id]);
+      const x=r.rows[0];
+      const aov=Number(x.orders_count)?Number(x.revenue)/Number(x.orders_count):0;
+      await pool.query('insert into intelligence_snapshots(business_id,snapshot_date,revenue,orders_count,completed_orders,average_order_value) values($1,current_date,$2,$3,$4,$5) on conflict(business_id,snapshot_date) do update set revenue=excluded.revenue,orders_count=excluded.orders_count,completed_orders=excluded.completed_orders,average_order_value=excluded.average_order_value',[b.id,x.revenue,x.orders_count,x.completed_orders,aov]);
+      const baseline=await pool.query("select avg(revenue)::numeric mean,coalesce(stddev_pop(revenue),0)::numeric sd from intelligence_snapshots where business_id=$1 and snapshot_date>=current_date-28 and snapshot_date<current_date",[b.id]);
+      const mean=Number(baseline.rows[0]?.mean||0),sd=Number(baseline.rows[0]?.sd||0),observed=Number(x.revenue||0),z=sd?Math.abs(observed-mean)/sd:0;
+      if(sd&&z>=2){const severity=z>=3?'HIGH':'MEDIUM';await pool.query("insert into intelligence_anomalies(business_id,anomaly_type,severity,metric,observed_value,expected_value,explanation) values($1,'REVENUE','$2','daily_revenue',$3,$4,$5)",[b.id,severity,observed,mean,observed>mean?'Daily revenue is materially above the recent baseline.':'Daily revenue is materially below the recent baseline.'])}
+    }
+  }catch(error){console.error('Intelligence sweep warning:',error.message)}
+}

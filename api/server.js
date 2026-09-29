@@ -27,6 +27,12 @@ const RIDER_GPS_MAX_ACCURACY_METERS = parsePositiveInt(process.env.RIDER_GPS_MAX
 const RIDER_GPS_FRESHNESS_SECONDS = parsePositiveInt(process.env.RIDER_GPS_FRESHNESS_SECONDS, 90, 15, 600);
 const RIDER_GPS_MAX_SPEED_MPS = parsePositiveInt(process.env.RIDER_GPS_MAX_SPEED_MPS, 90, 20, 200);
 const RIDER_GPS_REQUIRED_FOR_ASSIGNMENT = String(process.env.RIDER_GPS_REQUIRED_FOR_ASSIGNMENT || 'true').toLowerCase() !== 'false';
+const REALTIME_TOKEN_TTL_SECONDS = parsePositiveInt(process.env.REALTIME_TOKEN_TTL_SECONDS, 300, 60, 900);
+const EXTERNAL_API_DAILY_ROUTE_QUOTA = parsePositiveInt(process.env.EXTERNAL_API_DAILY_ROUTE_QUOTA, 1000, 10, 1000000);
+const EXTERNAL_API_MONTHLY_ROUTE_QUOTA = parsePositiveInt(process.env.EXTERNAL_API_MONTHLY_ROUTE_QUOTA, 20000, 100, 10000000);
+const EXTERNAL_API_DAILY_SMS_QUOTA = parsePositiveInt(process.env.EXTERNAL_API_DAILY_SMS_QUOTA, 200, 5, 1000000);
+const EXTERNAL_API_MONTHLY_SMS_QUOTA = parsePositiveInt(process.env.EXTERNAL_API_MONTHLY_SMS_QUOTA, 5000, 10, 10000000);
+const EXTERNAL_API_ALERT_PERCENT = parsePositiveInt(process.env.EXTERNAL_API_ALERT_PERCENT, 80, 50, 99);
 
 function haversineMeters(lat1, lng1, lat2, lng2) {
   const rad=Math.PI/180, R=6371000;
@@ -233,6 +239,7 @@ app.use('/api', (req, res, next) => {
   res.setHeader('X-XSS-Protection', '0');
   res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; connect-src 'self'");
   next();
 });
 app.use('/api', apiRateLimit);
@@ -511,6 +518,78 @@ async function ensureSharedSecuritySchema() {
   `);
 }
 
+async function ensureRealtimeAndExternalApiSecuritySchema() {
+  await pool.query(`
+    create table if not exists realtime_access_tokens (
+      token_hash text primary key,
+      scope text not null check (scope in ('CUSTOMER_ORDER','MANAGER','RIDER','STATION')),
+      business_id uuid not null references businesses(id) on delete cascade,
+      order_id uuid references orders(id) on delete cascade,
+      rider_id uuid references riders(id) on delete cascade,
+      station_id uuid references restaurant_order_stations(id) on delete cascade,
+      expires_at timestamptz not null,
+      created_at timestamptz not null default now()
+    );
+    create index if not exists realtime_access_tokens_expiry_idx on realtime_access_tokens(expires_at);
+    create index if not exists realtime_access_tokens_scope_idx on realtime_access_tokens(scope,business_id,expires_at);
+    create table if not exists external_api_usage_buckets (
+      business_id uuid not null references businesses(id) on delete cascade,
+      provider text not null,
+      operation text not null,
+      period_type text not null check (period_type in ('DAILY','MONTHLY')),
+      period_key text not null,
+      request_count integer not null default 0,
+      updated_at timestamptz not null default now(),
+      primary key (business_id,provider,operation,period_type,period_key)
+    );
+    create index if not exists external_api_usage_buckets_updated_idx on external_api_usage_buckets(updated_at);
+    create table if not exists external_api_usage_alerts (
+      id uuid primary key default gen_random_uuid(),
+      business_id uuid not null references businesses(id) on delete cascade,
+      provider text not null,
+      operation text not null,
+      period_type text not null,
+      period_key text not null,
+      threshold_percent integer not null,
+      request_count integer not null,
+      quota integer not null,
+      created_at timestamptz not null default now(),
+      unique(business_id,provider,operation,period_type,period_key,threshold_percent)
+    );
+    create index if not exists external_api_usage_alerts_business_idx on external_api_usage_alerts(business_id,created_at desc);
+  `);
+}
+
+async function issueRealtimeAccessToken({scope,businessId,orderId=null,riderId=null,stationId=null}) {
+  const token=crypto.randomBytes(32).toString('hex');
+  await pool.query(`insert into realtime_access_tokens(token_hash,scope,business_id,order_id,rider_id,station_id,expires_at)
+    values($1,$2,$3,$4,$5,$6,now()+make_interval(secs=>$7))`,[hashSessionToken(token),scope,businessId,orderId,riderId,stationId,REALTIME_TOKEN_TTL_SECONDS]);
+  return token;
+}
+async function getRealtimeAccessToken(token) {
+  if(!token)return null;
+  const r=await pool.query('select * from realtime_access_tokens where token_hash=$1 and expires_at>now() limit 1',[hashSessionToken(token)]);
+  return r.rows[0]||null;
+}
+async function consumeExternalApiQuota({businessId,provider,operation,dailyQuota,monthlyQuota,units=1}) {
+  if(!businessId)return {allowed:true};
+  const now=new Date(),dayKey=now.toISOString().slice(0,10),monthKey=now.toISOString().slice(0,7),client=await pool.connect();
+  try{
+    await client.query('begin'); const rows=[];
+    for(const [periodType,periodKey,quota] of [['DAILY',dayKey,dailyQuota],['MONTHLY',monthKey,monthlyQuota]]){
+      const r=await client.query(`insert into external_api_usage_buckets(business_id,provider,operation,period_type,period_key,request_count,updated_at)
+        values($1,$2,$3,$4,$5,$6,now()) on conflict(business_id,provider,operation,period_type,period_key)
+        do update set request_count=external_api_usage_buckets.request_count+$6,updated_at=now() returning request_count`,[businessId,provider,operation,periodType,periodKey,units]);
+      rows.push({periodType,periodKey,quota,count:Number(r.rows[0].request_count)});
+    }
+    const blocked=rows.some(x=>x.count>x.quota);
+    for(const row of rows)for(const threshold of [EXTERNAL_API_ALERT_PERCENT,90])if(row.count>=Math.ceil(row.quota*threshold/100))await client.query(`insert into external_api_usage_alerts(business_id,provider,operation,period_type,period_key,threshold_percent,request_count,quota) values($1,$2,$3,$4,$5,$6,$7,$8) on conflict do nothing`,[businessId,provider,operation,row.periodType,row.periodKey,threshold,row.count,row.quota]);
+    await client.query('commit');
+    const d=rows[0],m=rows[1]; return {allowed:!blocked,dailyCount:d.count,dailyQuota,monthlyCount:m.count,monthlyQuota};
+  }catch(e){try{await client.query('rollback')}catch{}throw e}finally{client.release()}
+}
+async function guardExternalApiQuota(args){const result=await consumeExternalApiQuota(args);if(!result.allowed){const e=new Error(`External ${args.provider} usage quota reached for this restaurant. The integration is temporarily paused until the quota window resets.`);e.status=429;e.code='EXTERNAL_API_QUOTA_EXCEEDED';e.quota=result;throw e}return result;}
+
 async function ensurePhase1SecuritySchema() {
   await pool.query(`
     alter table orders add column if not exists customer_access_token_hash text;
@@ -678,7 +757,8 @@ async function sendSms({businessId,to,message,senderId=null,riderId=null,orderId
   const config=requireSmsConfig();
   const recipient=normalizeKenyanPhone(to);
   // Protect the paid provider from accidental retry loops and repeated assignment spam.
-  const recipientBudget = await consumeSmsBudget(`recipient:${recipient}`, 10*60_000, parsePositiveInt(process.env.SMS_MAX_PER_RECIPIENT_PER_10_MIN, 3, 1, 10));
+  await guardExternalApiQuota({businessId,provider:'AFRICASTALKING',operation:'SMS',dailyQuota:EXTERNAL_API_DAILY_SMS_QUOTA,monthlyQuota:EXTERNAL_API_MONTHLY_SMS_QUOTA});
+   const recipientBudget = await consumeSmsBudget(`recipient:${recipient}`, 10*60_000, parsePositiveInt(process.env.SMS_MAX_PER_RECIPIENT_PER_10_MIN, 3, 1, 10));
   const businessBudget = await consumeSmsBudget(`business:${businessId}`, 10*60_000, parsePositiveInt(process.env.SMS_MAX_PER_BUSINESS_PER_10_MIN, 30, 5, 200));
   if(!recipientBudget || !businessBudget) throw new Error('SMS sending is temporarily rate limited for this recipient or restaurant');
   const settings=await getBusinessSmsSettings(businessId);
@@ -887,8 +967,9 @@ async function requireRiderAuth(req, res, next) {
     next();
   } catch { res.status(500).json({ error: 'Unable to verify rider session' }); }
 }
-async function computeGoogleRoute(origin, destination) {
+async function computeGoogleRoute(origin, destination, businessId=null) {
   if (!process.env.GOOGLE_MAPS_API_KEY) throw new Error('GOOGLE_MAPS_API_KEY is not configured');
+  await guardExternalApiQuota({businessId,provider:'GOOGLE_MAPS',operation:'ROUTE',dailyQuota:EXTERNAL_API_DAILY_ROUTE_QUOTA,monthlyQuota:EXTERNAL_API_MONTHLY_ROUTE_QUOTA});
   const response = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
     method:'POST',
     headers:{
@@ -939,7 +1020,7 @@ async function getNairobiFuelPrice() {
   return 214.03;
 }
 async function calculateDeliveryQuote({businessId,pickupAddress,deliveryAddress}) {
-  const route=await computeGoogleRoute(pickupAddress,deliveryAddress);
+  const route=await computeGoogleRoute(pickupAddress,deliveryAddress,businessId);
   const km=route.distanceMeters/1000;
   const minutes=route.durationSeconds/60;
   const fuel=await getNairobiFuelPrice();
@@ -1845,7 +1926,7 @@ app.get('/api/riders/:id/deliveries/:tripId/route', requireRiderModule, requireR
     if(!r.rowCount)return res.status(404).json({error:'Active delivery not found'});
     const row=r.rows[0];
     if(!row.pickup_address||!row.delivery_address)return res.status(400).json({error:'Pickup and delivery addresses are required for the live route'});
-    const route=await computeGoogleRoute(row.pickup_address,row.delivery_address);
+    const route=await computeGoogleRoute(row.pickup_address,row.delivery_address,req.rider.business_id);
     res.json({
       orderNumber:row.order_number,
       encodedPolyline:route.encodedPolyline,
@@ -1858,7 +1939,7 @@ app.get('/api/riders/:id/deliveries/:tripId/route', requireRiderModule, requireR
 });
 app.get('/api/riders/:id/demo-route', requireRiderModule, requireRiderAuth, async(req,res)=>{
   try{
-    const route=await computeGoogleRoute('Kenyatta International Convention Centre, Nairobi, Kenya','Westgate Shopping Mall, Nairobi, Kenya');
+    const route=await computeGoogleRoute('Kenyatta International Convention Centre, Nairobi, Kenya','Westgate Shopping Mall, Nairobi, Kenya',req.rider.business_id);
     res.json({
       encodedPolyline:route.encodedPolyline,
       distanceMeters:route.distanceMeters,
@@ -3047,6 +3128,7 @@ async function cleanupSecurityArtifacts(){
 async function startServer(){
   await ensureIntegrationSchema();
   await ensurePhase1SecuritySchema();
+  await ensureRealtimeAndExternalApiSecuritySchema();
   await ensurePhase3SecuritySchema();
   await cleanupSecurityArtifacts();
   setInterval(cleanupSecurityArtifacts,30*60_000).unref?.();

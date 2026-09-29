@@ -345,3 +345,170 @@
   .manager-nav .brand{font-size:16px;max-width:130px;line-height:1.05}
   .manager-nav-menu summary{padding:9px 11px}
 }
+
+/* ============================================================
+   MANAGER CONTROL CENTRE SIDEBAR
+   Overrides legacy .manager-tab pill navigation.
+   ============================================================ */
+.manager-layout{
+  display:grid!important;
+  grid-template-columns:225px minmax(0,1fr)!important;
+  align-items:start!important;
+  gap:0!important;
+  margin-top:22px!important;
+  min-width:0!important;
+}
+.manager-sidebar{
+  position:sticky!important;
+  top:96px!important;
+  width:225px!important;
+  min-height:calc(100vh - 125px)!important;
+  background:#fff!important;
+  border:1px solid var(--line)!important;
+  border-radius:12px!important;
+  padding:18px 12px!important;
+  display:flex!important;
+  flex-direction:column!important;
+  box-sizing:border-box!important;
+  z-index:5!important;
+}
+.manager-sidebar-label{
+  display:block!important;
+  padding:4px 9px 12px!important;
+  font-size:8px!important;
+  font-weight:950!important;
+  letter-spacing:.15em!important;
+  color:var(--muted)!important;
+}
+.manager-sidebar-nav{
+  display:grid!important;
+  grid-template-columns:1fr!important;
+  gap:4px!important;
+  width:100%!important;
+}
+.manager-sidebar-nav .manager-tab{
+  width:100%!important;
+  min-width:0!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:flex-start!important;
+  gap:10px!important;
+  border:0!important;
+  background:transparent!important;
+  color:#667069!important;
+  text-align:left!important;
+  border-radius:8px!important;
+  padding:11px 10px!important;
+  margin:0!important;
+  font:inherit!important;
+  font-size:10px!important;
+  font-weight:850!important;
+  white-space:nowrap!important;
+  cursor:pointer!important;
+}
+.manager-sidebar-nav .manager-tab:hover{
+  background:#f4f4ef!important;
+  color:var(--ink)!important;
+}
+.manager-sidebar-nav .manager-tab.active{
+  background:var(--ink)!important;
+  color:#fff!important;
+  border-color:var(--ink)!important;
+}
+.manager-tab-icon{
+  width:20px!important;
+  min-width:20px!important;
+  height:18px!important;
+  display:inline-grid!important;
+  place-items:center!important;
+  text-align:center!important;
+  font-size:13px!important;
+  line-height:1!important;
+  font-weight:900!important;
+}
+.manager-sidebar-footer{
+  margin-top:auto!important;
+  border-top:1px solid var(--line)!important;
+  padding:14px 8px 3px!important;
+  display:grid!important;
+  gap:3px!important;
+}
+.manager-sidebar-footer span{
+  display:block!important;
+  font-size:7px!important;
+  font-weight:950!important;
+  letter-spacing:.13em!important;
+  color:var(--muted)!important;
+}
+.manager-sidebar-footer small{
+  display:block!important;
+  font-size:9px!important;
+  color:var(--muted)!important;
+}
+.manager-main{
+  min-width:0!important;
+  padding-left:24px!important;
+}
+.manager-mobile-sections{
+  display:none!important;
+}
+.manager-mobile-section-list{
+  display:grid!important;
+  grid-template-columns:1fr 1fr!important;
+  gap:5px!important;
+  margin-top:7px!important;
+  padding:7px!important;
+  background:#fff!important;
+  border:1px solid var(--line)!important;
+  border-radius:9px!important;
+}
+.manager-mobile-section-list .manager-tab{
+  width:100%!important;
+  border:1px solid var(--line)!important;
+  background:var(--paper)!important;
+  color:var(--ink)!important;
+  border-radius:7px!important;
+  padding:10px!important;
+  text-align:left!important;
+  font:inherit!important;
+  font-size:9px!important;
+  font-weight:850!important;
+}
+.manager-mobile-section-list .manager-tab.active{
+  background:var(--ink)!important;
+  color:#fff!important;
+  border-color:var(--ink)!important;
+}
+@media(max-width:1000px){
+  .manager-layout{
+    grid-template-columns:190px minmax(0,1fr)!important;
+  }
+  .manager-sidebar{
+    width:190px!important;
+    padding:14px 9px!important;
+  }
+  .manager-main{
+    padding-left:18px!important;
+  }
+}
+@media(max-width:800px){
+  .manager-layout{
+    display:block!important;
+    margin-top:15px!important;
+  }
+  .manager-sidebar{
+    display:none!important;
+  }
+  .manager-main{
+    padding-left:0!important;
+  }
+  .manager-mobile-sections{
+    display:block!important;
+    margin-top:15px!important;
+  }
+}
+@media(max-width:520px){
+  .manager-mobile-section-list{
+    grid-template-columns:1fr 1fr!important;
+  }
+}

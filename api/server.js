@@ -12,6 +12,7 @@ import { registerAdvancedOperations } from './advanced-operations.js';
 import { registerIntelligence, runIntelligenceSweep } from './intelligence.js';
 import { registerBrandingEngine } from './branding-engine.js';
 import { registerReceiptEngine, ensureReceipt } from './receipt-engine.js';
+import { runSelfHealingSweep } from './self-healing.js';
 
 const { Pool } = pg;
 const app = express();
@@ -3757,9 +3758,13 @@ async function startServer(){
   await ensurePhase1SecuritySchema();
   await ensurePhase3SecuritySchema();
   await cleanupSecurityArtifacts();
+  await runSelfHealingSweep(pool);
   await runIntelligenceSweep(pool);
   setInterval(() => runIntelligenceSweep(pool), 6 * 60 * 60_000).unref?.();
   setInterval(cleanupSecurityArtifacts,30*60_000).unref?.();
+  // Phase M recovery is deliberately infrequent and bounded. It only reconciles
+  // existing infrastructure state; it never changes payment/order outcomes.
+  setInterval(() => runSelfHealingSweep(pool).catch(() => {}), 5*60_000).unref?.();
   await ensureSmsSchema();
   await ensurePlatformObservabilitySchema();
   await startRealtimeBus();

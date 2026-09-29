@@ -96,3 +96,47 @@ test('Phase 5: rider GPS is authenticated and tenant-bound', () => {
   has(block, 'latitude');
   has(block, 'longitude');
 });
+
+test('Post-Phase 5: GPS samples reject poor accuracy and impossible movement', () => {
+  has(server, 'RIDER_GPS_MAX_ACCURACY_METERS');
+  has(server, 'RIDER_GPS_FRESHNESS_SECONDS');
+  has(server, 'RIDER_GPS_MAX_SPEED_MPS');
+  has(server, 'validateGpsSample');
+  has(server, 'suspicious:true');
+});
+
+test('Post-Phase 5: rider assignment requires fresh usable GPS by default', () => {
+  has(server, 'RIDER_GPS_REQUIRED_FOR_ASSIGNMENT');
+  has(server, 'p.location_updated_at >= now()');
+  has(server, 'RIDER_GPS_FRESHNESS_SECONDS');
+  has(server, 'RIDER_GPS_MAX_ACCURACY_METERS');
+});
+
+test('Post-Phase 5: public delivery quotes have business throttling and route caching', () => {
+  has(server, 'quoteBusinessRateLimit');
+  has(server, 'deliveryQuoteCache');
+  has(server, 'DELIVERY_QUOTE_CACHE_SECONDS');
+  has(server, 'DELIVERY_QUOTE_MAX_ADDRESS_LENGTH');
+  has(server, "status='EXPIRED'");
+});
+
+test('Post-Phase 5: anonymous order creation has client fingerprint and pending-order abuse controls', () => {
+  has(server, 'order-fingerprint:');
+  has(server, 'pendingSpam');
+  has(server, "o.status='NEW'");
+  has(server, "o.payment_status='PENDING'");
+});
+
+test('Post-Phase 5: anonymous telemetry is rate limited and URLs are scheme validated', () => {
+  has(server, 'telemetryRateLimit');
+  has(server, 'Invalid telemetry URL');
+  has(server, "['http:','https:']");
+});
+
+test('Post-Phase 5: customer-facing dynamic HTML is escaped', () => {
+  const checkout = fs.readFileSync(path.join(root, 'checkout-ui.js'), 'utf8');
+  const orderUi = fs.readFileSync(path.join(root, 'order-api-ui.js'), 'utf8');
+  assert.match(checkout, /escapeCheckoutHtml/);
+  assert.match(orderUi, /escapeOrderHtml/);
+  assert.doesNotMatch(orderUi, /insertAdjacentHTML/);
+});

@@ -1,3 +1,4 @@
+function escapeCheckoutHtml(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 async function renderCheckoutUpgrade(){
   const el=document.getElementById('checkout-view');
   if(!el)return;
@@ -10,7 +11,7 @@ async function renderCheckoutUpgrade(){
     <section>
       <p class="eyebrow">CHECKOUT</p><h1>Complete your order.</h1>
       <div class="panel"><h2>Your items</h2>
-      ${c.map(i=>`<div class="summary-row"><span>${i.qty} × ${i.name}<small style="display:block">${Object.entries(i.options||{}).map(x=>x[0]+': '+x[1]).join(' • ')}</small></span><strong>${money(i.unit*i.qty)}</strong></div>`).join('')}
+      ${c.map(i=>`<div class="summary-row"><span>${i.qty} × ${escapeCheckoutHtml(i.name)}<small style="display:block">${Object.entries(i.options||{}).map(x=>escapeCheckoutHtml(x[0])+': '+escapeCheckoutHtml(x[1])).join(' • ')}</small></span><strong>${money(i.unit*i.qty)}</strong></div>`).join('')}
       <div class="summary-row"><span>Food subtotal</span><strong>${money(subtotal)}</strong></div>
       <div class="summary-row"><span>Delivery fee</span><strong id="delivery-fee">Enter your delivery address</strong></div>
       <div class="summary-row total"><span>Total</span><strong id="checkout-total">${money(subtotal)}</strong></div>
@@ -46,7 +47,7 @@ async function renderCheckoutUpgrade(){
       quote=await getDeliveryQuote({pickupAddress:business.pickup_address||'Savanna Bites, Nairobi, Kenya',deliveryAddress:address,latitude:customerLat,longitude:customerLng});
       document.getElementById('delivery-fee').textContent=money(quote.deliveryFee);
       document.getElementById('checkout-total').textContent=money(subtotal+Number(quote.deliveryFee));
-      document.getElementById('route-summary').textContent=`${Number(quote.km).toFixed(1)} km · about ${Math.max(1,Math.round(Number(quote.minutes)))} min · ${quote.branchName||'Best available branch'} · ${quote.pricingMode==='AUTO'?'automatic platform pricing':'restaurant pricing rules'}`;
+      document.getElementById('route-summary').textContent=`${Number(quote.km).toFixed(1)} km · about ${Math.max(1,Math.round(Number(quote.minutes)))} min · ${escapeCheckoutHtml(quote.branchName||'Best available branch')} · ${quote.pricingMode==='AUTO'?'automatic platform pricing':'restaurant pricing rules'}`;
       payButton.disabled=false;
       error.textContent='Delivery fee locked into this order quote.';
     }catch(err){quote=null;payButton.disabled=true;error.textContent=err.message||'Could not calculate delivery fee.';}

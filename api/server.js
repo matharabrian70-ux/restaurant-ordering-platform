@@ -492,9 +492,24 @@ function verifyPassword(password, stored) {
 function hashSessionToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
-function createCustomerOrderToken() {
+function createCustomerOrderToken(orderId = null) {
+  if (orderId) {
+    const secret = process.env.CUSTOMER_ORDER_TOKEN_SECRET || process.env.PAYSTACK_SECRET_KEY || process.env.DATABASE_URL || 'restaurant-ordering-order-token-secret';
+    const token = crypto.createHmac('sha256', secret).update(String(orderId)).digest('hex');
+    return { token, hash: hashSessionToken(token) };
+  }
   const token = crypto.randomBytes(32).toString('hex');
   return { token, hash: hashSessionToken(token) };
+}
+function stableSerialize(value) {
+  if (Array.isArray(value)) return '[' + value.map(stableSerialize).join(',') + ']';
+  if (value && typeof value === 'object') {
+    return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + stableSerialize(value[key])).join(',') + '}';
+  }
+  return JSON.stringify(value);
+}
+function hashOrderRequest(value) {
+  return crypto.createHash('sha256').update(stableSerialize(value)).digest('hex');
 }
 async function getCustomerOrderAccess(req) {
   const auth = String(req.headers.authorization || '');
@@ -1511,50 +1526,62 @@ app.get('/api/events', async (req,res)=>{
 
 async function initiateRefundForOrder(orderId, customerNote = 'Customer cancelled before restaurant acceptance', merchantNote = 'Automatic cancellation refund') {
   const idempotencyKey='AUTO-CANCEL-'+String(orderId);
-  const existing=await pool.query('select * from refunds where idempotency_key=$1 limit 1',[idempotencyKey]);
-  if(existing.rowCount)return existing.rows[0];
-  const orderResult = await pool.query(`select o.id,o.business_id,o.total,o.payment_status,p.id as payment_id,p.provider_reference,p.amount as paid_amount from orders o join payments p on p.order_id=o.id and p.provider='PAYSTACK' where o.id=$1`, [orderId]);
-  if (!orderResult.rowCount) throw new Error('Paid Paystack order not found');
-  const order = orderResult.rows[0];
-  if (order.payment_status !== 'PAID' || !order.provider_reference) return null;
-  const refundedResult = await pool.query(`select coalesce(sum(amount),0) as total from refunds where payment_id=$1 and status in ('PENDING','PROCESSING','PROCESSED')`, [order.payment_id]);
-  const alreadyRefunded = Number(refundedResult.rows[0].total);
-  const remaining = Number(order.paid_amount) - alreadyRefunded;
-  if (remaining <= 0.0001) return null;
-  const refund = await paystackRequest('/refund', { method: 'POST', body: JSON.stringify({ transaction: order.provider_reference, amount: String(Math.round(remaining * 100)), currency: 'KES', customer_note: customerNote, merchant_note: merchantNote }) });
-  const data = refund.data || {};
-  const insert = await pool.query(`insert into refunds (id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,customer_note,merchant_note,idempotency_key) values (gen_random_uuid(),$1,$2,'PAYSTACK',$3,$4,$5,'KES',$6,$7,$8,$9) returning *`, [order.id, order.payment_id, data.id ? String(data.id) : null, order.provider_reference, remaining, String(data.status || 'pending').toUpperCase(), customerNote, merchantNote, idempotencyKey]);
-  broadcastRealtime({ businessId: order.business_id, orderId: order.id, event: 'refund.updated', data: { orderId: order.id, refund: insert.rows[0] } });
-  return insert.rows[0];
-}
-
-async function markPaymentSuccessful(reference, paystackData = null) {
-  const client = await pool.connect();
-  let cancelledOrderId = null;
-  let paidOrder = null;
-  try {
+  const client=await pool.connect();
+  try{
     await client.query('begin');
-    const paymentResult = await client.query(`select p.*, o.total, o.id as order_id, o.business_id, o.status as order_status from payments p join orders o on o.id=p.order_id where p.provider='PAYSTACK' and p.provider_reference=$1 for update`, [reference]);
-    if (!paymentResult.rowCount) { await client.query('rollback'); return null; }
-    const payment = paymentResult.rows[0];
-    const expectedSubunit = Math.round(Number(payment.total) * 100);
-    if (paystackData && Number(paystackData.amount) !== expectedSubunit) { await client.query('rollback'); throw new Error('Paystack amount does not match the order total'); }
-    await client.query(`update payments set status='PAID', confirmed_at=coalesce(confirmed_at,now()) where id=$1`, [payment.id]);
-    const updated = await client.query(`update orders set payment_status='PAID' where id=$1 returning *`, [payment.order_id]);
-    paidOrder = updated.rows[0];
-    await ensureReceipt(client,payment.order_id);
-    cancelledOrderId = payment.order_status === 'CANCELLED' ? payment.order_id : null;
-    if(paidOrder){
-      await client.query(`insert into outbox_events(event_type,aggregate_type,aggregate_id,business_id,payload)
-        values('payment.confirmed','ORDER',$1,$2,$3)`,
-        [paidOrder.id,paidOrder.business_id,{orderId:paidOrder.id,orderNumber:paidOrder.order_number,paymentStatus:'PAID'}]);
-    }
+    await client.query('select pg_advisory_xact_lock(hashtext($1))',[idempotencyKey]);
+    const existing=await client.query('select * from refunds where idempotency_key=$1 limit 1 for update',[idempotencyKey]);
+    if(existing.rowCount){await client.query('commit');return existing.rows[0];}
+    const orderResult=await client.query(
+      `select o.id,o.business_id,o.total,o.payment_status,p.id as payment_id,p.provider_reference,p.amount as paid_amount,p.status as payment_state
+         from orders o
+         join payments p on p.order_id=o.id and p.provider='PAYSTACK'
+        where o.id=$1
+        for update of o,p`,
+      [orderId]
+    );
+    if(!orderResult.rowCount){await client.query('rollback');throw new Error('Paid Paystack order not found');}
+    const order=orderResult.rows[0];
+    if(order.payment_status!=='PAID' || !order.provider_reference){await client.query('commit');return null;}
+    if(!['PAID'].includes(String(order.payment_state).toUpperCase())){await client.query('commit');return null;}
+    const refundedResult=await client.query(
+      `select coalesce(sum(amount),0) as total
+         from refunds
+        where payment_id=$1 and status in ('PENDING','PROCESSING','PROCESSED')`,
+      [order.payment_id]
+    );
+    const remaining=Math.round((Number(order.paid_amount)-Number(refundedResult.rows[0].total))*100)/100;
+    if(remaining<=0.0001){await client.query('commit');return null;}
+    const refund=await paystackRequest('/refund',{
+      method:'POST',
+      body:JSON.stringify({
+        transaction:order.provider_reference,
+        amount:String(Math.round(remaining*100)),
+        currency:'KES',
+        customer_note:customerNote,
+        merchant_note:merchantNote
+      })
+    });
+    const data=refund.data||{};
+    const insert=await client.query(
+      `insert into refunds(
+        id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,
+        customer_note,merchant_note,idempotency_key
+      ) values(
+        gen_random_uuid(),$1,$2,'PAYSTACK',$3,$4,$5,'KES',$6,$7,$8,$9
+      ) returning *`,
+      [
+        order.id,order.payment_id,data.id?String(data.id):null,order.provider_reference,remaining,
+        String(data.status||'pending').toUpperCase(),customerNote,merchantNote,idempotencyKey
+      ]
+    );
     await client.query('commit');
-    if (paidOrder) broadcastOrder(paidOrder, { reason: 'payment.confirmed', notification: 'New paid order' });
-    if (cancelledOrderId) await initiateRefundForOrder(cancelledOrderId, 'Customer cancelled before payment completed', 'Automatic refund because the order was cancelled before restaurant acceptance');
-    return payment.order_id;
-  } catch (error) { try { await client.query('rollback'); } catch {} throw error; }
-  finally { client.release(); }
+    broadcastRealtime({businessId:order.business_id,orderId:order.id,event:'refund.updated',data:{orderId:order.id,refund:insert.rows[0]}});
+    return insert.rows[0];
+  }catch(error){
+    try{await client.query('rollback')}catch{}
+    throw error;
+  }finally{client.release();}
 }
 
 async function updateRefundFromWebhook(data) {
@@ -1777,22 +1804,96 @@ app.post('/api/delivery/quote', quoteRateLimit, quoteBusinessRateLimit, async (r
   }
 });
 
-app.post('/api/orders', sharedRateLimit({windowMs:10*60_000,max:20,keyFn:req=>`orders:${clientIp(req)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts. Please wait before placing another order.'}), sharedRateLimit({windowMs:10*60_000,max:12,keyFn:req=>`order-fingerprint:${clientIp(req)}:${String(req.headers['user-agent']||'').slice(0,120)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts from this client. Please wait before trying again.'}), async (req, res) => {
+app.post('/api/orders',
+  sharedRateLimit({windowMs:10*60_000,max:20,keyFn:req=>`orders:${clientIp(req)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts. Please wait before placing another order.'}),
+  sharedRateLimit({windowMs:10*60_000,max:12,keyFn:req=>`order-fingerprint:${clientIp(req)}:${String(req.headers['user-agent']||'').slice(0,120)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts from this client. Please wait before trying again.'}),
+  async (req, res) => {
   const client=await pool.connect();
   try{
-    const {businessId,customer,items,paymentMethod,deliveryNote,quoteId}=req.body;
+    const {businessId,customer,items,paymentMethod,deliveryNote,quoteId,couponCode}=req.body;
     const normalizedPaymentMethod=paymentMethod==='M-Pesa'?'M-Pesa':paymentMethod==='Card'?'Card':null;
+    const idempotencyKey=String(req.headers['idempotency-key']||req.body?.idempotencyKey||'').trim();
+    if(!idempotencyKey||idempotencyKey.length<8||idempotencyKey.length>200)return res.status(400).json({error:'Idempotency-Key is required for order creation'});
     if(!businessId||!customer?.name||!customer?.phone||!customer?.email||!Array.isArray(items)||!items.length||!normalizedPaymentMethod) return res.status(400).json({error:'Missing order fields'});
     if(items.length>50) return res.status(400).json({error:'Too many order items'});
-    const pendingSpam=await pool.query(`select count(*)::int as count from orders o join customers c on c.id=o.customer_id where o.business_id=$1 and c.phone=$2 and o.status='NEW' and o.payment_status='PENDING' and o.created_at>now()-interval '30 minutes'`,[businessId,String(customer.phone).trim()]);
-    if(Number(pendingSpam.rows[0]?.count||0)>=5) return res.status(429).json({error:'Too many unpaid orders are already pending for this customer. Please complete or wait for an existing order.'});
+
+    const requestFingerprint=hashOrderRequest({
+      businessId,
+      customer:{name:String(customer.name).trim(),phone:String(customer.phone).trim(),email:String(customer.email).trim()},
+      items:items.map(item=>({productId:String(item.productId||'').trim(),quantity:Number(item.quantity),options:item.options&&typeof item.options==='object'?item.options:{}})),
+      paymentMethod:normalizedPaymentMethod,
+      deliveryNote:String(deliveryNote||'').trim(),
+      quoteId:quoteId?String(quoteId):null,
+      couponCode:couponCode?String(couponCode).trim().toUpperCase():null
+    });
+
+    await client.query('begin');
+    await client.query('select pg_advisory_xact_lock(hashtext($1))',[String(businessId)+':ORDER-IDEMP:'+idempotencyKey]);
+
+    const idemInsert=await client.query(
+      `insert into order_idempotency_keys(business_id,idempotency_key,request_hash)
+       values($1,$2,$3)
+       on conflict(business_id,idempotency_key) do nothing
+       returning business_id,idempotency_key,request_hash,order_id`,
+      [businessId,idempotencyKey,requestFingerprint]
+    );
+    if(!idemInsert.rowCount){
+      const existing=await client.query(
+        'select request_hash,order_id from order_idempotency_keys where business_id=$1 and idempotency_key=$2 for update',
+        [businessId,idempotencyKey]
+      );
+      if(!existing.rowCount){
+        await client.query('rollback');
+        return res.status(409).json({error:'Order idempotency record is unavailable. Please retry with the same key.'});
+      }
+      if(existing.rows[0].request_hash!==requestFingerprint){
+        await client.query('rollback');
+        return res.status(409).json({error:'Idempotency-Key was already used for a different order request'});
+      }
+      if(existing.rows[0].order_id){
+        const existingOrder=await client.query('select * from orders where id=$1 and business_id=$2',[existing.rows[0].order_id,businessId]);
+        if(!existingOrder.rowCount){
+          await client.query('rollback');
+          return res.status(409).json({error:'The previous order result is unavailable. Please contact the restaurant.'});
+        }
+        await client.query('commit');
+        const access=createCustomerOrderToken(existingOrder.rows[0].id);
+        return res.status(200).json({...existingOrder.rows[0],customerAccessToken:access.token,idempotent:true});
+      }
+    }
+
+    const pendingSpam=await client.query(`select count(*)::int as count from orders o join customers c on c.id=o.customer_id where o.business_id=$1 and c.phone=$2 and o.status='NEW' and o.payment_status='PENDING' and o.created_at>now()-interval '30 minutes'`,[businessId,String(customer.phone).trim()]);
+    if(Number(pendingSpam.rows[0]?.count||0)>=5){
+      await client.query('rollback');
+      return res.status(429).json({error:'Too many unpaid orders are already pending for this customer. Please complete or wait for an existing order.'});
+    }
+
     let deliveryFee=0,deliveryData=null;
     if(quoteId){
-      const quote=await pool.query('select * from delivery_quotes where id=$1 and business_id=$2 and status=\'QUOTED\'',[quoteId,businessId]);
-      if(!quote.rowCount) return res.status(400).json({error:'Delivery quote expired or invalid'});
-      deliveryData=quote.rows[0]; deliveryFee=Number(deliveryData.delivery_fee_kes);
+      const quote=await client.query(
+        `select * from delivery_quotes
+          where id=$1 and business_id=$2 and status='QUOTED' and order_id is null
+          for update`,
+        [quoteId,businessId]
+      );
+      if(!quote.rowCount){
+        await client.query('rollback');
+        return res.status(400).json({error:'Delivery quote expired, already used, or invalid'});
+      }
+      deliveryData=quote.rows[0];
+      deliveryFee=Number(deliveryData.delivery_fee_kes||0);
+      const marked=await client.query(
+        `update delivery_quotes set status='USED',updated_at=now()
+          where id=$1 and status='QUOTED' and order_id is null
+          returning id`,
+        [quoteId]
+      );
+      if(!marked.rowCount){
+        await client.query('rollback');
+        return res.status(409).json({error:'Delivery quote was already used. Please request a new quote.'});
+      }
     }
-    await client.query('begin');
+
     let foodSubtotal=0;
     const trustedItems=[];
     for(const item of items){
@@ -1820,22 +1921,119 @@ app.post('/api/orders', sharedRateLimit({windowMs:10*60_000,max:20,keyFn:req=>`o
       trustedItems.push({productId,productName:product.name,quantity,unitPrice,options:submittedOptions});
     }
     foodSubtotal=Math.round(foodSubtotal*100)/100;
-    const numericTotal=Math.round((foodSubtotal+deliveryFee)*100)/100;
-    await client.query(`update delivery_quotes set status='USED' where id=$1 and status='QUOTED'`,[quoteId||null]);
-    const customerResult=await client.query(`insert into customers(id,business_id,name,phone,email) values(gen_random_uuid(),$1,$2,$3,$4) on conflict(business_id,phone) do update set name=excluded.name,email=coalesce(excluded.email,customers.email) returning id`,[businessId,customer.name.trim(),customer.phone.trim(),customer.email.trim()]);
-    const orderNumber='SB-'+Date.now().toString().slice(-8);
-    const pickupAddress=deliveryData?.pickup_address||null, deliveryAddress=deliveryData?.delivery_address||deliveryNote?.trim()||null;
-    const customerAccess=createCustomerOrderToken();
-    const orderResult=await client.query(`insert into orders(id,business_id,customer_id,order_number,status,payment_status,payment_method,delivery_note,subtotal,total,delivery_fee,food_subtotal,delivery_status,pickup_address,delivery_address,delivery_lat,delivery_lng,route_distance_meters,route_duration_seconds,delivery_fee_status,rider_earning,branch_id,customer_lat,customer_lng,selected_branch_distance_meters,selected_branch_duration_seconds,customer_access_token_hash) values(gen_random_uuid(),$1,$2,$3,'NEW','PENDING',$4,$5,$6,$7,$8,$6,$9,$10,$11,$12,$13,$14,$15,'HELD',$16,$17,$18,$19,$20,$21,$22) returning *`,[businessId,customerResult.rows[0].id,orderNumber,normalizedPaymentMethod,deliveryNote?.trim()||null,foodSubtotal,numericTotal,deliveryFee,deliveryFee>0?'QUOTED':'NONE',pickupAddress,deliveryAddress,deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,deliveryData?.duration_seconds||null,deliveryFee,deliveryData?.branch_id||null,deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,deliveryData?.duration_seconds||null,customerAccess.hash]);
-    for(const item of trustedItems){
-      await client.query(`insert into order_items(id,order_id,product_id,product_name,quantity,unit_price,options) values(gen_random_uuid(),$1,$2,$3,$4,$5,$6)`,[orderResult.rows[0].id,item.productId,item.productName,item.quantity,item.unitPrice,item.options]);
+
+    let coupon=null;
+    let couponDiscount=0;
+    const normalizedCouponCode=String(couponCode||'').trim().toUpperCase();
+    if(normalizedCouponCode){
+      const couponResult=await client.query(
+        `select id,code,discount_type,discount_value,min_order_amount,max_redemptions,redeemed_count
+           from customer_coupons
+          where business_id=$1 and code=$2 and active=true and starts_at<=now()
+            and (expires_at is null or expires_at>now())
+          for update`,
+        [businessId,normalizedCouponCode]
+      );
+      if(!couponResult.rowCount) throw new Error('Coupon is invalid or expired');
+      coupon=couponResult.rows[0];
+      if(foodSubtotal<Number(coupon.min_order_amount)) throw new Error('Order does not meet the coupon minimum');
+      if(coupon.max_redemptions!==null && Number(coupon.redeemed_count)>=Number(coupon.max_redemptions)) throw new Error('Coupon redemption limit has been reached');
+      couponDiscount=coupon.discount_type==='PERCENT'
+        ? Math.min(foodSubtotal,Math.round(foodSubtotal*Number(coupon.discount_value)/100*100)/100)
+        : Math.min(foodSubtotal,Number(coupon.discount_value));
+      couponDiscount=Math.round(couponDiscount*100)/100;
     }
-    if(deliveryData) await client.query('update delivery_quotes set order_id=$1 where id=$2',[orderResult.rows[0].id,quoteId]);
-    await client.query(`insert into payments(id,order_id,provider,amount,status) values(gen_random_uuid(),$1,'PAYSTACK',$2,'PENDING')`,[orderResult.rows[0].id,numericTotal]);
+
+    const numericTotal=Math.round((foodSubtotal-couponDiscount+deliveryFee)*100)/100;
+    if(numericTotal<0) throw new Error('Invalid order total');
+
+    const customerResult=await client.query(
+      `insert into customers(id,business_id,name,phone,email)
+       values(gen_random_uuid(),$1,$2,$3,$4)
+       on conflict(business_id,phone)
+       do update set name=excluded.name,email=coalesce(excluded.email,customers.email)
+       returning id`,
+      [businessId,String(customer.name).trim(),String(customer.phone).trim(),String(customer.email).trim()]
+    );
+
+    if(coupon){
+      const used=await client.query(
+        'select id from customer_coupon_redemptions where coupon_id=$1 and customer_id=$2 limit 1 for update',
+        [coupon.id,customerResult.rows[0].id]
+      );
+      if(used.rowCount) throw new Error('Coupon has already been used by this customer');
+    }
+
+    const orderId=crypto.randomUUID();
+    const orderNumber='SB-'+Date.now().toString().slice(-8)+'-'+orderId.slice(0,4).toUpperCase();
+    const pickupAddress=deliveryData?.pickup_address||null;
+    const deliveryAddress=deliveryData?.delivery_address||req.body.deliveryAddress?.trim()||deliveryNote?.trim()||null;
+    const customerAccess=createCustomerOrderToken(orderId);
+
+    const orderResult=await client.query(
+      `insert into orders(
+        id,business_id,customer_id,order_number,status,payment_status,payment_method,delivery_note,
+        subtotal,total,delivery_fee,food_subtotal,coupon_id,coupon_discount,delivery_status,pickup_address,
+        delivery_address,delivery_lat,delivery_lng,route_distance_meters,route_duration_seconds,
+        delivery_fee_status,rider_earning,branch_id,customer_lat,customer_lng,
+        selected_branch_distance_meters,selected_branch_duration_seconds,customer_access_token_hash
+      ) values(
+        $1,$2,$3,$4,'NEW','PENDING',$5,$6,$7,$8,$9,$7,$10,$11,$12,$13,$14,$15,$16,$17,$18,
+        'HELD',$19,$20,$21,$22,$23,$24,$25
+      ) returning *`,
+      [
+        orderId,businessId,customerResult.rows[0].id,orderNumber,normalizedPaymentMethod,
+        deliveryNote?.trim()||null,foodSubtotal,numericTotal,deliveryFee,coupon?.id||null,couponDiscount,
+        deliveryFee>0?'QUOTED':'NONE',pickupAddress,deliveryAddress,
+        deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,
+        deliveryData?.duration_seconds||null,deliveryFee,deliveryData?.branch_id||null,
+        deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,
+        deliveryData?.duration_seconds||null,customerAccess.hash
+      ]
+    );
+
+    for(const item of trustedItems){
+      await client.query(
+        `insert into order_items(id,order_id,product_id,product_name,quantity,unit_price,options)
+         values(gen_random_uuid(),$1,$2,$3,$4,$5,$6)`,
+        [orderId,item.productId,item.productName,item.quantity,item.unitPrice,item.options]
+      );
+    }
+
+    if(coupon){
+      await client.query(
+        `insert into customer_coupon_redemptions(id,coupon_id,customer_id,order_id)
+         values(gen_random_uuid(),$1,$2,$3)`,
+        [coupon.id,customerResult.rows[0].id,orderId]
+      );
+      await client.query(
+        'update customer_coupons set redeemed_count=redeemed_count+1 where id=$1',
+        [coupon.id]
+      );
+    }
+
+    if(deliveryData){
+      await client.query('update delivery_quotes set order_id=$1,updated_at=now() where id=$2 and status=\'USED\'',[orderId,quoteId]);
+    }
+
+    await client.query(
+      `insert into payments(id,order_id,provider,amount,status)
+       values(gen_random_uuid(),$1,'PAYSTACK',$2,'PENDING')`,
+      [orderId,numericTotal]
+    );
+    await client.query(
+      'update order_idempotency_keys set order_id=$1,updated_at=now() where business_id=$2 and idempotency_key=$3',
+      [orderId,businessId,idempotencyKey]
+    );
     await client.query('commit');
-    res.status(201).json({...orderResult.rows[0], customerAccessToken: customerAccess.token});
-  }catch(error){try{await client.query('rollback')}catch{}res.status(500).json({error:error.message==='Invalid order item'?error.message:'Unable to create order'});}
-  finally{client.release();}
+    res.status(201).json({...orderResult.rows[0],customerAccessToken:customerAccess.token});
+  }catch(error){
+    try{await client.query('rollback')}catch{}
+    const status=error.message==='Invalid order item'?400:(
+      ['Coupon is invalid or expired','Order does not meet the coupon minimum','Coupon redemption limit has been reached','Coupon has already been used by this customer','Invalid order total','Menu item is unavailable'].includes(error.message)?400:500
+    );
+    res.status(status).json({error:status===400?error.message:'Unable to create order'});
+  }finally{client.release();}
 });
 app.post('/api/payments/paystack/initialize', requireCustomerOrderBody, async (req,res)=>{
   const idempotencyKey=String(req.headers['idempotency-key']||req.body?.idempotencyKey||'').trim();
@@ -1896,7 +2094,7 @@ app.post('/api/payments/paystack/initialize', requireCustomerOrderBody, async (r
   }
 });
 app.get('/api/payments/paystack/callback', async (req, res) => { const reference = String(req.query.reference || ''); if (!reference) return res.redirect(`${FRONTEND_URL}/order.html?payment=missing`); try { const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' }); const data = verified.data; if (data?.status !== 'success') throw new Error('Payment was not successful'); const orderId = await markPaymentSuccessful(reference, data); if (!orderId) return res.redirect(`${FRONTEND_URL}/order.html?payment=not-found`); const receipt = await pool.query('select receipt_access_token from receipts where order_id=$1',[orderId]); const token = receipt.rows[0]?.receipt_access_token || ''; return res.redirect(`${FRONTEND_URL}/order.html?id=${encodeURIComponent(orderId)}&payment=success${token?'&receipt='+encodeURIComponent(token):''}`); } catch { const payment = await pool.query(`select order_id from payments where provider='PAYSTACK' and provider_reference=$1`, [reference]); const orderId = payment.rows[0]?.order_id; const target = orderId ? `${FRONTEND_URL}/order.html?id=${encodeURIComponent(orderId)}&payment=failed` : `${FRONTEND_URL}/order.html?payment=failed`; return res.redirect(target); } });
-app.post('/api/payments/paystack/verify', requireCustomerOrderBody, async (req, res) => { try { const reference = String(req.body.reference || ''); if (!reference) return res.status(400).json({ error: 'reference is required' }); const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' }); if (verified.data?.status === 'success') { const orderId = await markPaymentSuccessful(reference, verified.data); const receipt = orderId ? await pool.query('select receipt_access_token from receipts where order_id=$1',[orderId]) : null; return res.json({ status: 'success', orderId, receiptToken: receipt?.rows[0]?.receipt_access_token || null }); } res.json({ status: verified.data?.status || 'pending' }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to verify payment' }); } });
+app.post('/api/payments/paystack/verify', requireCustomerOrderBody, async (req, res) => { try { const reference = String(req.body.reference || ''); if (!reference) return res.status(400).json({ error: 'reference is required' }); const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' }); if (verified.data?.status === 'success') { if (String(verified.data?.reference || '') !== reference) throw new Error('Paystack reference mismatch'); const orderId = await markPaymentSuccessful(reference, verified.data, req.customerOrder.id); const receipt = orderId ? await pool.query('select receipt_access_token from receipts where order_id=$1',[orderId]) : null; return res.json({ status: 'success', orderId, receiptToken: receipt?.rows[0]?.receipt_access_token || null }); } res.json({ status: verified.data?.status || 'pending' }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to verify payment' }); } });
 app.get('/api/payments/paystack/webhook', (_req, res) => { res.status(405).json({ error: 'Webhook endpoint accepts POST requests from Paystack.' }); });
 app.post('/api/payments/paystack/webhook', async (req, res) => { const signature = req.headers['x-paystack-signature']; const secret = process.env.PAYSTACK_SECRET_KEY; if (!signature || !secret || !req.rawBody) return res.sendStatus(401); const expected = crypto.createHmac('sha512', secret).update(req.rawBody).digest('hex'); const providedBuffer = Buffer.from(String(signature), 'utf8'); const expectedBuffer = Buffer.from(expected, 'utf8'); if (providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) return res.sendStatus(401); try { const event = req.body;
     const resourceId=String(event?.data?.id||event?.data?.reference||event?.data?.transaction_reference||'');

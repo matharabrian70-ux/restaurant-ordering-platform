@@ -2020,7 +2020,11 @@ app.get('/api/admin/riders',requireRiderModule,requireManager,async(req,res)=>{
   res.json(result.rows.map(r=>({...r,available:r.active&&r.online&&!r.busy,distance_km:Number(r.distance_meters)/1000})));
 });
 app.get('/api/admin/riders/:id/trips',requireRiderModule,requireManager,async(req,res)=>{
-  const result=await pool.query(`select t.id,t.assigned_at,t.completed_at,o.order_number,o.status,o.delivery_address,o.route_distance_meters,o.route_duration_seconds,o.delivery_fee,e.amount as rider_earning,e.status as earning_status from rider_trips t join orders o on o.id=t.order_id left join rider_earnings e on e.trip_id=t.id where t.rider_id=$1 order by t.assigned_at desc limit 200`,[req.params.id]);
+  const result=await pool.query(`select t.id,t.assigned_at,t.completed_at,o.order_number,o.status,o.delivery_address,o.route_distance_meters,o.route_duration_seconds,o.delivery_fee,e.amount as rider_earning,e.status as earning_status
+    from rider_trips t join riders r on r.id=t.rider_id join orders o on o.id=t.order_id
+    left join rider_earnings e on e.trip_id=t.id
+    where t.rider_id=$1 and r.business_id=$2 and o.business_id=$2
+    order by t.assigned_at desc limit 200`,[req.params.id,req.manager.business_id]);
   res.json(result.rows);
 });
 async function getRiderConnectionState(businessId, client=pool){

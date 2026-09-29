@@ -727,6 +727,12 @@ async function ensurePhaseJSchema(){
   await pool.query(sql);
 }
 
+async function ensurePhaseKSchema(){
+  const fs = await import('node:fs/promises');
+  const sql = await fs.readFile(new URL('./migrations/008_phase_k_tenant_authorization_lockdown.sql', import.meta.url), 'utf8');
+  await pool.query(sql);
+}
+
 async function ensurePhaseHSchema(){
   const fs = await import('node:fs/promises');
   const sql = await fs.readFile(new URL('./migrations/005_phase_h_intelligence.sql', import.meta.url), 'utf8');
@@ -1049,6 +1055,14 @@ async function requireManager(req, res, next) {
     if (requestedBusinessId && requestedBusinessId !== String(manager.business_id)) {
       return res.status(403).json({ error: 'You can only access your own restaurant' });
     }
+    // Tenant-scoped management endpoints under /api/businesses/:id must bind
+    // the URL tenant directly to the authenticated manager session. Never trust
+    // the URL tenant merely because the manager is otherwise authenticated.
+    if (req.params?.id && req.path.startsWith('/businesses/')) {
+      if (String(req.params.id) !== String(manager.business_id)) {
+        return res.status(403).json({ error: 'You can only access your own restaurant' });
+      }
+    }
     req.manager = manager;
     next();
   } catch { res.status(500).json({ error: 'Unable to verify manager session' }); }
@@ -1095,6 +1109,10 @@ async function requireStation(req, res, next) {
   try {
     const station = await getStationFromSession(req);
     if (!station) return res.status(401).json({ error: 'Station pairing required' });
+    const requestedBusinessId = String(req.body?.businessId || req.query?.businessId || req.params?.businessId || '');
+    if (requestedBusinessId && requestedBusinessId !== String(station.business_id)) {
+      return res.status(403).json({ error: 'You can only access your own restaurant station' });
+    }
     req.station = station;
     next();
   } catch { res.status(500).json({ error: 'Unable to verify station session' }); }
@@ -1112,6 +1130,10 @@ async function requireRiderAuth(req, res, next) {
     const rider = await getRiderFromSession(req);
     if (!rider) return res.status(401).json({ error: 'Rider login required' });
     if (req.params?.id && String(req.params.id) !== String(rider.id)) return res.status(403).json({ error: 'You can only access your own rider account' });
+    const requestedBusinessId = String(req.body?.businessId || req.query?.businessId || req.params?.businessId || '');
+    if (requestedBusinessId && requestedBusinessId !== String(rider.business_id)) {
+      return res.status(403).json({ error: 'You can only access your own restaurant rider resources' });
+    }
     req.rider = rider;
     next();
   } catch { res.status(500).json({ error: 'Unable to verify rider session' }); }
@@ -3730,6 +3752,7 @@ async function startServer(){
   await ensurePhaseHSchema();
   await ensurePhaseISchema();
   await ensurePhaseJSchema();
+  await ensurePhaseKSchema();
   await ensureIntegrationSchema();
   await ensurePhase1SecuritySchema();
   await ensurePhase3SecuritySchema();

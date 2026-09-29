@@ -73,14 +73,19 @@ async function cancelCustomerOrder(id){
 function showRefundMessage(text){const existing=document.getElementById('refund-toast');if(existing)existing.remove();const el=document.createElement('div');el.id='refund-toast';el.className='panel';el.style.cssText='position:fixed;left:20px;right:20px;bottom:20px;z-index:30;box-shadow:0 15px 40px rgba(0,0,0,.18)';const strong=document.createElement('strong');strong.textContent=String(text||'');el.appendChild(strong);document.body.appendChild(el);setTimeout(()=>el.remove(),5000);}
 
 async function markOrderReceived(id,b){id=id||new URLSearchParams(location.search).get('id')||localStorage.getItem('doe_last_order');if(!id)return;b.disabled=true;b.textContent="UPDATING…";try{await fetch(ORDER_API_BASE+"/api/orders/"+encodeURIComponent(id)+"/confirm-delivery",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+getCustomerOrderToken()}});await renderRemoteOrder(false)}catch(err){b.disabled=false;b.textContent="MARK DELIVERED";alert(err.message||"Could not update the order.")}}
-function connectCustomerEvents(orderId){
+async function connectCustomerEvents(orderId){
   const old=window.customerOrderEvents; if(old)old.close();
-  const source=new EventSource(`${ORDER_API_BASE}/api/events?businessId=${encodeURIComponent(window.CUSTOMER_ORDER_BUSINESS_ID||'11111111-1111-4111-8111-111111111111')}&orderId=${encodeURIComponent(orderId)}&orderToken=${encodeURIComponent(getCustomerOrderToken())}`);
-  window.customerOrderEvents=source;
-  source.addEventListener('order.updated',()=>renderRemoteOrder(false));
-  source.addEventListener('delivery.location',e=>{try{updateCustomerLiveLocation(JSON.parse(e.data||'{}'));}catch{}});
-  source.addEventListener('refund.updated',()=>renderRemoteOrder(false));
-  source.onerror=()=>{source.close();setTimeout(()=>connectCustomerEvents(orderId),3000);};
+  try{
+    const tokenResponse=await fetch(ORDER_API_BASE+'/api/realtime-token',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+getCustomerOrderToken()},body:JSON.stringify({scope:'CUSTOMER_ORDER',orderId})});
+    const tokenData=await tokenResponse.json().catch(()=>({}));
+    if(!tokenResponse.ok||!tokenData?.token)throw new Error('Realtime token unavailable');
+    const source=new EventSource(ORDER_API_BASE+'/api/events?realtimeToken='+encodeURIComponent(tokenData.token));
+    window.customerOrderEvents=source;
+    source.addEventListener('order.updated',()=>renderRemoteOrder(false));
+    source.addEventListener('delivery.location',e=>{try{updateCustomerLiveLocation(JSON.parse(e.data||'{}'));}catch{}});
+    source.addEventListener('refund.updated',()=>renderRemoteOrder(false));
+    source.onerror=()=>{source.close();setTimeout(()=>connectCustomerEvents(orderId),3000);};
+  }catch{setTimeout(()=>connectCustomerEvents(orderId),3000);}
 }
 
 async function renderRemoteOrder(showLoading=true){

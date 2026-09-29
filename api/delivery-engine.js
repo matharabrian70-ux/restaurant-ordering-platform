@@ -118,10 +118,10 @@ async function quote(pool,{businessId,customerLat,customerLng,deliveryAddress,br
   const selected=ranked[0];
   const km=selected.distanceMeters/1000, minutes=selected.durationSeconds/60;
   const prices=calculatePrices({advanced,rules,fuel,km,minutes});
-  const saved=await pool.query(`insert into delivery_quotes(id,business_id,branch_id,pickup_address,delivery_address,customer_lat,customer_lng,distance_meters,duration_seconds,fuel_price_kes,base_fee_kes,distance_fee_kes,time_fee_kes,demand_multiplier,delivery_fee_kes,rider_earning_kes,pricing_mode,status)
-    values(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'QUOTED') returning *`,
+  const saved=await pool.query(`insert into delivery_quotes(id,business_id,branch_id,pickup_address,delivery_address,customer_lat,customer_lng,distance_meters,duration_seconds,fuel_price_kes,base_fee_kes,distance_fee_kes,time_fee_kes,demand_multiplier,delivery_fee_kes,rider_earning_kes,pricing_mode,status,expires_at)
+    values(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'QUOTED',now()+interval '15 minutes') returning *`,
     [businessId,selected.id,selected.address,deliveryAddress||null,lat,lng,selected.distanceMeters,selected.durationSeconds,fuel,num((rules||DEFAULT_RULES).base_fee_kes,70),km*num((rules||DEFAULT_RULES).per_km_kes,24),minutes*num((rules||DEFAULT_RULES).per_minute_kes,0.9),1,prices.deliveryFeeKes,prices.riderEarningKes,advanced?'AUTO':'MASTER']);
-  return {quoteId:saved.rows[0].id,branchId:selected.id,branchName:selected.name,pickupAddress:selected.address,deliveryAddress,distanceMeters:selected.distanceMeters,durationSeconds:selected.durationSeconds,km,minutes,fuelPriceKes:fuel,deliveryFee:prices.deliveryFeeKes,riderEarning:prices.riderEarningKes,pricingMode:advanced?'AUTO':'MASTER',currency:'KES'};
+  return {quoteId:saved.rows[0].id,expiresAt:saved.rows[0].expires_at,branchId:selected.id,branchName:selected.name,pickupAddress:selected.address,deliveryAddress,distanceMeters:selected.distanceMeters,durationSeconds:selected.durationSeconds,km,minutes,fuelPriceKes:fuel,deliveryFee:prices.deliveryFeeKes,riderEarning:prices.riderEarningKes,pricingMode:advanced?'AUTO':'MASTER',currency:'KES'};
 }
 
 export function registerDeliveryEngine(app,pool,requireManager=(_req,_res,next)=>next()){

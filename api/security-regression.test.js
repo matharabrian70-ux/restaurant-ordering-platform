@@ -154,3 +154,39 @@ test('Security audit: manager rider trip history is tenant-bound', () => {
   has(server, "o.business_id=$2");
   has(server, "req.manager.business_id");
 });
+
+
+test('Security hardening: SSE uses short-lived scoped realtime tokens instead of session credentials', () => {
+  has(server, 'realtime_access_tokens');
+  has(server, 'REALTIME_TOKEN_TTL_SECONDS');
+  has(server, "scope in ('CUSTOMER_ORDER','MANAGER','RIDER','STATION')");
+  has(server, "app.post('/api/realtime-token'");
+  has(server, "getRealtimeAccessToken(String(req.query.realtimeToken||'').trim())");
+  const riderSse=section("app.get('/api/riders/events'");
+  const stationSse=section("app.get('/api/station/events'");
+  assert.doesNotMatch(riderSse, /riderToken/);
+  assert.doesNotMatch(stationSse, /stationToken/);
+});
+
+test('Security hardening: external API quotas and alert thresholds are enforced per restaurant', () => {
+  has(server, 'external_api_usage_buckets');
+  has(server, 'external_api_usage_alerts');
+  has(server, 'EXTERNAL_API_DAILY_ROUTE_QUOTA');
+  has(server, 'EXTERNAL_API_MONTHLY_ROUTE_QUOTA');
+  has(server, 'EXTERNAL_API_DAILY_SMS_QUOTA');
+  has(server, 'EXTERNAL_API_MONTHLY_SMS_QUOTA');
+  has(server, 'EXTERNAL_API_ALERT_PERCENT');
+  has(server, 'EXTERNAL_API_QUOTA_EXCEEDED');
+  has(server, "provider:'GOOGLE_MAPS'");
+  has(server, "provider:'AFRICASTALKING'");
+});
+
+test('Security hardening: frontend CSP is deployed and dynamic promotion content is escaped', () => {
+  const index = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+  const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+  has(index, 'Content-Security-Policy');
+  has(index, "frame-ancestors 'none'");
+  has(index, "object-src 'none'");
+  has(app, 'escapeMenuHtml(p.name||\'Offer\')');
+  has(app, 'escapeMenuHtml(p.banner_text');
+});

@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - 'audit/phase*'
+      - 'audit/security-*'
   pull_request:
     branches:
       - main

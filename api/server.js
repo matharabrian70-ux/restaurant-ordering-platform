@@ -27,6 +27,12 @@ const RIDER_GPS_MAX_ACCURACY_METERS = parsePositiveInt(process.env.RIDER_GPS_MAX
 const RIDER_GPS_FRESHNESS_SECONDS = parsePositiveInt(process.env.RIDER_GPS_FRESHNESS_SECONDS, 90, 15, 600);
 const RIDER_GPS_MAX_SPEED_MPS = parsePositiveInt(process.env.RIDER_GPS_MAX_SPEED_MPS, 90, 20, 200);
 const RIDER_GPS_REQUIRED_FOR_ASSIGNMENT = String(process.env.RIDER_GPS_REQUIRED_FOR_ASSIGNMENT || 'true').toLowerCase() !== 'false';
+const REALTIME_TOKEN_TTL_SECONDS = parsePositiveInt(process.env.REALTIME_TOKEN_TTL_SECONDS, 300, 60, 900);
+const EXTERNAL_API_DAILY_ROUTE_QUOTA = parsePositiveInt(process.env.EXTERNAL_API_DAILY_ROUTE_QUOTA, 1000, 10, 1000000);
+const EXTERNAL_API_MONTHLY_ROUTE_QUOTA = parsePositiveInt(process.env.EXTERNAL_API_MONTHLY_ROUTE_QUOTA, 20000, 100, 10000000);
+const EXTERNAL_API_DAILY_SMS_QUOTA = parsePositiveInt(process.env.EXTERNAL_API_DAILY_SMS_QUOTA, 200, 5, 1000000);
+const EXTERNAL_API_MONTHLY_SMS_QUOTA = parsePositiveInt(process.env.EXTERNAL_API_MONTHLY_SMS_QUOTA, 5000, 10, 10000000);
+const EXTERNAL_API_ALERT_PERCENT = parsePositiveInt(process.env.EXTERNAL_API_ALERT_PERCENT, 80, 50, 99);
 
 function haversineMeters(lat1, lng1, lat2, lng2) {
   const rad=Math.PI/180, R=6371000;
@@ -511,6 +517,83 @@ async function ensureSharedSecuritySchema() {
   `);
 }
 
+async function ensureRealtimeAndExternalApiSecuritySchema() {
+  await pool.query(`
+    create table if not exists realtime_access_tokens (
+      token_hash text primary key,
+      scope text not null check (scope in ('CUSTOMER_ORDER','MANAGER','RIDER','STATION')),
+      business_id uuid not null references businesses(id) on delete cascade,
+      order_id uuid references orders(id) on delete cascade,
+      rider_id uuid references riders(id) on delete cascade,
+      station_id uuid references restaurant_order_stations(id) on delete cascade,
+      expires_at timestamptz not null,
+      created_at timestamptz not null default now()
+    );
+    create index if not exists realtime_access_tokens_expiry_idx on realtime_access_tokens(expires_at);
+    create index if not exists realtime_access_tokens_scope_idx on realtime_access_tokens(scope,business_id,expires_at);
+    create table if not exists external_api_usage_buckets (
+      business_id uuid not null references businesses(id) on delete cascade,
+      provider text not null,
+      operation text not null,
+      period_type text not null check (period_type in ('DAILY','MONTHLY')),
+      period_key text not null,
+      request_count integer not null default 0,
+      updated_at timestamptz not null default now(),
+      primary key (business_id,provider,operation,period_type,period_key)
+    );
+    create index if not exists external_api_usage_buckets_updated_idx on external_api_usage_buckets(updated_at);
+    create table if not exists external_api_usage_alerts (
+      id uuid primary key default gen_random_uuid(),
+      business_id uuid not null references businesses(id) on delete cascade,
+      provider text not null,
+      operation text not null,
+      period_type text not null,
+      period_key text not null,
+      threshold_percent integer not null,
+      request_count integer not null,
+      quota integer not null,
+      created_at timestamptz not null default now(),
+      unique(business_id,provider,operation,period_type,period_key,threshold_percent)
+    );
+    create index if not exists external_api_usage_alerts_business_idx on external_api_usage_alerts(business_id,created_at desc);
+  `);
+}
+async function issueRealtimeAccessToken({scope,businessId,orderId=null,riderId=null,stationId=null}) {
+  const token=crypto.randomBytes(32).toString('hex');
+  await pool.query(`insert into realtime_access_tokens(token_hash,scope,business_id,order_id,rider_id,station_id,expires_at)
+    values($1,$2,$3,$4,$5,$6,now()+make_interval(secs=>$7))`,[hashSessionToken(token),scope,businessId,orderId,riderId,stationId,REALTIME_TOKEN_TTL_SECONDS]);
+  return token;
+}
+async function getRealtimeAccessToken(token) {
+  if(!token)return null;
+  const r=await pool.query('select * from realtime_access_tokens where token_hash=$1 and expires_at>now() limit 1',[hashSessionToken(token)]);
+  return r.rows[0]||null;
+}
+async function consumeExternalApiQuota({businessId,provider,operation,dailyQuota,monthlyQuota,units=1}) {
+  if(!businessId)return {allowed:true};
+  const now=new Date(),dayKey=now.toISOString().slice(0,10),monthKey=now.toISOString().slice(0,7),client=await pool.connect();
+  try{
+    await client.query('begin'); const rows=[];
+    for(const [periodType,periodKey,quota] of [['DAILY',dayKey,dailyQuota],['MONTHLY',monthKey,monthlyQuota]]){
+      const q=await client.query(`insert into external_api_usage_buckets(business_id,provider,operation,period_type,period_key,request_count,updated_at)
+        values($1,$2,$3,$4,$5,$6,now()) on conflict(business_id,provider,operation,period_type,period_key)
+        do update set request_count=external_api_usage_buckets.request_count+$6,updated_at=now() returning request_count`,[businessId,provider,operation,periodType,periodKey,units]);
+      rows.push({periodType,periodKey,quota,count:Number(q.rows[0].request_count)});
+    }
+    const blocked=rows.some(x=>x.count>x.quota);
+    for(const row of rows)for(const threshold of [EXTERNAL_API_ALERT_PERCENT,90]){
+      if(row.count>=Math.ceil(row.quota*threshold/100))await client.query(`insert into external_api_usage_alerts(business_id,provider,operation,period_type,period_key,threshold_percent,request_count,quota)
+        values($1,$2,$3,$4,$5,$6,$7,$8) on conflict do nothing`,[businessId,provider,operation,row.periodType,row.periodKey,threshold,row.count,row.quota]);
+    }
+    await client.query('commit'); return {allowed:!blocked,dailyCount:rows[0].count,dailyQuota,monthlyCount:rows[1].count,monthlyQuota};
+  }catch(e){try{await client.query('rollback')}catch{}throw e}finally{client.release()}
+}
+async function guardExternalApiQuota(args){
+  const result=await consumeExternalApiQuota(args);
+  if(!result.allowed){const e=new Error(`External ${args.provider} usage quota reached for this restaurant. The integration is temporarily paused until the quota window resets.`);e.status=429;e.code='EXTERNAL_API_QUOTA_EXCEEDED';e.quota=result;throw e}
+  return result;
+}
+
 async function ensurePhase1SecuritySchema() {
   await pool.query(`
     alter table orders add column if not exists customer_access_token_hash text;
@@ -678,7 +761,8 @@ async function sendSms({businessId,to,message,senderId=null,riderId=null,orderId
   const config=requireSmsConfig();
   const recipient=normalizeKenyanPhone(to);
   // Protect the paid provider from accidental retry loops and repeated assignment spam.
-  const recipientBudget = await consumeSmsBudget(`recipient:${recipient}`, 10*60_000, parsePositiveInt(process.env.SMS_MAX_PER_RECIPIENT_PER_10_MIN, 3, 1, 10));
+  await guardExternalApiQuota({businessId,provider:'AFRICASTALKING',operation:'SMS',dailyQuota:EXTERNAL_API_DAILY_SMS_QUOTA,monthlyQuota:EXTERNAL_API_MONTHLY_SMS_QUOTA});
+   const recipientBudget = await consumeSmsBudget(`recipient:${recipient}`, 10*60_000, parsePositiveInt(process.env.SMS_MAX_PER_RECIPIENT_PER_10_MIN, 3, 1, 10));
   const businessBudget = await consumeSmsBudget(`business:${businessId}`, 10*60_000, parsePositiveInt(process.env.SMS_MAX_PER_BUSINESS_PER_10_MIN, 30, 5, 200));
   if(!recipientBudget || !businessBudget) throw new Error('SMS sending is temporarily rate limited for this recipient or restaurant');
   const settings=await getBusinessSmsSettings(businessId);
@@ -887,8 +971,9 @@ async function requireRiderAuth(req, res, next) {
     next();
   } catch { res.status(500).json({ error: 'Unable to verify rider session' }); }
 }
-async function computeGoogleRoute(origin, destination) {
+async function computeGoogleRoute(origin, destination, businessId=null) {
   if (!process.env.GOOGLE_MAPS_API_KEY) throw new Error('GOOGLE_MAPS_API_KEY is not configured');
+  await guardExternalApiQuota({businessId,provider:'GOOGLE_MAPS',operation:'ROUTE',dailyQuota:EXTERNAL_API_DAILY_ROUTE_QUOTA,monthlyQuota:EXTERNAL_API_MONTHLY_ROUTE_QUOTA});
   const response = await fetch('https://routes.googleapis.com/directions/v2:computeRoutes', {
     method:'POST',
     headers:{
@@ -939,7 +1024,7 @@ async function getNairobiFuelPrice() {
   return 214.03;
 }
 async function calculateDeliveryQuote({businessId,pickupAddress,deliveryAddress}) {
-  const route=await computeGoogleRoute(pickupAddress,deliveryAddress);
+  const route=await computeGoogleRoute(pickupAddress,deliveryAddress,businessId);
   const km=route.distanceMeters/1000;
   const minutes=route.durationSeconds/60;
   const fuel=await getNairobiFuelPrice();
@@ -1024,6 +1109,7 @@ app.get('/api/manager/dispatch', requireManager, async (req, res) => {
   try {
     await ensureDeliveryTrackingSchema();
     await ensurePhase1SecuritySchema();
+  await ensureRealtimeAndExternalApiSecuritySchema();
     const businessId = req.manager.business_id;
     const [connection, riders, unassigned, active] = await Promise.all([
       pool.query('select coalesce(rider_connected,false) as rider_connected from business_connections where business_id=$1 limit 1', [businessId]),
@@ -1275,26 +1361,46 @@ app.get('/api/orders/:id/live-location',requireCustomerOrder,async(req,res)=>{
   }catch(e){res.status(500).json({error:'Unable to load live rider location'});}
 });
 
-app.get('/api/events', async (req, res) => {
-  const businessId = String(req.query.businessId || '');
-  const orderId = req.query.orderId ? String(req.query.orderId) : null;
-  const orderToken = String(req.query.orderToken || '').trim();
-  if (!businessId) return res.status(400).json({ error: 'businessId is required' });
-  if (orderId) {
-    if (!orderToken) return res.status(401).json({error:'Order access authorization required'});
-    const access=await pool.query('select id from orders where id=$1 and business_id=$2 and customer_access_token_hash=$3 limit 1',[orderId,businessId,hashSessionToken(orderToken)]);
-    if(!access.rowCount)return res.status(401).json({error:'Order access authorization required'});
-  }
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders?.();
-  const riderId = req.query.riderId ? String(req.query.riderId) : null;
-  const client = { res, businessId, orderId, riderId };
-  realtimeClients.add(client);
-  sendRealtime(client, 'connected', { ok: true });
-  const heartbeat = setInterval(() => sendRealtime(client, 'heartbeat', { at: new Date().toISOString() }), 25000);
-  req.on('close', () => { clearInterval(heartbeat); realtimeClients.delete(client); });
+app.post('/api/realtime-token', async (req,res)=>{
+  try{
+    const scope=String(req.body?.scope||'').toUpperCase();
+    const bearer=String(req.headers.authorization||'').startsWith('Bearer ')?String(req.headers.authorization).slice(7).trim():'';
+    if(!bearer)return res.status(401).json({error:'Authentication required'});
+    if(scope==='CUSTOMER_ORDER'){
+      const orderId=String(req.body?.orderId||'').trim();
+      const q=await pool.query('select id,business_id from orders where id=$1 and customer_access_token_hash=$2 limit 1',[orderId,hashSessionToken(bearer)]);
+      if(!q.rowCount)return res.status(401).json({error:'Order access authorization required'});
+      return res.json({token:await issueRealtimeAccessToken({scope,businessId:q.rows[0].business_id,orderId:q.rows[0].id}),expiresIn:REALTIME_TOKEN_TTL_SECONDS});
+    }
+    if(scope==='MANAGER'){
+      const manager=await getManagerFromSession({headers:{authorization:'Bearer '+bearer}});
+      if(!manager)return res.status(401).json({error:'Manager login required'});
+      return res.json({token:await issueRealtimeAccessToken({scope,businessId:manager.business_id}),expiresIn:REALTIME_TOKEN_TTL_SECONDS});
+    }
+    if(scope==='RIDER'){
+      const rider=await getRiderFromSession({headers:{authorization:'Bearer '+bearer}});
+      if(!rider)return res.status(401).json({error:'Rider login required'});
+      return res.json({token:await issueRealtimeAccessToken({scope,businessId:rider.business_id,riderId:rider.id}),expiresIn:REALTIME_TOKEN_TTL_SECONDS});
+    }
+    if(scope==='STATION'){
+      const station=await getStationFromSession({headers:{authorization:'Bearer '+bearer}});
+      if(!station)return res.status(401).json({error:'Station pairing required'});
+      return res.json({token:await issueRealtimeAccessToken({scope,businessId:station.business_id,stationId:station.station_id}),expiresIn:REALTIME_TOKEN_TTL_SECONDS});
+    }
+    return res.status(400).json({error:'Unsupported realtime scope'});
+  }catch(error){res.status(500).json({error:error.message||'Unable to create realtime token'});}
+});
+
+app.get('/api/events', async (req,res)=>{
+  try{
+    const access=await getRealtimeAccessToken(String(req.query.realtimeToken||'').trim());
+    if(!access||!['CUSTOMER_ORDER','MANAGER'].includes(access.scope))return res.status(401).json({error:'Realtime authorization required'});
+    const client={res,businessId:String(access.business_id),orderId:access.order_id?String(access.order_id):null,riderId:null};
+    res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache, no-transform');res.setHeader('Connection','keep-alive');res.flushHeaders?.();
+    realtimeClients.add(client);sendRealtime(client,'connected',{ok:true});
+    const heartbeat=setInterval(()=>sendRealtime(client,'heartbeat',{at:new Date().toISOString()}),25000);
+    req.on('close',()=>{clearInterval(heartbeat);realtimeClients.delete(client);});
+  }catch{res.status(500).json({error:'Unable to authorize realtime events'});}
 });
 
 async function initiateRefundForOrder(orderId, customerNote = 'Customer cancelled before restaurant acceptance', merchantNote = 'Automatic cancellation refund') {
@@ -1530,6 +1636,7 @@ setInterval(()=>{
   const now=Date.now();
   for(const [key,value] of deliveryQuoteCache) if(now>=value.expiresAt) deliveryQuoteCache.delete(key);
 },60_000).unref?.();
+setInterval(async()=>{try{await pool.query("delete from realtime_access_tokens where expires_at<now()");await pool.query("delete from external_api_usage_buckets where updated_at<now()-interval '400 days'");await pool.query("delete from external_api_usage_alerts where created_at<now()-interval '400 days'")}catch{}} ,60*60_000).unref?.();
 app.post('/api/delivery/quote', quoteRateLimit, quoteBusinessRateLimit, async (req,res)=>{
   try{
     const business=String(req.body.businessId||'').trim();
@@ -1545,7 +1652,18 @@ app.post('/api/delivery/quote', quoteRateLimit, quoteBusinessRateLimit, async (r
     if(!cached||cached.expiresAt<=Date.now()) deliveryQuoteCache.set(key,{quote:q,expiresAt:Date.now()+DELIVERY_QUOTE_CACHE_SECONDS*1000});
     const saved=await pool.query(`insert into delivery_quotes(id,business_id,pickup_address,delivery_address,distance_meters,duration_seconds,fuel_price_kes,base_fee_kes,distance_fee_kes,time_fee_kes,demand_multiplier,delivery_fee_kes) values(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *`,[business,pickup,delivery,q.distanceMeters,q.durationSeconds,q.fuelPriceKes,q.baseFeeKes,q.distanceFeeKes,q.timeFeeKes,q.demandMultiplier,q.deliveryFeeKes]);
     res.json({quoteId:saved.rows[0].id,...q,deliveryFee:saved.rows[0].delivery_fee_kes,currency:'KES'});
-  }catch(error){res.status(400).json({error:error.message||'Unable to calculate delivery fee'});}
+  }catch(error){
+    if(error.code==='EXTERNAL_API_QUOTA_EXCEEDED'){
+      try{
+        const fallback=await pool.query(`select * from delivery_quotes where business_id=$1 and pickup_address=$2 and delivery_address=$3 and status='QUOTED' and created_at>now()-interval '30 minutes' order by created_at desc limit 1`,[business,pickup,delivery]);
+        if(fallback.rowCount){
+          const q=fallback.rows[0];
+          return res.json({quoteId:q.id,distanceMeters:Number(q.distance_meters||0),durationSeconds:Number(q.duration_seconds||0),fuelPriceKes:Number(q.fuel_price_kes||0),baseFeeKes:Number(q.base_fee_kes||0),distanceFeeKes:Number(q.distance_fee_kes||0),timeFeeKes:Number(q.time_fee_kes||0),demandMultiplier:Number(q.demand_multiplier||1),deliveryFeeKes:Number(q.delivery_fee_kes||0),deliveryFee:Number(q.delivery_fee_kes||0),currency:'KES',fallback:'CACHED_QUOTE'});
+        }
+      }catch{}
+    }
+    res.status(error.status||400).json({error:error.message||'Unable to calculate delivery fee',code:error.code||undefined});
+  }
 });
 
 app.post('/api/orders', sharedRateLimit({windowMs:10*60_000,max:20,keyFn:req=>`orders:${clientIp(req)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts. Please wait before placing another order.'}), sharedRateLimit({windowMs:10*60_000,max:12,keyFn:req=>`order-fingerprint:${clientIp(req)}:${String(req.headers['user-agent']||'').slice(0,120)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts from this client. Please wait before trying again.'}), async (req, res) => {
@@ -1678,15 +1796,11 @@ app.post('/api/admin/refunds', async (req, res) => {
 
 app.get('/api/riders/events', requireRiderModule, async(req,res)=>{
   try{
-    const token=String(req.query.riderToken||'').trim();
-    if(!token)return res.status(401).json({error:'Rider login required'});
-    const rider=await getRiderFromSession({headers:{authorization:'Bearer '+token}});
-    if(!rider)return res.status(401).json({error:'Rider login required'});
-    const businessId=String(rider.business_id);
+    const access=await getRealtimeAccessToken(String(req.query.realtimeToken||'').trim());
+    if(!access||access.scope!=='RIDER')return res.status(401).json({error:'Realtime authorization required'});
+    const client={res,businessId:String(access.business_id),riderId:String(access.rider_id),orderId:null};
     res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache, no-transform');res.setHeader('Connection','keep-alive');res.flushHeaders?.();
-    const client={res,businessId,riderId:String(rider.id),orderId:null};
-    realtimeClients.add(client);
-    sendRealtime(client,'connected',{ok:true,riderId:rider.id});
+    realtimeClients.add(client);sendRealtime(client,'connected',{ok:true,riderId:access.rider_id});
     const heartbeat=setInterval(()=>sendRealtime(client,'heartbeat',{at:new Date().toISOString()}),25000);
     req.on('close',()=>{clearInterval(heartbeat);realtimeClients.delete(client);});
   }catch(error){res.status(500).json({error:error.message||'Unable to open rider events'});}
@@ -1845,7 +1959,7 @@ app.get('/api/riders/:id/deliveries/:tripId/route', requireRiderModule, requireR
     if(!r.rowCount)return res.status(404).json({error:'Active delivery not found'});
     const row=r.rows[0];
     if(!row.pickup_address||!row.delivery_address)return res.status(400).json({error:'Pickup and delivery addresses are required for the live route'});
-    const route=await computeGoogleRoute(row.pickup_address,row.delivery_address);
+    const route=await computeGoogleRoute(row.pickup_address,row.delivery_address,req.rider.business_id);
     res.json({
       orderNumber:row.order_number,
       encodedPolyline:route.encodedPolyline,
@@ -1858,7 +1972,7 @@ app.get('/api/riders/:id/deliveries/:tripId/route', requireRiderModule, requireR
 });
 app.get('/api/riders/:id/demo-route', requireRiderModule, requireRiderAuth, async(req,res)=>{
   try{
-    const route=await computeGoogleRoute('Kenyatta International Convention Centre, Nairobi, Kenya','Westgate Shopping Mall, Nairobi, Kenya');
+    const route=await computeGoogleRoute('Kenyatta International Convention Centre, Nairobi, Kenya','Westgate Shopping Mall, Nairobi, Kenya',req.rider.business_id);
     res.json({
       encodedPolyline:route.encodedPolyline,
       distanceMeters:route.distanceMeters,
@@ -2332,12 +2446,16 @@ app.post('/api/station/orders/:id/confirm-delivery',requireStation,async(req,res
     res.json(result.order);
   }catch(error){res.status(500).json({error:error.message||'Unable to confirm delivery'});}
 });
-app.get('/api/station/events',requireStation,(req,res)=>{
-  res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache, no-transform');res.setHeader('Connection','keep-alive');res.flushHeaders?.();
-  const client={res,businessId:String(req.station.business_id),stationId:String(req.station.station_id)};
-  stationRealtimeClients.add(client);sendRealtime(client,'connected',{ok:true});
-  const heartbeat=setInterval(()=>sendRealtime(client,'heartbeat',{at:new Date().toISOString()}),25000);
-  req.on('close',()=>{clearInterval(heartbeat);stationRealtimeClients.delete(client);});
+app.get('/api/station/events',async(req,res)=>{
+  try{
+    const access=await getRealtimeAccessToken(String(req.query.realtimeToken||'').trim());
+    if(!access||access.scope!=='STATION')return res.status(401).json({error:'Realtime authorization required'});
+    const client={res,businessId:String(access.business_id),stationId:String(access.station_id)};
+    res.setHeader('Content-Type','text/event-stream');res.setHeader('Cache-Control','no-cache, no-transform');res.setHeader('Connection','keep-alive');res.flushHeaders?.();
+    stationRealtimeClients.add(client);sendRealtime(client,'connected',{ok:true});
+    const heartbeat=setInterval(()=>sendRealtime(client,'heartbeat',{at:new Date().toISOString()}),25000);
+    req.on('close',()=>{clearInterval(heartbeat);stationRealtimeClients.delete(client);});
+  }catch(error){res.status(500).json({error:'Unable to authorize station events'});}
 });
 
 
@@ -2493,6 +2611,25 @@ app.post('/api/platform/logout',requirePlatformAdmin,async(req,res)=>{
   try{await pool.query('delete from platform_admin_sessions where id=$1',[req.platformAdmin.session_id]);res.json({ok:true});}
   catch(e){res.status(500).json({error:'Unable to sign out'});}
 });
+app.get('/api/platform/external-api-usage',requirePlatformAdmin,async(req,res)=>{
+  try{
+    const businessId=String(req.query.businessId||'').trim();
+    const limit=Math.min(Math.max(Number(req.query.limit||100),1),500);
+    const usage=await pool.query(`select u.business_id,b.name as business_name,u.provider,u.operation,u.period_type,u.period_key,u.request_count,u.updated_at
+      from external_api_usage_buckets u join businesses b on b.id=u.business_id
+      ${businessId?'where u.business_id=$1':''}
+      order by u.updated_at desc limit ${businessId?'$2':'$1'}`,businessId?[businessId,limit]:[limit]);
+    const alerts=await pool.query(`select a.*,b.name as business_name from external_api_usage_alerts a join businesses b on b.id=a.business_id
+      ${businessId?'where a.business_id=$1':''}
+      order by a.created_at desc limit ${businessId?'$2':'$1'}`,businessId?[businessId,limit]:[limit]);
+    res.json({usage:usage.rows,alerts:alerts.rows,quotas:{
+      googleRoutes:{daily:EXTERNAL_API_DAILY_ROUTE_QUOTA,monthly:EXTERNAL_API_MONTHLY_ROUTE_QUOTA},
+      sms:{daily:EXTERNAL_API_DAILY_SMS_QUOTA,monthly:EXTERNAL_API_MONTHLY_SMS_QUOTA},
+      alertPercent:EXTERNAL_API_ALERT_PERCENT
+    }});
+  }catch(e){res.status(500).json({error:e.message||'Unable to load external API usage'});}
+});
+
 app.get('/api/platform/packages',requirePlatformAdmin,async(req,res)=>{
   try{const r=await pool.query('select key,name,description,monthly_price_kes,active,features from platform_packages where active=true order by monthly_price_kes,key');res.json(r.rows);}
   catch(e){res.status(500).json({error:e.message||'Unable to load packages'});}

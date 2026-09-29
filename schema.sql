@@ -728,3 +728,45 @@ create table if not exists security_rate_limit_buckets (
 );
 create index if not exists security_rate_limit_buckets_updated_idx
   on security_rate_limit_buckets(updated_at);
+
+
+-- Realtime SSE credential hardening and external API cost controls.
+create table if not exists realtime_access_tokens (
+  token_hash text primary key,
+  scope text not null check (scope in ('CUSTOMER_ORDER','MANAGER','RIDER','STATION')),
+  business_id uuid not null references businesses(id) on delete cascade,
+  order_id uuid references orders(id) on delete cascade,
+  rider_id uuid references riders(id) on delete cascade,
+  station_id uuid references restaurant_order_stations(id) on delete cascade,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists realtime_access_tokens_expiry_idx on realtime_access_tokens(expires_at);
+create index if not exists realtime_access_tokens_scope_idx on realtime_access_tokens(scope,business_id,expires_at);
+
+create table if not exists external_api_usage_buckets (
+  business_id uuid not null references businesses(id) on delete cascade,
+  provider text not null,
+  operation text not null,
+  period_type text not null check (period_type in ('DAILY','MONTHLY')),
+  period_key text not null,
+  request_count integer not null default 0,
+  updated_at timestamptz not null default now(),
+  primary key (business_id,provider,operation,period_type,period_key)
+);
+create index if not exists external_api_usage_buckets_updated_idx on external_api_usage_buckets(updated_at);
+
+create table if not exists external_api_usage_alerts (
+  id uuid primary key default gen_random_uuid(),
+  business_id uuid not null references businesses(id) on delete cascade,
+  provider text not null,
+  operation text not null,
+  period_type text not null,
+  period_key text not null,
+  threshold_percent integer not null,
+  request_count integer not null,
+  quota integer not null,
+  created_at timestamptz not null default now(),
+  unique(business_id,provider,operation,period_type,period_key,threshold_percent)
+);
+create index if not exists external_api_usage_alerts_business_idx on external_api_usage_alerts(business_id,created_at desc);

@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 const clean=(v,n=200)=>String(v??'').trim().slice(0,n);
 const hash=v=>crypto.createHash('sha256').update(String(v)).digest('hex');
 const token=()=>crypto.randomBytes(32).toString('hex');
+const moneyPercent=(amount,percent)=>amount*Math.max(0,Math.min(100,percent))/100;
 
 export function registerCustomerGrowth(app,pool){
  async function session(req,res,next){
@@ -70,6 +71,25 @@ export function registerCustomerGrowth(app,pool){
 
  app.put('/api/customer/marketing-preferences',session,async(req,res)=>{
   const r=await pool.query('insert into marketing_preferences(customer_id,business_id,email_enabled,sms_enabled,push_enabled) values($1,$2,$3,$4,$5) on conflict(customer_id,business_id) do update set email_enabled=excluded.email_enabled,sms_enabled=excluded.sms_enabled,push_enabled=excluded.push_enabled,updated_at=now() returning *',[req.customer.id,req.customer.businessId,req.body.emailEnabled!==false,req.body.smsEnabled!==false,req.body.pushEnabled!==false]);res.json(r.rows[0]);
+ });
+
+ app.post('/api/customer/coupons/validate',session,async(req,res)=>{
+  const code=clean(req.body.code,80).toUpperCase(),amount=Number(req.body.orderAmount||0);
+  if(!code||!Number.isFinite(amount)||amount<0)return res.status(400).json({error:'Coupon code and valid order amount are required'});
+  const r=await pool.query("select id,code,discount_type,discount_value,min_order_amount,expires_at,max_redemptions,redeemed_count from customer_coupons where business_id=$1 and code=$2 and active=true and starts_at<=now() and (expires_at is null or expires_at>now()) and (max_redemptions is null or redeemed_count<max_redemptions)",[req.customer.businessId,code]);
+  if(!r.rowCount)return res.status(404).json({error:'Coupon is invalid or expired'});
+  const coupon=r.rows[0];
+  if(amount<Number(coupon.min_order_amount))return res.status(400).json({error:'Order does not meet the coupon minimum'});
+  const used=await pool.query('select 1 from customer_coupon_redemptions where coupon_id=$1 and customer_id=$2 limit 1',[coupon.id,req.customer.id]);
+  if(used.rowCount)return res.status(409).json({error:'Coupon has already been used by this customer'});
+  const discount=coupon.discount_type==='PERCENT'?Math.min(amount,moneyPercent(amount,Number(coupon.discount_value))):Math.min(amount,Number(coupon.discount_value));
+  res.json({valid:true,coupon,discount:Math.round(discount*100)/100,totalAfterDiscount:Math.round((amount-discount)*100)/100});
+ });
+ app.get('/api/customer/notifications',session,async(req,res)=>{
+  const r=await pool.query('select id,title,message,created_at,read_at from customer_notifications where customer_id=$1 and business_id=$2 order by created_at desc limit 50',[req.customer.id,req.customer.businessId]);res.json(r.rows);
+ });
+ app.patch('/api/customer/notifications/:id/read',session,async(req,res)=>{
+  const r=await pool.query('update customer_notifications set read_at=coalesce(read_at,now()) where id=$1 and customer_id=$2 and business_id=$3 returning id,read_at',[req.params.id,req.customer.id,req.customer.businessId]);if(!r.rowCount)return res.status(404).json({error:'Notification not found'});res.json(r.rows[0]);
  });
 
  app.get('/api/customer/feedback',session,async(req,res)=>{

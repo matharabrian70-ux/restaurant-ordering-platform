@@ -1584,6 +1584,85 @@ async function initiateRefundForOrder(orderId, customerNote = 'Customer cancelle
   }finally{client.release();}
 }
 
+async function markPaymentSuccessful(reference, paystackData = null, expectedOrderId = null) {
+  const client = await pool.connect();
+  let cancelledOrderId = null;
+  let paidOrder = null;
+  try {
+    await client.query('begin');
+    const paymentResult = await client.query(
+      `select p.*, o.total, o.id as order_id, o.business_id, o.status as order_status
+         from payments p
+         join orders o on o.id=p.order_id
+        where p.provider='PAYSTACK'
+          and p.provider_reference=$1
+          and ($2::uuid is null or o.id=$2::uuid)
+        for update`,
+      [reference, expectedOrderId || null]
+    );
+    if (!paymentResult.rowCount) {
+      await client.query('rollback');
+      return null;
+    }
+    const payment = paymentResult.rows[0];
+    const paymentState=String(payment.status||'').toUpperCase();
+    if(paymentState==='REFUNDED'){
+      await client.query('rollback');
+      throw new Error('Payment has already been refunded');
+    }
+    if(paymentState==='PAID'){
+      await client.query('commit');
+      return payment.order_id;
+    }
+    if(!['PENDING','INITIALIZING'].includes(paymentState)){
+      await client.query('rollback');
+      throw new Error('Payment is not in a confirmable state');
+    }
+    const expectedSubunit = Math.round(Number(payment.total) * 100);
+    if (paystackData && Number(paystackData.amount) !== expectedSubunit) {
+      await client.query('rollback');
+      throw new Error('Paystack amount does not match the order total');
+    }
+    if (paystackData && String(paystackData.reference||'') !== String(reference)) {
+      await client.query('rollback');
+      throw new Error('Paystack reference mismatch');
+    }
+    await client.query(
+      `update payments
+          set status='PAID', confirmed_at=coalesce(confirmed_at,now())
+        where id=$1 and status in ('PENDING','INITIALIZING')`,
+      [payment.id]
+    );
+    const updated = await client.query(
+      `update orders set payment_status='PAID' where id=$1 returning *`,
+      [payment.order_id]
+    );
+    paidOrder = updated.rows[0];
+    await ensureReceipt(client,payment.order_id);
+    cancelledOrderId = payment.order_status === 'CANCELLED' ? payment.order_id : null;
+    if(paidOrder){
+      await client.query(
+        `insert into outbox_events(event_type,aggregate_type,aggregate_id,business_id,payload)
+         values('payment.confirmed','ORDER',$1,$2,$3)`,
+        [paidOrder.id,paidOrder.business_id,{orderId:paidOrder.id,orderNumber:paidOrder.order_number,paymentStatus:'PAID'}]
+      );
+    }
+    await client.query('commit');
+    if(paidOrder) broadcastOrder(paidOrder,{reason:'payment.confirmed',notification:'New paid order'});
+    if(cancelledOrderId) await initiateRefundForOrder(
+      cancelledOrderId,
+      'Customer cancelled before payment completed',
+      'Automatic refund because the order was cancelled before restaurant acceptance'
+    );
+    return payment.order_id;
+  } catch(error) {
+    try { await client.query('rollback'); } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function updateRefundFromWebhook(data) {
   const transactionReference = String(data?.transaction_reference || data?.transaction?.reference || '');
   const refundProviderId = data?.refund_reference || data?.id || null;

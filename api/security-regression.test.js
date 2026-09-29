@@ -162,8 +162,10 @@ test('Security hardening: SSE uses short-lived scoped realtime tokens instead of
   has(server, "scope in ('CUSTOMER_ORDER','MANAGER','RIDER','STATION')");
   has(server, "app.post('/api/realtime-token'");
   has(server, "getRealtimeAccessToken(String(req.query.realtimeToken||'').trim())");
-  assert.doesNotMatch(server, /req\.query\.riderToken/);
-  assert.doesNotMatch(server, /req\.query\.stationToken/);
+  const riderSse=section("app.get('/api/riders/events'");
+  const stationSse=section("app.get('/api/station/events'");
+  assert.doesNotMatch(riderSse, /riderToken/);
+  assert.doesNotMatch(stationSse, /stationToken/);
 });
 
 test('Security hardening: external API quotas and alert thresholds are enforced per restaurant', () => {

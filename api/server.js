@@ -7,6 +7,7 @@ import QRCode from 'qrcode';
 import { registerDeliveryEngine } from './delivery-engine.js';
 import { registerMenuEngine } from './menu-engine.js';
 import { registerPosEngine } from './pos-engine.js';
+import { registerCustomerGrowth } from './customer-growth.js';
 import { registerBrandingEngine } from './branding-engine.js';
 import { registerReceiptEngine, ensureReceipt } from './receipt-engine.js';
 
@@ -671,6 +672,12 @@ async function ensurePhaseASchema(){
     alter table refunds drop constraint if exists refunds_amount_nonnegative;
     alter table refunds add constraint refunds_amount_nonnegative check (amount > 0) not valid;
   `);
+}
+
+async function ensurePhaseFSchema(){
+  const fs = await import('node:fs/promises');
+  const sql = await fs.readFile(new URL('./migrations/003_phase_f_customer_growth.sql', import.meta.url), 'utf8');
+  await pool.query(sql);
 }
 
 async function ensurePhaseBSchema(){
@@ -3235,6 +3242,7 @@ registerReceiptEngine(app,pool,{requireManager});
 registerDeliveryEngine(app,pool,requireManager);
 registerMenuEngine(app,pool,requireManager,broadcastRealtime);
 registerPosEngine(app,pool,{requireManager,broadcastRealtime});
+registerCustomerGrowth(app,pool);
 
 
 function integrationTypeLabel(type){
@@ -3358,6 +3366,7 @@ async function cleanupSecurityArtifacts(){
 async function startServer(){
   await ensurePhaseASchema();
   await ensurePhaseBSchema();
+  await ensurePhaseFSchema();
   await ensureIntegrationSchema();
   await ensurePhase1SecuritySchema();
   await ensurePhase3SecuritySchema();

@@ -19,9 +19,28 @@ async function apiRequest(path, options = {}) {
 }
 
 async function getDeliveryQuote({ pickupAddress, deliveryAddress, latitude, longitude }) { return apiRequest('/api/delivery/quote-v2', { method:'POST', body: JSON.stringify({ businessId: BUSINESS_ID, pickupAddress, deliveryAddress, customerLat: latitude, customerLng: longitude }) }); }
+function orderRequestFingerprint({ customer, phone, email, note, payment, items, quoteId, deliveryAddress }) {
+  return JSON.stringify({
+    businessId: BUSINESS_ID,
+    customer: { name: String(customer || '').trim(), phone: String(phone || '').trim(), email: String(email || '').trim() },
+    items: items.map(item => ({ productId: item.id, quantity: item.qty, options: item.options || {} })),
+    paymentMethod: payment,
+    quoteId: quoteId || null,
+    deliveryNote: String(note || '').trim(),
+    deliveryAddress: String(deliveryAddress || '').trim()
+  });
+}
 async function createRemoteOrder({ customer, phone, email, note, payment, items, subtotal, total, quoteId, deliveryAddress }) {
+  const fingerprint=orderRequestFingerprint({customer,phone,email,note,payment,items,quoteId,deliveryAddress});
+  let intent=null;
+  try{ intent=JSON.parse(sessionStorage.getItem('savanna_order_intent')||'null'); }catch{}
+  if(!intent||intent.fingerprint!==fingerprint){
+    intent={fingerprint,key:crypto.randomUUID()};
+    sessionStorage.setItem('savanna_order_intent',JSON.stringify(intent));
+  }
   return apiRequest('/api/orders', {
     method: 'POST',
+    headers: { 'Idempotency-Key': intent.key },
     body: JSON.stringify({
       businessId: BUSINESS_ID,
       customer: { name: customer, phone, email },

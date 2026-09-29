@@ -125,6 +125,24 @@ export function registerPosEngine(app,pool,{requireManager,broadcastRealtime}){
  app.post('/api/pos/orders',auth,async(req,res)=>{
   const c=await pool.connect();try{await c.query('begin');const o=await createOrder(c,req.manager.business_id,req.body);await c.query('commit');broadcastRealtime({businessId:req.manager.business_id,orderId:o.id,event:'pos.order.created',data:{orderId:o.id}});res.status(201).json(o)}catch(e){try{await c.query('rollback')}catch{}res.status(400).json({error:e.message||'Unable to create POS order'})}finally{c.release()}
  });
+ app.get('/api/pos/kds-stations',auth,async(req,res)=>{
+  try{const r=await pool.query('select * from kds_stations where business_id=$1 order by name',[req.manager.business_id]);res.json(r.rows)}
+  catch(e){res.status(500).json({error:'Unable to load KDS stations'})}
+ });
+ app.post('/api/pos/kds-stations',auth,async(req,res)=>{
+  try{
+   const name=text(req.body.name,100),type=text(req.body.stationType,40).toUpperCase()||'KITCHEN';
+   if(!name)return res.status(400).json({error:'Station name is required'});
+   const r=await pool.query('insert into kds_stations(business_id,name,station_type) values($1,$2,$3) returning *',[req.manager.business_id,name,type]);
+   res.status(201).json(r.rows[0])
+  }catch(e){res.status(400).json({error:e.code==='23505'?'That KDS station already exists':e.message})}
+ });
+ app.patch('/api/pos/kds-stations/:id',auth,async(req,res)=>{
+  try{
+   const r=await pool.query('update kds_stations set name=$1,station_type=$2,active=$3 where id=$4 and business_id=$5 returning *',[text(req.body.name,100),text(req.body.stationType,40).toUpperCase()||'KITCHEN',Boolean(req.body.active),req.params.id,req.manager.business_id]);
+   if(!r.rowCount)return res.status(404).json({error:'KDS station not found'});res.json(r.rows[0])
+  }catch(e){res.status(400).json({error:'Unable to update KDS station'})}
+ });
  app.get('/api/pos/kds',auth,async(req,res)=>{
   try{const r=await pool.query('select t.id,t.order_id,t.status,t.priority,t.fired_at,t.accepted_at,t.started_at,t.ready_at,o.order_number,o.order_type_code,o.table_id,coalesce(json_agg(json_build_object(\'id\',ti.id,\'orderItemId\',ti.order_item_id,\'name\',ti.item_name,\'quantity\',ti.quantity,\'modifiers\',ti.modifiers,\'status\',ti.status) order by ti.created_at) filter(where ti.id is not null),\'[]\'::json) items from kds_tickets t join orders o on o.id=t.order_id left join kds_ticket_items ti on ti.ticket_id=t.id where t.business_id=$1 and t.status<>\'VOID\' group by t.id,o.order_number,o.order_type_code,o.table_id order by t.priority desc,t.fired_at',[req.manager.business_id]);res.json(r.rows)}
   catch(e){res.status(500).json({error:'Unable to load KDS queue'})}

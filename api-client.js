@@ -37,7 +37,10 @@ async function createRemoteOrder({ customer, phone, email, note, payment, items,
 }
 
 async function initializePaystackPayment(orderId) {
-  return apiRequest('/api/payments/paystack/initialize', { method: 'POST', body: JSON.stringify({ orderId, orderToken:getCustomerOrderToken() }), headers:{Authorization:'Bearer '+getCustomerOrderToken()} });
+  const keyName='savanna_paystack_intent_'+orderId;
+  let key=sessionStorage.getItem(keyName);
+  if(!key){ key=crypto.randomUUID(); sessionStorage.setItem(keyName,key); }
+  return apiRequest('/api/payments/paystack/initialize', { method:'POST', body:JSON.stringify({orderId,orderToken:getCustomerOrderToken(),idempotencyKey:key}), headers:{Authorization:'Bearer '+getCustomerOrderToken(),'Idempotency-Key':key} });
 }
 async function verifyPaystackPayment(reference,orderId) {
   return apiRequest('/api/payments/paystack/verify', { method: 'POST', body: JSON.stringify({ reference, orderId, orderToken:getCustomerOrderToken() }), headers:{Authorization:'Bearer '+getCustomerOrderToken()} });

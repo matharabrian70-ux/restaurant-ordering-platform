@@ -158,14 +158,14 @@ export function registerAdvancedOperations(app,pool){
 
   // 49 Proof of delivery
   app.post('/api/riders/orders/:orderId/proof-of-delivery',rider,async(req,res)=>{
-    const order=await pool.query("select id from orders where id=$1 and business_id=$2 limit 1",[id(req.params.orderId),req.rider.businessId]);
+    const order=await pool.query("select o.id from orders o join rider_trips t on t.order_id=o.id where o.id=$1 and o.business_id=$2 and t.rider_id=$3 and t.completed_at is null limit 1",[id(req.params.orderId),req.rider.businessId,req.rider.id]);
     if(!order.rowCount)return res.status(404).json({error:'Order not found'});
     const type=clean(req.body.proofType,20).toUpperCase();if(!['RECIPIENT','PHOTO','SIGNATURE','NOTE'].includes(type))return res.status(400).json({error:'Invalid proof type'});
     if(type==='PHOTO'&&String(req.body.photoUrl||'').length>2000)return res.status(400).json({error:'Photo URL is too long'});
     const r=await pool.query('insert into proof_of_delivery(business_id,order_id,rider_id,proof_type,recipient_name,photo_url,signature_data,note,latitude,longitude) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id,proof_type,recipient_name,photo_url,note,latitude,longitude,captured_at',[req.rider.businessId,id(req.params.orderId),req.rider.id,type,clean(req.body.recipientName,200)||null,clean(req.body.photoUrl,2000)||null,clean(req.body.signatureData,20000)||null,clean(req.body.note,2000)||null,req.body.latitude??null,req.body.longitude??null]);res.status(201).json(r.rows[0]);
   });
   app.get('/api/riders/orders/:orderId/proof-of-delivery',rider,async(req,res)=>{
-    const r=await pool.query('select * from proof_of_delivery where order_id=$1 and business_id=$2 order by created_at desc',[id(req.params.orderId),req.rider.businessId]);res.json(r.rows);
+    const r=await pool.query('select p.* from proof_of_delivery p join rider_trips t on t.order_id=p.order_id where p.order_id=$1 and p.business_id=$2 and t.rider_id=$3 order by p.created_at desc',[id(req.params.orderId),req.rider.businessId,req.rider.id]);res.json(r.rows);
   });
   app.get('/api/manager/orders/:orderId/proof-of-delivery',manager,async(req,res)=>{
     const r=await pool.query('select * from proof_of_delivery where order_id=$1 and business_id=$2 order by created_at desc',[id(req.params.orderId),req.manager.businessId]);res.json(r.rows);

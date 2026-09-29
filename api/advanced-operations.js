@@ -139,7 +139,7 @@ export function registerAdvancedOperations(app,pool){
   app.post('/api/manager/delivery-zones',manager,async(req,res)=>{
     const type=clean(req.body.zoneType,20).toUpperCase(),fee=Number(req.body.fee||0),minimum=Number(req.body.minimumOrder||0);
     if(!['RADIUS','POLYGON'].includes(type)||!clean(req.body.name,100)||!Number.isFinite(fee)||fee<0||!Number.isFinite(minimum)||minimum<0)return res.status(400).json({error:'Valid zone name, type, fee and minimum order are required'});
-    if(type==='RADIUS'&&(!Number.isFinite(Number(req.body.centerLatitude))||!Number.isFinite(Number(req.body.centerLongitude))||!Number(req.body.radiusMeters)>0))return res.status(400).json({error:'Radius zones require center coordinates and radius'});
+    if(type==='RADIUS'&&(!Number.isFinite(Number(req.body.centerLatitude))||!Number.isFinite(Number(req.body.centerLongitude))||!(Number(req.body.radiusMeters)>0)))return res.status(400).json({error:'Radius zones require center coordinates and radius'});
     if(type==='POLYGON'&&(!Array.isArray(req.body.polygon)||req.body.polygon.length<3))return res.status(400).json({error:'Polygon zones require at least three points'});
     const r=await pool.query('insert into delivery_zones(business_id,name,zone_type,fee,minimum_order,radius_meters,center_latitude,center_longitude,polygon,priority) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *',[req.manager.businessId,clean(req.body.name,100),type,fee,minimum,type==='RADIUS'?Number(req.body.radiusMeters):null,type==='RADIUS'?Number(req.body.centerLatitude):null,type==='RADIUS'?Number(req.body.centerLongitude):null,type==='POLYGON'?req.body.polygon:null,Number(req.body.priority||0)]);res.status(201).json(r.rows[0]);
   });
@@ -161,7 +161,7 @@ export function registerAdvancedOperations(app,pool){
     const order=await pool.query("select id from orders where id=$1 and business_id=$2 limit 1",[id(req.params.orderId),req.rider.businessId]);
     if(!order.rowCount)return res.status(404).json({error:'Order not found'});
     const type=clean(req.body.proofType,20).toUpperCase();if(!['RECIPIENT','PHOTO','SIGNATURE','NOTE'].includes(type))return res.status(400).json({error:'Invalid proof type'});
-    if(type==='PHOTO'&&clean(req.body.photoUrl,2000).length>2000)return res.status(400).json({error:'Photo URL is too long'});
+    if(type==='PHOTO'&&String(req.body.photoUrl||'').length>2000)return res.status(400).json({error:'Photo URL is too long'});
     const r=await pool.query('insert into proof_of_delivery(business_id,order_id,rider_id,proof_type,recipient_name,photo_url,signature_data,note,latitude,longitude) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id,proof_type,recipient_name,photo_url,note,latitude,longitude,captured_at',[req.rider.businessId,id(req.params.orderId),req.rider.id,type,clean(req.body.recipientName,200)||null,clean(req.body.photoUrl,2000)||null,clean(req.body.signatureData,20000)||null,clean(req.body.note,2000)||null,req.body.latitude??null,req.body.longitude??null]);res.status(201).json(r.rows[0]);
   });
   app.get('/api/riders/orders/:orderId/proof-of-delivery',rider,async(req,res)=>{

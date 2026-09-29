@@ -5,7 +5,7 @@ const API='https://restaurant-ordering-api-ow3p.onrender.com';
 const root=document.getElementById('platform-view');
 const state={
   me:null,overview:{},command:null,businesses:[],packages:[],health:null,orders:[],riders:[],incidents:[],system:null,
-  selected:null,selectedInspect:null,showCreate:false,section:'overview',menu:false,loading:false
+  selected:null,selectedInspect:null,showCreate:false,createDraft:{name:'',website:'',address:'',plan:'',domain:'',color:'#c96b3b'},section:'overview',menu:false,loading:false
 };
 let refreshTimer=null;
 
@@ -105,7 +105,9 @@ async function load(){
     ]);
     [state.overview,state.businesses,state.packages,state.health,state.command,state.orders,state.riders,state.incidents,state.system,state.audit]=results;
     state.loading=false;
-    render();
+    // Keep active forms/modals mounted during background refreshes. Replacing
+    // root.innerHTML destroys input elements and clears values being typed.
+    if(!state.showCreate&&!state.selected)render();
     clearTimeout(refreshTimer);refreshTimer=setTimeout(load,30000);
   }catch(error){
     state.loading=false;localStorage.removeItem('platform_admin_token');login(error.message);
@@ -259,20 +261,40 @@ function recentOrders(rows){
 }
 
 function createPanel(){
-  return `<div class="pc-modal-backdrop" id="create-backdrop"><section class="pc-modal pc-create-modal"><button class="pc-modal-close" id="close-create">×</button><div class="pc-modal-head"><div><span class="pc-kicker">NEW TENANT</span><h2>Provision restaurant</h2><p>Create the tenant and its core platform services.</p></div></div><form id="create-form" class="pc-form"><label>Restaurant name<input id="new-name" required placeholder="Restaurant name"></label><label>Homepage URL<input id="new-website" type="url" placeholder="https://restaurant.com"></label><label>Pickup address<input id="new-address" required placeholder="Restaurant address"></label><label>Package<select id="new-plan">${state.packages.map(p=>'<option value="'+esc(p.key)+'">'+esc(p.name)+' — '+esc(p.description||'')+'</option>').join('')}</select></label><label>Restaurant domain<input id="new-domain" placeholder="orders.restaurant.com"></label><label>Primary colour<input id="new-color" value="#c96b3b"></label><div class="pc-form-note"><strong>Isolation rule:</strong> provisioning creates tenant infrastructure. Dashboards remain independently accessed.</div><div class="pc-form-actions"><button type="button" class="pc-btn secondary" id="cancel-create">CANCEL</button><button class="pc-btn">PROVISION RESTAURANT</button></div></form></section></div>`;
+  const d=state.createDraft||{};
+  return `<div class="pc-modal-backdrop" id="create-backdrop"><section class="pc-modal pc-create-modal"><button class="pc-modal-close" id="close-create">×</button><div class="pc-modal-head"><div><span class="pc-kicker">NEW TENANT</span><h2>Provision restaurant</h2><p>Create the tenant and its core platform services.</p></div></div><form id="create-form" class="pc-form"><label>Restaurant name<input id="new-name" required placeholder="Restaurant name" value="${esc(d.name||'')}"></label><label>Homepage URL<input id="new-website" type="url" placeholder="https://restaurant.com" value="${esc(d.website||'')}"></label><label>Pickup address<input id="new-address" required placeholder="Restaurant address" value="${esc(d.address||'')}"></label><label>Package<select id="new-plan">${state.packages.map((p,i)=>'<option value="'+esc(p.key)+'" '+((d.plan&&d.plan===p.key)||(!d.plan&&i===0)?'selected':'')+'>'+esc(p.name)+' — '+esc(p.description||'')+'</option>').join('')}</select></label><label>Restaurant domain<input id="new-domain" placeholder="orders.restaurant.com" value="${esc(d.domain||'')}"></label><label>Primary colour<input id="new-color" value="${esc(d.color||'#c96b3b')}"></label><div class="pc-form-note"><strong>Isolation rule:</strong> provisioning creates tenant infrastructure. Dashboards remain independently accessed.</div><div class="pc-form-actions"><button type="button" class="pc-btn secondary" id="cancel-create">CANCEL</button><button class="pc-btn">PROVISION RESTAURANT</button></div></form></section></div>`;
 }
 function bindCreate(){
-  document.getElementById('close-create')?.addEventListener('click',()=>{state.showCreate=false;render();});
-  document.getElementById('cancel-create')?.addEventListener('click',()=>{state.showCreate=false;render();});
-  document.getElementById('create-form')?.addEventListener('submit',createTenant);
+  const closeCreate=()=>{state.showCreate=false;state.createDraft={name:'',website:'',address:'',plan:'',domain:'',color:'#c96b3b'};render();};
+  document.getElementById('close-create')?.addEventListener('click',closeCreate);
+  document.getElementById('cancel-create')?.addEventListener('click',closeCreate);
+  const form=document.getElementById('create-form');
+  form?.addEventListener('input',e=>{
+    const map={name:'name',website:'website',address:'address',domain:'domain',color:'color'};
+    if(map[e.target.id])state.createDraft[map[e.target.id]]=e.target.value;
+  });
+  form?.addEventListener('change',e=>{if(e.target.id==='new-plan')state.createDraft.plan=e.target.value;});
+  form?.addEventListener('submit',createTenant);
   document.getElementById('pc-drawer-close')?.addEventListener('click',()=>{state.menu=false;render();});
   document.getElementById('pc-drawer-backdrop')?.addEventListener('click',e=>{if(e.target.id==='pc-drawer-backdrop'){state.menu=false;render();}});
   document.getElementById('logout-btn')?.addEventListener('click',logout);
 }
 async function createTenant(e){
   e.preventDefault();const button=e.submitter;button.disabled=true;button.textContent='PROVISIONING…';
-  try{await api('/api/platform/businesses',{method:'POST',body:JSON.stringify({name:document.getElementById('new-name').value.trim(),websiteUrl:document.getElementById('new-website').value.trim(),slug:document.getElementById('new-name').value.trim(),address:document.getElementById('new-address').value.trim(),planKey:document.getElementById('new-plan').value,domain:document.getElementById('new-domain').value.trim(),primaryColor:document.getElementById('new-color').value.trim()})});state.showCreate=false;await load();}
-  catch(error){button.disabled=false;button.textContent='PROVISION RESTAURANT';alert(error.message);}
+  try{
+    await api('/api/platform/businesses',{method:'POST',body:JSON.stringify({
+      name:document.getElementById('new-name').value.trim(),
+      websiteUrl:document.getElementById('new-website').value.trim(),
+      slug:document.getElementById('new-name').value.trim(),
+      address:document.getElementById('new-address').value.trim(),
+      planKey:document.getElementById('new-plan').value,
+      domain:document.getElementById('new-domain').value.trim(),
+      primaryColor:document.getElementById('new-color').value.trim()
+    })});
+    state.showCreate=false;
+    state.createDraft={name:'',website:'',address:'',plan:'',domain:'',color:'#c96b3b'};
+    await load();
+  }catch(error){button.disabled=false;button.textContent='PROVISION RESTAURANT';alert(error.message);}
 }
 
 function tenantPanel(b){

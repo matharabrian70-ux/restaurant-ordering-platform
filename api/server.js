@@ -3737,6 +3737,55 @@ app.get('/api/public/integrations/:token.js',(req,res)=>{
   })();
 });
 
+async function recordSystemIncident({businessId=null,source='SYSTEM',dashboard='CONTROL_CENTRE',severity='ERROR',message,metadata={}}){
+  const cleanMessage=String(message||'').slice(0,1000);
+  const fingerprint=crypto.createHash('sha256').update(JSON.stringify({businessId,source,dashboard,message:cleanMessage})).digest('hex');
+  try{
+    await pool.query(`insert into platform_incidents(business_id,source,dashboard,severity,status,fingerprint,message,metadata)
+      values($1,$2,$3,$4,'OPEN',$5,$6,$7)
+      on conflict(fingerprint) do update set occurrences=platform_incidents.occurrences+1,last_seen_at=now(),severity=excluded.severity,metadata=excluded.metadata,status='OPEN',resolved_at=null`,
+      [businessId,source,dashboard,severity,fingerprint,cleanMessage,metadata]);
+  }catch(error){ console.error('Incident recording warning:',error.message); }
+}
+
+async function runIncidentSweep(){
+  try{ await pool.query('select 1'); }
+  catch{
+    await recordSystemIncident({source:'SYSTEM',severity:'CRITICAL',message:'Database is unavailable.',metadata:{database:false}});
+    return {database:false};
+  }
+
+  try{
+    const [pending,stuck,failedOutbox,refunds]=await Promise.all([
+      pool.query("select count(*)::int as count from orders where payment_status='PENDING' and status<>'CANCELLED' and created_at < now()-interval '30 minutes'"),
+      pool.query("select count(*)::int as count from orders where status in ('ACCEPTED','OUT_FOR_DELIVERY') and created_at < now()-interval '6 hours'"),
+      pool.query("select count(*)::int as count from outbox_events where status='FAILED' and attempts >= 3"),
+      pool.query("select count(*)::int as count from refunds where status='NEEDS-ATTENTION'")
+    ]);
+    const oldPayments=Number(pending.rows[0]?.count||0);
+    const stuckOrders=Number(stuck.rows[0]?.count||0);
+    const failedOutbox=Number(failedOutbox.rows[0]?.count||0);
+    const needsAttentionRefunds=Number(refunds.rows[0]?.count||0);
+
+    if(oldPayments>0) await recordSystemIncident({source:'PAYMENTS',severity:'ERROR',message:String(oldPayments)+' order payment(s) have remained pending for more than 30 minutes. No payment is marked successful by the incident system.',metadata:{count:oldPayments}});
+    if(stuckOrders>0) await recordSystemIncident({source:'ORDERS',severity:'ERROR',message:String(stuckOrders)+' order(s) have remained in an active delivery state for more than 6 hours. No order status is changed automatically.',metadata:{count:stuckOrders}});
+    if(failedOutbox>0) await recordSystemIncident({source:'OUTBOX',severity:'ERROR',message:String(failedOutbox)+' outbox event(s) exhausted their bounded retry limit.',metadata:{count:failedOutbox,maxAttempts:3}});
+    if(needsAttentionRefunds>0) await recordSystemIncident({source:'REFUNDS',severity:'CRITICAL',message:String(needsAttentionRefunds)+' refund(s) require manual reconciliation.',metadata:{count:needsAttentionRefunds}});
+  }catch(error){
+    await recordSystemIncident({source:'SYSTEM',severity:'CRITICAL',message:'Incident sweep could not complete its database checks.',metadata:{error:String(error.message||'unknown').slice(0,500)}});
+  }
+
+  const dependencies={
+    payments:Boolean(String(process.env.PAYSTACK_SECRET_KEY||'').trim()),
+    googleMaps:Boolean(String(process.env.GOOGLE_MAPS_API_KEY||'').trim()),
+    sms:Boolean(String(process.env.AFRICASTALKING_USERNAME||'').trim()&&String(process.env.AFRICASTALKING_API_KEY||'').trim())
+  };
+  if(!dependencies.payments) await recordSystemIncident({source:'PAYMENTS',severity:'CRITICAL',message:'Payment provider configuration is missing.',metadata:{configured:false}});
+  if(!dependencies.googleMaps) await recordSystemIncident({source:'MAPS',severity:'ERROR',message:'Google Maps configuration is missing; delivery route features may be unavailable.',metadata:{configured:false}});
+  if(!dependencies.sms) await recordSystemIncident({source:'SMS',severity:'ERROR',message:'SMS provider configuration is missing; SMS delivery is unavailable.',metadata:{configured:false}});
+  return {database:true,dependencies};
+}
+
 async function cleanupSecurityArtifacts(){
   try{
     await pool.query("update delivery_quotes set status='EXPIRED' where status='QUOTED' and expires_at<=now()");
@@ -3759,12 +3808,14 @@ async function startServer(){
   await ensurePhase3SecuritySchema();
   await cleanupSecurityArtifacts();
   await runSelfHealingSweep(pool);
+  await runIncidentSweep();
   await runIntelligenceSweep(pool);
   setInterval(() => runIntelligenceSweep(pool), 6 * 60 * 60_000).unref?.();
   setInterval(cleanupSecurityArtifacts,30*60_000).unref?.();
   // Phase M recovery is deliberately infrequent and bounded. It only reconciles
   // existing infrastructure state; it never changes payment/order outcomes.
   setInterval(() => runSelfHealingSweep(pool).catch(() => {}), 5*60_000).unref?.();
+  setInterval(() => runIncidentSweep().catch(() => {}), 5*60_000).unref?.();
   await ensureSmsSchema();
   await ensurePlatformObservabilitySchema();
   await startRealtimeBus();

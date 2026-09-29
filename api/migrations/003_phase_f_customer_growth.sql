@@ -115,3 +115,22 @@ create table if not exists customer_feedback (
  unique(customer_id,order_id)
 );
 create index if not exists customer_feedback_business_idx on customer_feedback(business_id,created_at desc);
+
+create table if not exists customer_automation_runs (
+ id uuid primary key default gen_random_uuid(),
+ customer_id uuid not null references customers(id) on delete cascade,
+ business_id uuid not null references businesses(id) on delete cascade,
+ automation_id uuid not null references marketing_automations(id) on delete cascade,
+ created_at timestamptz not null default now(),
+ unique(customer_id,automation_id)
+);
+create table if not exists customer_notifications (
+ id uuid primary key default gen_random_uuid(),
+ customer_id uuid not null references customers(id) on delete cascade,
+ business_id uuid not null references businesses(id) on delete cascade,
+ title text not null,
+ message text not null,
+ created_at timestamptz not null default now(),
+ read_at timestamptz
+);
+create index if not exists customer_notifications_idx on customer_notifications(customer_id,business_id,created_at desc);

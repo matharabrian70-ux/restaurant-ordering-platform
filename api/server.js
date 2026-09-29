@@ -3716,7 +3716,7 @@ app.get('/api/public/integrations/:token.js',(req,res)=>{
 
 async function cleanupSecurityArtifacts(){
   try{
-    await pool.query("update delivery_quotes set status='EXPIRED' where status='QUOTED' and created_at < now()-interval '30 minutes'");
+    await pool.query("update delivery_quotes set status='EXPIRED' where status='QUOTED' and expires_at<=now()");
     await pool.query("delete from telemetry_access_tokens where expires_at<=now()");
     await pool.query("delete from realtime_access_tokens where expires_at<=now()");
     await pool.query("delete from outbox_events where status='PUBLISHED' and processed_at < now()-interval '7 days'"); }

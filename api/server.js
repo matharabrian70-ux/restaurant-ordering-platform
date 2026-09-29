@@ -23,6 +23,29 @@ function parsePositiveInt(value, fallback, min, max) {
   return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback;
 }
 
+const RIDER_GPS_MAX_ACCURACY_METERS = parsePositiveInt(process.env.RIDER_GPS_MAX_ACCURACY_METERS, 250, 25, 1000);
+const RIDER_GPS_FRESHNESS_SECONDS = parsePositiveInt(process.env.RIDER_GPS_FRESHNESS_SECONDS, 90, 15, 600);
+const RIDER_GPS_MAX_SPEED_MPS = parsePositiveInt(process.env.RIDER_GPS_MAX_SPEED_MPS, 90, 20, 200);
+const RIDER_GPS_REQUIRED_FOR_ASSIGNMENT = String(process.env.RIDER_GPS_REQUIRED_FOR_ASSIGNMENT || 'true').toLowerCase() !== 'false';
+
+function haversineMeters(lat1, lng1, lat2, lng2) {
+  const rad=Math.PI/180, R=6371000;
+  const dLat=(lat2-lat1)*rad, dLng=(lng2-lng1)*rad;
+  const a=Math.sin(dLat/2)**2+Math.cos(lat1*rad)*Math.cos(lat2*rad)*Math.sin(dLng/2)**2;
+  return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+function validateGpsSample({lat,lng,accuracy,previous=null,nowMs=Date.now()}) {
+  if(!Number.isFinite(lat)||!Number.isFinite(lng)||lat<-90||lat>90||lng<-180||lng>180) return {ok:false,error:'Valid latitude and longitude are required'};
+  if(Number.isFinite(accuracy) && (accuracy<0||accuracy>RIDER_GPS_MAX_ACCURACY_METERS)) return {ok:false,error:'GPS accuracy is too low for reliable rider positioning'};
+  if(previous?.latitude!=null && previous?.longitude!=null && previous?.updated_at){
+    const elapsed=Math.max(1,(nowMs-new Date(previous.updated_at).getTime())/1000);
+    const distance=haversineMeters(Number(previous.latitude),Number(previous.longitude),lat,lng);
+    const speed=distance/elapsed;
+    if(Number.isFinite(speed) && speed>RIDER_GPS_MAX_SPEED_MPS) return {ok:false,error:'GPS movement is inconsistent with a realistic rider speed',suspicious:true};
+  }
+  return {ok:true};
+}
 const SESSION_TTLS = {
   managerHours: parsePositiveInt(process.env.MANAGER_SESSION_HOURS, 12, 1, 72),
   riderHours: parsePositiveInt(process.env.RIDER_SESSION_HOURS, 168, 1, 720),
@@ -95,6 +118,18 @@ const quoteRateLimit = rateLimit({
   keyFn: req => `quote:${clientIp(req)}:${String(req.body?.businessId || '')}`,
   message: 'Too many delivery quote requests. Please wait before requesting another quote.',
 });
+const quoteBusinessRateLimit = rateLimit({
+  windowMs: 60_000,
+  max: parsePositiveInt(process.env.DELIVERY_QUOTE_PER_BUSINESS_PER_MIN, 120, 20, 600),
+  keyFn: req => `quote-business:${String(req.body?.businessId || '')}`,
+  message: 'This restaurant is receiving too many delivery quote requests. Please try again shortly.',
+});
+const telemetryRateLimit = rateLimit({
+  windowMs: 60_000,
+  max: parsePositiveInt(process.env.TELEMETRY_RATE_LIMIT_PER_MIN, 20, 5, 120),
+  keyFn: req => `telemetry:${clientIp(req)}`,
+  message: 'Too many telemetry reports. Please try again shortly.',
+});
 const smsTestRateLimit = rateLimit({
   windowMs: 10 * 60_000,
   max: parsePositiveInt(process.env.SMS_TEST_RATE_LIMIT_PER_10_MIN, 3, 1, 10),
@@ -129,6 +164,10 @@ app.use('/api', (req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'geolocation=(self), camera=(), microphone=()');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '0');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-site');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   next();
 });
 app.use('/api', apiRateLimit);
@@ -1120,12 +1159,14 @@ app.get('/api/businesses/:id', async (req,res)=>{
 app.post('/api/riders/:id/deliveries/:tripId/location',requireRiderModule,requireRiderAuth,async(req,res)=>{
   try{
     const lat=Number(req.body.latitude), lng=Number(req.body.longitude);
-    if(!Number.isFinite(lat)||!Number.isFinite(lng)||lat<-90||lat>90||lng<-180||lng>180){
-      return res.status(400).json({error:'Valid latitude and longitude are required'});
-    }
     const accuracy=Number(req.body.accuracy);
     const heading=Number(req.body.heading);
     const speed=Number(req.body.speed);
+    const previous=await pool.query('select latitude,longitude,accuracy_meters,updated_at from rider_live_locations where rider_id=$1',[req.rider.id]);
+    const gpsCheck=validateGpsSample({lat,lng,accuracy,previous:previous.rows[0]});
+    if(!gpsCheck.ok)return res.status(gpsCheck.suspicious?422:400).json({error:gpsCheck.error,suspicious:Boolean(gpsCheck.suspicious)});
+    if(Number.isFinite(heading)&&(heading<0||heading>360))return res.status(400).json({error:'Invalid heading'});
+    if(Number.isFinite(speed)&&(speed<0||speed>RIDER_GPS_MAX_SPEED_MPS))return res.status(400).json({error:'Invalid GPS speed'});
     const trip=await pool.query(`select t.id,t.order_id,o.business_id,o.status,o.delivery_status
       from rider_trips t join orders o on o.id=t.order_id
       where t.id=$1 and t.rider_id=$2 and t.completed_at is null limit 1`,[req.params.tripId,req.rider.id]);
@@ -1390,7 +1431,17 @@ app.get('/api/riders/:id/profile', requireManager, async(req,res)=>{
   }catch(error){res.status(500).json({error:error.message||'Unable to load rider profile'});}
 });
 
-app.get('/api/riders', requireManager, async (req, res) => { try { const { businessId } = req.query; if (!businessId) return res.status(400).json({ error: 'businessId is required' }); const result = await pool.query(`select r.id,r.name,r.phone,r.email,r.vehicle_type,r.number_plate,r.profile_image_url,r.active,r.rider_status,coalesce(p.online,false) as online,exists(select 1 from rider_trips t join orders o on o.id=t.order_id where t.rider_id=r.id and t.completed_at is null) as busy,(select count(*) from rider_trips t where t.rider_id=r.id and t.completed_at is not null) as trip_count,(select max(t.completed_at) from rider_trips t where t.rider_id=r.id and t.completed_at is not null) as last_completed_at from riders r left join rider_presence p on p.rider_id=r.id where r.business_id=$1 order by r.name`, [businessId]); res.json(result.rows.map(r => ({ ...r, available: r.active && r.online && !r.busy }))); } catch { res.status(500).json({ error: 'Unable to load riders' }); } });
+app.get('/api/riders', requireManager, async (req, res) => { try {
+  const { businessId } = req.query;
+  if (!businessId) return res.status(400).json({ error: 'businessId is required' });
+  if(String(businessId)!==String(req.manager.business_id)) return res.status(403).json({error:'Business access denied'});
+  const result = await pool.query(`select r.id,r.name,r.phone,r.email,r.vehicle_type,r.number_plate,r.profile_image_url,r.active,r.rider_status,coalesce(p.online,false) as online,p.latitude,p.longitude,p.accuracy_meters,p.location_updated_at,exists(select 1 from rider_trips t join orders o on o.id=t.order_id where t.rider_id=r.id and t.completed_at is null) as busy,(select count(*) from rider_trips t where t.rider_id=r.id and t.completed_at is not null) as trip_count,(select max(t.completed_at) from rider_trips t where t.rider_id=r.id and t.completed_at is not null) as last_completed_at from riders r left join rider_presence p on p.rider_id=r.id where r.business_id=$1 order by r.name`, [businessId]);
+  res.json(result.rows.map(r => {
+    const gpsFresh=Boolean(r.location_updated_at && (Date.now()-new Date(r.location_updated_at).getTime()) <= RIDER_GPS_FRESHNESS_SECONDS*1000);
+    const gpsUsable=gpsFresh && Number.isFinite(Number(r.latitude)) && Number.isFinite(Number(r.longitude)) && Number(r.accuracy_meters||Infinity)<=RIDER_GPS_MAX_ACCURACY_METERS;
+    return {...r,gpsFresh,gpsUsable,available:r.active&&r.online&&!r.busy&&(!RIDER_GPS_REQUIRED_FOR_ASSIGNMENT||gpsUsable)};
+  }));
+} catch { res.status(500).json({ error: 'Unable to load riders' }); } });
 app.post('/api/orders/:id/status', requireManagerOrder, async (req, res) => { try { const nextStatus = String(req.body.status || '').toUpperCase(); if (!['ACCEPTED','DELIVERED'].includes(nextStatus)) return res.status(400).json({ error: 'Invalid status transition' }); const orderResult = await pool.query(`select * from orders where id=$1 for update`, [req.params.id]); if (!orderResult.rowCount) return res.status(404).json({ error: 'Order not found' }); const order = orderResult.rows[0]; if (nextStatus === 'ACCEPTED' && !(order.status === 'NEW' && order.payment_status === 'PAID')) return res.status(409).json({ error: 'Only paid NEW orders can be accepted' }); if (nextStatus === 'DELIVERED') {
       const result = await completeOrderByConfirmation(req.params.id, 'restaurant', { requireDisconnectedRiderDashboard: true });
       if (result.error) return res.status(result.status).json({ error: result.error });
@@ -1400,14 +1451,30 @@ app.post('/api/orders/:id/status', requireManagerOrder, async (req, res) => { tr
     broadcastOrder(result.rows[0], { reason: 'restaurant.accepted' });
     res.json(result.rows[0]); } catch { res.status(500).json({ error: 'Unable to update order status' }); } });
 app.post('/api/orders/:id/cancel', requireCustomerOrder, async (req, res) => { const client = await pool.connect(); try { let order; try { await client.query('begin'); const result = await client.query(`select * from orders where id=$1 for update`, [req.params.id]); if (!result.rowCount) { await client.query('rollback'); return res.status(404).json({ error: 'Order not found' }); } order = result.rows[0]; if (order.status !== 'NEW') { await client.query('rollback'); return res.status(409).json({ error: 'This order can no longer be cancelled because the restaurant has accepted it.' }); } await client.query(`update orders set status='CANCELLED' where id=$1`, [order.id]); const updated = await client.query(`select * from orders where id=$1`, [order.id]); await client.query('commit'); order = updated.rows[0]; broadcastOrder(order, { reason: 'customer.cancelled' }); } catch (error) { try { await client.query('rollback'); } catch {} throw error; } let refund = null; if (order.payment_status === 'PAID') refund = await initiateRefundForOrder(order.id, 'Customer cancelled before restaurant acceptance', 'Automatic cancellation refund'); const latest = await pool.query(`select * from orders where id=$1`, [order.id]); res.json({ order: latest.rows[0], refund }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to cancel order' }); } finally { client.release(); } });
-app.post('/api/delivery/quote', quoteRateLimit, async (req,res)=>{
+const deliveryQuoteCache = new Map();
+const DELIVERY_QUOTE_CACHE_SECONDS = parsePositiveInt(process.env.DELIVERY_QUOTE_CACHE_SECONDS, 45, 5, 300);
+const DELIVERY_QUOTE_MAX_ADDRESS_LENGTH = 500;
+function quoteCacheKey(businessId,pickupAddress,deliveryAddress) {
+  return [businessId,pickupAddress,deliveryAddress].map(v=>String(v||'').trim().toLowerCase().replace(/\s+/g,' ')).join('|');
+}
+setInterval(()=>{
+  const now=Date.now();
+  for(const [key,value] of deliveryQuoteCache) if(now>=value.expiresAt) deliveryQuoteCache.delete(key);
+},60_000).unref?.();
+app.post('/api/delivery/quote', quoteRateLimit, quoteBusinessRateLimit, async (req,res)=>{
   try{
-    const {businessId,pickupAddress,deliveryAddress}=req.body;
-    if(!businessId||!pickupAddress||!deliveryAddress) return res.status(400).json({error:'businessId, pickupAddress and deliveryAddress are required'});
-    const features=await pool.query('select rider_module_enabled from business_features where business_id=$1',[businessId]);
+    const business=String(req.body.businessId||'').trim();
+    const pickup=String(req.body.pickupAddress||'').trim();
+    const delivery=String(req.body.deliveryAddress||'').trim();
+    if(!business||!pickup||!delivery) return res.status(400).json({error:'businessId, pickupAddress and deliveryAddress are required'});
+    if(pickup.length>DELIVERY_QUOTE_MAX_ADDRESS_LENGTH||delivery.length>DELIVERY_QUOTE_MAX_ADDRESS_LENGTH) return res.status(400).json({error:'Delivery addresses are too long'});
+    const features=await pool.query('select rider_module_enabled from business_features where business_id=$1',[business]);
     if(!features.rowCount||!features.rows[0].rider_module_enabled) return res.status(404).json({error:'Delivery module is not enabled for this business'});
-    const q=await calculateDeliveryQuote({businessId,pickupAddress,deliveryAddress});
-    const saved=await pool.query(`insert into delivery_quotes(id,business_id,pickup_address,delivery_address,distance_meters,duration_seconds,fuel_price_kes,base_fee_kes,distance_fee_kes,time_fee_kes,demand_multiplier,delivery_fee_kes) values(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *`,[businessId,pickupAddress,deliveryAddress,q.distanceMeters,q.durationSeconds,q.fuelPriceKes,q.baseFeeKes,q.distanceFeeKes,q.timeFeeKes,q.demandMultiplier,q.deliveryFeeKes]);
+    const key=quoteCacheKey(business,pickup,delivery);
+    const cached=deliveryQuoteCache.get(key);
+    const q=cached&&cached.expiresAt>Date.now()?cached.quote:await calculateDeliveryQuote({businessId:business,pickupAddress:pickup,deliveryAddress:delivery});
+    if(!cached||cached.expiresAt<=Date.now()) deliveryQuoteCache.set(key,{quote:q,expiresAt:Date.now()+DELIVERY_QUOTE_CACHE_SECONDS*1000});
+    const saved=await pool.query(`insert into delivery_quotes(id,business_id,pickup_address,delivery_address,distance_meters,duration_seconds,fuel_price_kes,base_fee_kes,distance_fee_kes,time_fee_kes,demand_multiplier,delivery_fee_kes) values(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning *`,[business,pickup,delivery,q.distanceMeters,q.durationSeconds,q.fuelPriceKes,q.baseFeeKes,q.distanceFeeKes,q.timeFeeKes,q.demandMultiplier,q.deliveryFeeKes]);
     res.json({quoteId:saved.rows[0].id,...q,deliveryFee:saved.rows[0].delivery_fee_kes,currency:'KES'});
   }catch(error){res.status(400).json({error:error.message||'Unable to calculate delivery fee'});}
 });
@@ -1764,8 +1831,12 @@ app.put('/api/riders/:id/profile', requireRiderModule, requireRiderAuth, async(r
 app.post('/api/riders/:id/presence', requireRiderModule, requireRiderAuth, async(req,res)=>{
   const online=Boolean(req.body.online);
   const lat=Number(req.body.latitude),lng=Number(req.body.longitude),accuracy=Number(req.body.accuracy);
-  const hasLocation=Number.isFinite(lat)&&lat>=-90&&lat<=90&&Number.isFinite(lng)&&lng>=-180&&lng<=180;
-  if(hasLocation && Number.isFinite(accuracy) && (accuracy<0||accuracy>5000)) return res.status(400).json({error:'Invalid GPS accuracy'});
+  const hasLocation=Number.isFinite(lat)&&Number.isFinite(lng);
+  const previous=hasLocation?await pool.query('select latitude,longitude,location_updated_at as updated_at from rider_presence where rider_id=$1',[req.rider.id]):{rowCount:0,rows:[]};
+  if(hasLocation){
+    const check=validateGpsSample({lat,lng,accuracy,previous:previous.rows[0]});
+    if(!check.ok)return res.status(check.suspicious?422:400).json({error:check.error,suspicious:Boolean(check.suspicious)});
+  }
   await pool.query(`
     insert into rider_presence(rider_id,online,latitude,longitude,accuracy_meters,location_updated_at)
     values($1,$2,$3,$4,$5,case when $2 and $3 is not null and $4 is not null then now() else null end)
@@ -1891,10 +1962,12 @@ async function createRiderTripAssignment(client,{businessId,orderId,riderId,ride
       exists(select 1 from rider_trips t join orders o on o.id=t.order_id where t.rider_id=r.id and t.completed_at is null) as busy
       from riders r left join rider_presence p on p.rider_id=r.id
       where r.id=$1 and r.business_id=$2 and r.active=true
-      for update of r`,[riderId,businessId]);
+        and (not $3::boolean or (coalesce(p.online,false)=true and p.location_updated_at >= now() - make_interval(secs => $4) and p.latitude between -90 and 90 and p.longitude between -180 and 180 and coalesce(p.accuracy_meters,999999) <= $5))
+      for update of r`,[riderId,businessId,RIDER_GPS_REQUIRED_FOR_ASSIGNMENT,RIDER_GPS_FRESHNESS_SECONDS,RIDER_GPS_MAX_ACCURACY_METERS]);
   if(!riderResult.rowCount) throw Object.assign(new Error('Rider not found'),{status:404});
   const rider=riderResult.rows[0];
   if(!rider.online||rider.busy) throw Object.assign(new Error('Rider must be online and available'),{status:409});
+  if(RIDER_GPS_REQUIRED_FOR_ASSIGNMENT && (!rider.latitude || !rider.longitude || !rider.location_updated_at)) throw Object.assign(new Error('Rider must have a recent GPS location before assignment'),{status:409});
   const existingTrip=await client.query(`select 1 from rider_trips where order_id=$1 and completed_at is null limit 1`,[orderId]);
   if(existingTrip.rowCount) throw Object.assign(new Error('A rider is already assigned to this order and is awaiting acceptance'),{status:409});
   const trip=await client.query('insert into rider_trips(id,rider_id,order_id) values(gen_random_uuid(),$1,$2) returning id',[riderId,orderId]);
@@ -2509,7 +2582,7 @@ app.post('/api/platform/incidents/:id/resolve',requirePlatformAdmin,requirePlatf
   }catch(e){res.status(500).json({error:e.message||'Unable to resolve incident'});}
 });
 
-app.post('/api/platform/telemetry',async(req,res)=>{
+app.post('/api/platform/telemetry',telemetryRateLimit,async(req,res)=>{
   try{
     const message=String(req.body.message||'').trim().slice(0,1000);
     if(!message)return res.status(400).json({error:'Error message is required'});
@@ -2517,7 +2590,12 @@ app.post('/api/platform/telemetry',async(req,res)=>{
     const source=String(req.body.source||'WEB').trim().slice(0,40)||'WEB';
     const dashboard=String(req.body.dashboard||'UNKNOWN').trim().slice(0,80)||'UNKNOWN';
     const severity=['INFO','WARN','ERROR','CRITICAL'].includes(String(req.body.severity||'ERROR').toUpperCase())?String(req.body.severity).toUpperCase():'ERROR';
-    const url=String(req.body.url||'').slice(0,500);
+    const rawUrl=String(req.body.url||'').trim().slice(0,500);
+    let url='';
+    if(rawUrl){
+      try{ const parsed=new URL(rawUrl); if(!['http:','https:'].includes(parsed.protocol)) return res.status(400).json({error:'Invalid telemetry URL'}); url=parsed.toString(); }
+      catch{return res.status(400).json({error:'Invalid telemetry URL'});}
+    }
     const stack=String(req.body.stack||'').slice(0,5000);
     const raw=JSON.stringify({businessId,dashboard,source,message,url});
     const fingerprint=crypto.createHash('sha256').update(raw).digest('hex');
@@ -2886,10 +2964,16 @@ app.get('/api/public/integrations/:token.js',(req,res)=>{
   })();
 });
 
+async function cleanupSecurityArtifacts(){
+  try{ await pool.query("update delivery_quotes set status='EXPIRED' where status='QUOTED' and created_at < now()-interval '30 minutes'"); }
+  catch(error){ console.error('Security cleanup warning:',error.message); }
+}
 async function startServer(){
   await ensureIntegrationSchema();
   await ensurePhase1SecuritySchema();
   await ensurePhase3SecuritySchema();
+  await cleanupSecurityArtifacts();
+  setInterval(cleanupSecurityArtifacts,30*60_000).unref?.();
   await ensureSmsSchema();
   await ensurePlatformObservabilitySchema();
   app.listen(port, () => console.log(`Ordering API listening on ${port}`));

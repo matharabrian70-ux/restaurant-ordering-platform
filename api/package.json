@@ -10,7 +10,10 @@
     "start": "node server.js",
     "migrate": "node migrate.js",
     "dev": "node --watch server.js",
-    "test": "node --test security-regression.test.js"
+    "test": "node --test security-regression.test.js",
+    "backup": "node backup.js",
+    "restore": "node restore.js",
+    "outbox-worker": "node outbox-worker.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

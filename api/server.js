@@ -1842,7 +1842,24 @@ app.post('/api/orders/:id/status', requireManagerOrder, async (req, res) => { tr
     const result = await pool.query(`update orders set status='ACCEPTED',accepted_at=coalesce(accepted_at,now()) where id=$1 returning *`, [req.params.id]);
     broadcastOrder(result.rows[0], { reason: 'restaurant.accepted' });
     res.json(result.rows[0]); } catch { res.status(500).json({ error: 'Unable to update order status' }); } });
-app.post('/api/orders/:id/cancel', requireCustomerOrder, async (req, res) => { const client = await pool.connect(); try { let order; try { await client.query('begin'); const result = await client.query(`select * from orders where id=$1 for update`, [req.params.id]); if (!result.rowCount) { await client.query('rollback'); return res.status(404).json({ error: 'Order not found' }); } order = result.rows[0]; if (order.status !== 'NEW') { await client.query('rollback'); return res.status(409).json({ error: 'This order can no longer be cancelled because the restaurant has accepted it.' }); } await client.query(`update orders set status='CANCELLED' where id=$1`, [order.id]); const updated = await client.query(`select * from orders where id=$1`, [order.id]); await client.query('commit'); order = updated.rows[0]; broadcastOrder(order, { reason: 'customer.cancelled' }); } catch (error) { try { await client.query('rollback'); } catch {} throw error; } let refund = null; if (order.payment_status === 'PAID') refund = await initiateRefundForOrder(order.id, 'Customer cancelled before restaurant acceptance', 'Automatic cancellation refund'); const latest = await pool.query(`select * from orders where id=$1`, [order.id]); res.json({ order: latest.rows[0], refund }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to cancel order' }); } finally { client.release(); } });
+app.post('/api/orders/:id/cancel', requireCustomerOrder, async (req, res) => { const client = await pool.connect(); try { let order; try { await client.query('begin'); const result = await client.query(`select * from orders where id=$1 for update`, [req.params.id]); if (!result.rowCount) { await client.query('rollback'); return res.status(404).json({ error: 'Order not found' }); } order = result.rows[0]; if (order.status !== 'NEW') { await client.query('rollback'); return res.status(409).json({ error: 'This order can no longer be cancelled because the restaurant has accepted it.' }); } await client.query(`update orders set status='CANCELLED' where id=$1`, [order.id]);
+      if (order.coupon_id && order.payment_status !== 'PAID') {
+        const released = await client.query(
+          `delete from customer_coupon_redemptions
+            where order_id=$1 and coupon_id=$2
+            returning coupon_id`,
+          [order.id, order.coupon_id]
+        );
+        if (released.rowCount) {
+          await client.query(
+            `update customer_coupons
+                set redeemed_count=greatest(0,redeemed_count-1)
+              where id=$1`,
+            [order.coupon_id]
+          );
+        }
+      }
+      const updated = await client.query(`select * from orders where id=$1`, [order.id]); await client.query('commit'); order = updated.rows[0]; broadcastOrder(order, { reason: 'customer.cancelled' }); } catch (error) { try { await client.query('rollback'); } catch {} throw error; } let refund = null; if (order.payment_status === 'PAID') refund = await initiateRefundForOrder(order.id, 'Customer cancelled before restaurant acceptance', 'Automatic cancellation refund'); const latest = await pool.query(`select * from orders where id=$1`, [order.id]); res.json({ order: latest.rows[0], refund }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to cancel order' }); } finally { client.release(); } });
 const deliveryQuoteCache = new Map();
 const DELIVERY_QUOTE_CACHE_SECONDS = parsePositiveInt(process.env.DELIVERY_QUOTE_CACHE_SECONDS, 45, 5, 300);
 const DELIVERY_QUOTE_MAX_ADDRESS_LENGTH = 500;

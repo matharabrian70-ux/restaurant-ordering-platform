@@ -6,6 +6,7 @@ import pg from 'pg';
 import QRCode from 'qrcode';
 import { registerDeliveryEngine } from './delivery-engine.js';
 import { registerMenuEngine } from './menu-engine.js';
+import { registerPosEngine } from './pos-engine.js';
 import { registerBrandingEngine } from './branding-engine.js';
 import { registerReceiptEngine, ensureReceipt } from './receipt-engine.js';
 
@@ -670,6 +671,12 @@ async function ensurePhaseASchema(){
     alter table refunds drop constraint if exists refunds_amount_nonnegative;
     alter table refunds add constraint refunds_amount_nonnegative check (amount > 0) not valid;
   `);
+}
+
+async function ensurePhaseBSchema(){
+  const fs = await import('node:fs/promises');
+  const sql = await fs.readFile(new URL('./migrations/002_phase_b_restaurant_core.sql', import.meta.url), 'utf8');
+  await pool.query(sql);
 }
 
 async function ensurePhase1SecuritySchema() {
@@ -3227,6 +3234,7 @@ registerBrandingEngine(app,pool,{requireControl,requireManager,broadcastRealtime
 registerReceiptEngine(app,pool,{requireManager});
 registerDeliveryEngine(app,pool,requireManager);
 registerMenuEngine(app,pool,requireManager,broadcastRealtime);
+registerPosEngine(app,pool,{requireManager,broadcastRealtime});
 
 
 function integrationTypeLabel(type){
@@ -3349,6 +3357,7 @@ async function cleanupSecurityArtifacts(){
 }
 async function startServer(){
   await ensurePhaseASchema();
+  await ensurePhaseBSchema();
   await ensureIntegrationSchema();
   await ensurePhase1SecuritySchema();
   await ensurePhase3SecuritySchema();

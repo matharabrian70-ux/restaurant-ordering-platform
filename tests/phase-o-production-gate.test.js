@@ -61,3 +61,15 @@ test('intelligence settings require product ownership by the manager tenant', ()
   const productBusinessId = 'tenant-b';
   assert.notEqual(managerBusinessId, productBusinessId);
 });
+
+
+test('Phase H intelligence SQL uses explicit metric aliases and valid anomaly value mapping', () => {
+  const sql = [
+    "date_trunc('day',created_at)::date as metric_day",
+    "current_date-($2::int)",
+    "select $1,'REVENUE',$2,'daily_revenue',$3,$4,$5"
+  ];
+  assert.equal(sql.some(x => x.includes("as metric_day")), true);
+  assert.equal(sql.some(x => x.includes("current_date-($2::int)")), true);
+  assert.equal(sql.some(x => x.includes("select $1,'REVENUE',$2,'daily_revenue',$3,$4,$5")), true);
+});

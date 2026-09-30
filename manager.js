@@ -338,13 +338,104 @@ async function reassignOrder(id,b){
   try{await api('/api/orders/'+id+'/reassign-rider',{method:'POST',body:JSON.stringify({riderId:selected.id})});await load();}
   catch(e){b.disabled=false;b.textContent='REASSIGN';alert(e.message);}
 }
-function menu(){const m=D.menu;return '<div class="manager-grid two"><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">MENU STRUCTURE</span><h2>Categories</h2></div></div><form class="inline-form" onsubmit="category(event)"><input id="cat" required placeholder="Breakfast"><button class="btn">ADD CATEGORY</button></form><div class="category-list">'+m.categories.map(c=>'<div><b>'+esc(c.name)+'</b><span>'+esc(c.active?'ACTIVE':'HIDDEN')+'</span></div>').join('')+'</div></section><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">ADD ITEM</span><h2>New menu item</h2><p>Upload a photo or paste an image URL.</p></div></div><form onsubmit="addItem(event)"><div class="form-grid"><label>Name<input id="mn" required></label><label>Price (KES)<input id="mp" type="number" min="0" required></label></div><label>Description<textarea id="md"></textarea></label><div class="form-grid"><label>Category<select id="mc">'+m.categories.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('')+'</select></label><label>Photo<input id="mf" type="file" accept="image/*" data-change="pickPhoto(event)"></label></div><input id="mu" placeholder="Or paste an image URL"><div id="preview" class="photo-preview"></div><label class="check"><input id="mfeat" type="checkbox"> Featured item</label><button class="btn wide">PUBLISH MENU ITEM</button></form></section></div><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">LIVE MENU</span><h2>'+m.products.length+' items</h2></div></div><div class="menu-admin-grid">'+(m.products.map(itemCard).join('')||'<div class="empty-state">No menu items yet.</div>')+'</div></section>'}
-function itemCard(p){return '<article class="menu-admin-card"><div class="menu-admin-image">'+(p.image_url?'<img src="'+esc(p.image_url)+'" alt="">':'<span>NO PHOTO</span>')+'</div><div class="menu-admin-body"><span class="eyebrow">'+esc(p.category_name||p.category||'UNCATEGORIZED')+'</span><h3>'+esc(p.name)+'</h3><p>'+esc(p.description||'No description')+'</p><div class="menu-admin-bottom"><strong>'+money(p.price)+'</strong><span class="status-chip '+(p.active?'active':'inactive')+'">'+(p.active?'AVAILABLE':'HIDDEN')+'</span>'+(p.featured?'<span class="feature-chip">FEATURED</span>':'')+'</div><div class="button-row"><button class="btn btn-small" data-action="toggleItem(\''+p.id+'\','+(!p.active)+')">'+(p.active?'HIDE':'PUBLISH')+'</button><button class="btn btn-small secondary" data-action="feature(\''+p.id+'\','+(!p.featured)+')">'+(p.featured?'REMOVE FEATURED':'MAKE FEATURED')+'</button></div></div></article>'}
+let newMenuVariables=[];
+let variableDraftProductId=null;
+
+function cleanMenuVariableName(value){return String(value??'').trim().slice(0,80)}
+function cleanMenuVariableChoice(value){return String(value??'').trim().slice(0,120)}
+function makeVariableKey(value){return String(value??'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,60)||('choice-'+Date.now())}
+function cloneMenuVariables(options){return Array.isArray(options)?JSON.parse(JSON.stringify(options)):[]}
+function renderVariableGroups(targetId='new-variable-groups',draft=newMenuVariables){
+  const el=document.getElementById(targetId);if(!el)return;
+  const editMode=targetId==='edit-variable-groups';
+  const removeGroupFn=editMode?'removeEditVariableGroup':'removeVariableGroup';
+  const addChoiceFn=editMode?'addEditVariableChoice':'addVariableChoice';
+  const removeChoiceFn=editMode?'removeEditVariableChoice':'removeVariableChoice';
+  el.innerHTML=draft.length?draft.map((g,gi)=>`
+    <div class="menu-variable-group" data-variable-group="${gi}">
+      <div class="menu-variable-group-head">
+        <input class="variable-draft-input" data-group-index="${gi}" data-variable-field="name" value="${esc(g.name||'')}" placeholder="Variable name e.g. Size" maxlength="80">
+        <button type="button" class="btn btn-small secondary" data-action="${removeGroupFn}(${gi})">REMOVE</button>
+      </div>
+      <div class="menu-variable-choices">
+        ${(g.choices||[]).map((ch,ci)=>`
+          <div class="menu-variable-choice">
+            <input class="variable-draft-input" data-group-index="${gi}" data-choice-index="${ci}" data-variable-field="key" value="${esc(ch?.[0]||'')}" placeholder="Key" maxlength="80">
+            <input class="variable-draft-input" data-group-index="${gi}" data-choice-index="${ci}" data-variable-field="label" value="${esc(ch?.[1]||'')}" placeholder="Customer label" maxlength="120">
+            <input class="variable-draft-input" data-group-index="${gi}" data-choice-index="${ci}" data-variable-field="price" type="number" min="0" max="100000" step=".01" value="${Number(ch?.[2]||0)}" placeholder="+ KES">
+            <button type="button" class="btn btn-small secondary" data-action="${removeChoiceFn}(${gi},${ci})" aria-label="Remove choice">×</button>
+          </div>`).join('')}
+      </div>
+      <button type="button" class="btn btn-small" data-action="${addChoiceFn}(${gi})">+ ADD CHOICE</button>
+    </div>`).join(''):'<p class="muted menu-variable-empty">No variables yet. Add one when customers need to choose a size, side, spice level, portion, add-on or other variation.</p>';
+}
+function addVariableGroup(){newMenuVariables=readVariableDraftInputs(newMenuVariables,'new-variable-groups');newMenuVariables.push({name:'',choices:[['','',0]]});renderVariableGroups();}
+function removeVariableGroup(index){newMenuVariables=readVariableDraftInputs(newMenuVariables,'new-variable-groups');newMenuVariables.splice(index,1);renderVariableGroups();}
+function addVariableChoice(index){newMenuVariables=readVariableDraftInputs(newMenuVariables,'new-variable-groups');newMenuVariables[index]=newMenuVariables[index]||{name:'',choices:[]};newMenuVariables[index].choices.push(['','',0]);renderVariableGroups();}
+function removeVariableChoice(gi,ci){newMenuVariables=readVariableDraftInputs(newMenuVariables,'new-variable-groups');if(newMenuVariables[gi]){newMenuVariables[gi].choices.splice(ci,1);if(!newMenuVariables[gi].choices.length)newMenuVariables[gi].choices.push(['','',0]);}renderVariableGroups();}
+function normalizeManagerVariables(draft){
+  const groups=cloneMenuVariables(draft);
+  const seen=new Set();
+  return groups.map((g)=>{
+    const name=cleanMenuVariableName(g.name);
+    if(!name)throw new Error('Every variable needs a name.');
+    const groupKey=name.toLowerCase();if(seen.has(groupKey))throw new Error('Variable names must be unique.');seen.add(groupKey);
+    const choices=(g.choices||[]).map(ch=>{
+      const label=cleanMenuVariableChoice(ch?.[1]);if(!label)throw new Error('Every variable choice needs a customer label.');
+      const key=String(ch?.[0]||makeVariableKey(label)).trim().slice(0,80);
+      const price=Number(ch?.[2]||0);if(!Number.isFinite(price)||price<0)throw new Error('Variable price adjustments cannot be negative.');
+      return [key,label,price];
+    });
+    if(!choices.length)throw new Error(`"${name}" needs at least one choice.`);
+    const choiceKeys=new Set();choices.forEach(ch=>{const k=ch[0].toLowerCase();if(!k||choiceKeys.has(k))throw new Error(`Choice keys in "${name}" must be unique.`);choiceKeys.add(k);});
+    return {name,choices};
+  });
+}
+function variableSummary(p){
+  const options=Array.isArray(p.options)?p.options:[];
+  if(!options.length)return '<span class="menu-variable-count muted">No variables</span>';
+  const total=options.reduce((n,g)=>n+(Array.isArray(g.choices)?g.choices.length:0),0);
+  return '<span class="menu-variable-count">'+options.length+' variable'+(options.length===1?'':'s')+' · '+total+' choices</span>';
+}
+function menu(){
+  const m=D.menu;
+  newMenuVariables=[];
+  return '<div class="manager-grid two"><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">MENU STRUCTURE</span><h2>Categories</h2></div></div><form class="inline-form" onsubmit="category(event)"><input id="cat" required placeholder="Breakfast"><button class="btn">ADD CATEGORY</button></form><div class="category-list">'+m.categories.map(c=>'<div><b>'+esc(c.name)+'</b><span>'+esc(c.active?'ACTIVE':'HIDDEN')+'</span></div>').join('')+'</div></section><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">ADD ITEM</span><h2>New menu item</h2><p>Upload a photo or paste an image URL.</p></div></div><form onsubmit="addItem(event)"><div class="form-grid"><label>Name<input id="mn" required></label><label>Price (KES)<input id="mp" type="number" min="0" required></label></div><label>Description<textarea id="md"></textarea></label><div class="form-grid"><label>Category<select id="mc">'+m.categories.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('')+'</select></label><label>Photo<input id="mf" type="file" accept="image/*" data-change="pickPhoto(event)"></label></div><input id="mu" placeholder="Or paste an image URL"><div id="preview" class="photo-preview"></div><label class="check"><input id="mfeat" type="checkbox"> Featured item</label><div class="menu-variable-builder"><div class="menu-variable-builder-head"><div><span class="eyebrow">FOOD VARIABLES</span><h3>Customer choices</h3><p class="muted">Add sizes, portions, sides, spice levels, add-ons or any other choice. Set a price adjustment for each choice.</p></div><button type="button" class="btn btn-small" data-action="addVariableGroup()">+ ADD VARIABLE</button></div><div id="new-variable-groups"></div></div><button class="btn wide">PUBLISH MENU ITEM</button></form></section></div><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">LIVE MENU</span><h2>'+m.products.length+' items</h2></div></div><div class="menu-admin-grid">'+(m.products.map(itemCard).join('')||'<div class="empty-state">No menu items yet.</div>')+'</div></section>';
+}
+function itemCard(p){
+  return '<article class="menu-admin-card"><div class="menu-admin-image">'+(p.image_url?'<img src="'+esc(p.image_url)+'" alt="">':'<span>NO PHOTO</span>')+'</div><div class="menu-admin-body"><span class="eyebrow">'+esc(p.category_name||p.category||'UNCATEGORIZED')+'</span><h3>'+esc(p.name)+'</h3><p>'+esc(p.description||'No description')+'</p><div class="menu-admin-bottom"><strong>'+money(p.price)+'</strong><span class="status-chip '+(p.active?'active':'inactive')+'">'+(p.active?'AVAILABLE':'HIDDEN')+'</span>'+(p.featured?'<span class="feature-chip">FEATURED</span>':'')+'</div><div class="menu-variable-summary">'+variableSummary(p)+'</div><div class="button-row"><button class="btn btn-small" data-action="toggleItem(\''+p.id+'\','+(!p.active)+')">'+(p.active?'HIDE':'PUBLISH')+'</button><button class="btn btn-small secondary" data-action="feature(\''+p.id+'\','+(!p.featured)+')">'+(p.featured?'REMOVE FEATURED':'MAKE FEATURED')+'</button><button class="btn btn-small secondary" data-action="openVariableEditor(\''+p.id+'\')">EDIT VARIABLES</button></div></div></article>';
+}
 async function category(e){e.preventDefault();try{await api('/api/menu/categories',{method:'POST',body:JSON.stringify({businessId:B,name:document.getElementById('cat').value.trim()})});T='menu';await load()}catch(x){alert(x.message)}}
 function pickPhoto(e){const f=e.target.files?.[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{const im=new Image();im.onload=()=>{const s=Math.min(1,1000/Math.max(im.width,im.height)),c=document.createElement('canvas');c.width=im.width*s;c.height=im.height*s;c.getContext('2d').drawImage(im,0,0,c.width,c.height);photoData=c.toDataURL('image/jpeg',.78);document.getElementById('preview').innerHTML='<img src="'+photoData+'" alt="">'};im.src=rd.result};rd.readAsDataURL(f)}
-async function addItem(e){e.preventDefault();try{await api('/api/menu/products',{method:'POST',body:JSON.stringify({businessId:B,name:document.getElementById('mn').value.trim(),price:Number(document.getElementById('mp').value),description:document.getElementById('md').value.trim(),categoryId:document.getElementById('mc').value,imageUrl:photoData||document.getElementById('mu').value.trim(),featured:document.getElementById('mfeat').checked,active:true})});photoData='';T='menu';await load()}catch(x){alert(x.message)}}
-async function toggleItem(id,a){try{await api('/api/menu/products/'+id,{method:'PATCH',body:JSON.stringify({businessId:B,active:a})});T='menu';await load()}catch(e){alert(e.message)}}
-async function feature(id,a){try{await api('/api/menu/products/'+id,{method:'PATCH',body:JSON.stringify({businessId:B,featured:a})});T='menu';await load()}catch(e){alert(e.message)}}
+async function addItem(e){
+  e.preventDefault();
+  try{
+    const options=normalizeManagerVariables(readVariableDraftInputs(newMenuVariables,'new-variable-groups'));
+    await api('/api/menu/products',{method:'POST',body:JSON.stringify({businessId:B,name:document.getElementById('mn').value.trim(),price:Number(document.getElementById('mp').value),description:document.getElementById('md').value.trim(),categoryId:document.getElementById('mc').value,imageUrl:photoData||document.getElementById('mu').value.trim(),featured:document.getElementById('mfeat').checked,active:true,options})});
+    photoData='';newMenuVariables=[];T='menu';await load();
+  }catch(x){alert(x.message)}
+}
+function openVariableEditor(id){
+  const p=D.menu.products.find(x=>x.id===id);if(!p)return;
+  variableDraftProductId=id;window.variableEditDraft=cloneMenuVariables(p.options);
+  const host=document.createElement('div');host.id='menu-variable-editor-modal';host.className='modal-backdrop';
+  host.innerHTML='<section class="refund-modal variable-editor-modal" role="dialog" aria-modal="true"><button type="button" class="modal-close" data-action="closeVariableEditor()" aria-label="Close">×</button><span class="eyebrow">MENU ITEM VARIABLES</span><h2>'+esc(p.name)+'</h2><p class="muted">Customers will see these choices when they add this item. Price adjustments are added to the base item price.</p><div id="edit-variable-groups"></div><div class="button-row variable-editor-actions"><button type="button" class="btn btn-small" data-action="addEditVariableGroup()">+ ADD VARIABLE</button><button type="button" class="btn wide" data-action="saveVariableEditor()">SAVE VARIABLES</button></div></section>';
+  document.body.appendChild(host);renderVariableGroups('edit-variable-groups',window.variableEditDraft);
+}
+function syncEditVariableDraft(){window.variableEditDraft=readVariableDraftInputs(window.variableEditDraft||[],'edit-variable-groups');return window.variableEditDraft}
+function addEditVariableGroup(){const draft=syncEditVariableDraft();draft.push({name:'',choices:[['','',0]]});renderVariableGroups('edit-variable-groups',draft);}
+function removeEditVariableGroup(index){const draft=syncEditVariableDraft();draft.splice(index,1);renderVariableGroups('edit-variable-groups',draft);}
+function addEditVariableChoice(index){const draft=syncEditVariableDraft();draft[index]?.choices.push(['','',0]);renderVariableGroups('edit-variable-groups',draft);}
+function removeEditVariableChoice(gi,ci){const draft=syncEditVariableDraft();if(draft[gi]){draft[gi].choices.splice(ci,1);if(!draft[gi].choices.length)draft[gi].choices.push(['','',0]);}renderVariableGroups('edit-variable-groups',draft);}
+async function saveVariableEditor(){
+  try{
+    const draft=readVariableDraftInputs(window.variableEditDraft||[],'edit-variable-groups');
+    const options=normalizeManagerVariables(draft);
+    await api('/api/menu/products/'+encodeURIComponent(variableDraftProductId),{method:'PATCH',body:JSON.stringify({businessId:B,options})});
+    closeVariableEditor();await load();
+  }catch(e){alert(e.message)}
+}
+function closeVariableEditor(){document.getElementById('menu-variable-editor-modal')?.remove();variableDraftProductId=null;window.variableEditDraft=[]}
 function promos(){const p=D.menu.promotions;return '<div class="manager-grid two"><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">PROMOTION BUILDER</span><h2>Create offer</h2><p>Percentage, fixed amount, special price, Buy X Get Y or free item.</p></div></div><form onsubmit="promo(event)"><label>Offer name<input id="pn" required placeholder="Tuesday Chicken Deal"></label><div class="form-grid"><label>Type<select id="pt"><option value="PERCENT">Percentage discount</option><option value="FIXED">Fixed amount discount</option><option value="SPECIAL_PRICE">Special price</option><option value="BUY_X_GET_Y">Buy X Get Y</option><option value="FREE_ITEM">Free item</option></select></label><label>Value<input id="pv" type="number" min="0" step=".01"></label></div><div class="form-grid"><label>Starts<input id="ps" type="datetime-local"></label><label>Ends<input id="pe" type="datetime-local"></label></div><label>Banner text<input id="pb" placeholder="TODAY&#39;S OFFER • Save 15%"></label><label>Minimum order (KES)<input id="pmin" type="number" min="0" value="0"></label><button class="btn wide">ACTIVATE PROMOTION</button></form></section><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">PROMOTIONS</span><h2>'+p.filter(x=>x.active).length+' active</h2></div></div>'+(p.map(promoCard).join('')||'<div class="empty-state">No promotions yet.</div>')+'</section></div>'}
 function promoCard(p){return '<article class="promotion-card '+(p.active?'':'off')+'"><div><span class="eyebrow">'+esc(p.type.replaceAll('_',' '))+'</span><h3>'+esc(p.name)+'</h3><p>'+(p.type==='PERCENT'?esc(p.value)+'% off':p.type==='FIXED'?money(p.value)+' off':p.type==='SPECIAL_PRICE'?'Special price '+money(p.value):'Value '+esc(p.value))+'</p></div><button class="btn btn-small '+(p.active?'':'done')+'" data-action="togglePromo(\''+p.id+'\','+(!p.active)+')">'+(p.active?'PAUSE':'ACTIVATE')+'</button></article>'}
 async function promo(e){e.preventDefault();const g=id=>document.getElementById(id).value;try{await api('/api/menu/promotions',{method:'POST',body:JSON.stringify({businessId:B,name:g('pn'),type:g('pt'),value:Number(g('pv')),minOrder:Number(g('pmin')),startsAt:g('ps')?new Date(g('ps')).toISOString():null,endsAt:g('pe')?new Date(g('pe')).toISOString():null,bannerText:g('pb'),active:true})});T='promotions';await load()}catch(x){alert(x.message)}}

@@ -48,7 +48,7 @@ function renderSignatureMenu(products){
         </div>
       </div>
       <div class="signature-menu-actions">
-        <button type="button" class="signature-add-btn" data-menu-add="${id}"><span class="signature-cart-icon">🛒</span> ADD TO CART</button>
+        <button type="button" class="signature-add-btn" data-menu-add="${id}"><span class="signature-cart-icon">🛒</span> ${Array.isArray(p.options)&&p.options.length?'CHOOSE OPTIONS':'ADD TO CART'}</button>
       </div>
     </article>`;
   }).join('');
@@ -57,6 +57,10 @@ function renderMenu(){renderSignatureMenu(PRODUCTS)}
 function addMenuProduct(id){
   const p=MENU_PRODUCTS.get(String(id));
   if(!p)return;
+  if(Array.isArray(p.options)&&p.options.length){
+    location.href='product.html?id='+encodeURIComponent(p.id);
+    return;
+  }
   addItem({
     id:p.id,
     name:p.name,
@@ -71,7 +75,33 @@ document.addEventListener('click',e=>{
   const b=e.target.closest('[data-menu-add]');
   if(b){e.preventDefault();addMenuProduct(b.dataset.menuAdd)}
 });
-function renderProduct(){const el=document.getElementById('product-view');if(!el)return;const id=new URLSearchParams(location.search).get('id')||'burger';const p=product(id);if(!p){el.innerHTML='<div class="empty">Product not found.</div>';return}const e=escapeMenuHtml;el.innerHTML=`<div class="product-layout"><img src="${e(p.image)}" alt="${e(p.name)}"><div class="product-info"><p class="eyebrow">${e(p.category)}</p><h1>${e(p.name)}</h1><p class="desc">${e(p.desc)}</p><h2>${money(p.price)}</h2><form id="product-form">${p.options.map((o,i)=>`<div class="option-group"><h4>${e(o.name)}</h4>${o.choices.map((c,j)=>`<label><input type="radio" name="option${i}" value="${e(c[0])}" data-price="${Number(c[2])||0}" ${j===0?'checked':''}> ${e(c[1])} ${c[2]?'— '+money(c[2]):''}</label>`).join('')}</div>`).join('')}<div class="qty"><label for="qty">Quantity</label><input id="qty" type="number" min="1" value="1"></div><button class="btn wide" type="submit">Add to cart</button></form></div></div>`;document.getElementById('product-form').onsubmit=e=>{e.preventDefault();const opts={};let extra=0;p.options.forEach((o,i)=>{const x=document.querySelector(`input[name=option${i}]:checked`);if(x){opts[o.name]=x.value;extra+=Number(x.dataset.price)}});addItem({id:p.id,name:p.name,base:p.price,unit:p.price+extra,qty:Math.max(1,Number(document.getElementById('qty').value)||1),options:opts,image:p.image})}}
+function renderProductData(p){
+  const el=document.getElementById('product-view');if(!el)return;
+  if(!p){el.innerHTML='<div class="empty">Product not found.</div>';return}
+  const e=escapeMenuHtml;
+  const options=Array.isArray(p.options)?p.options:[];
+  el.innerHTML=`<div class="product-layout"><img src="${e(p.image||'')}" alt="${e(p.name)}"><div class="product-info"><p class="eyebrow">${e(p.category||'Menu')}</p><h1>${e(p.name)}</h1><p class="desc">${e(p.desc||'')}</p><h2>${money(p.price)}</h2><form id="product-form">${options.map((o,i)=>`<div class="option-group"><h4>${e(o.name)}</h4>${(Array.isArray(o.choices)?o.choices:[]).map((ch,j)=>`<label><input type="radio" name="option${i}" value="${e(ch[0])}" data-price="${Number(ch[2])||0}" ${j===0?'checked':''}> ${e(ch[1])} ${Number(ch[2])? '— '+money(ch[2]):''}</label>`).join('')}</div>`).join('')}<div class="qty"><label for="qty">Quantity</label><input id="qty" type="number" min="1" value="1"></div><button class="btn wide" type="submit">Add to cart</button></form></div></div>`;
+  document.getElementById('product-form').onsubmit=event=>{
+    event.preventDefault();
+    const opts={};let extra=0;
+    options.forEach((o,i)=>{const x=document.querySelector(`input[name="option${i}"]:checked`);if(x){opts[o.name]=x.value;extra+=Number(x.dataset.price||0)}});
+    addItem({id:p.id,name:p.name,base:Number(p.price||0),unit:Number(p.price||0)+extra,qty:Math.max(1,Number(document.getElementById('qty').value)||1),options:opts,image:p.image||''});
+  };
+}
+async function renderProduct(){
+  const el=document.getElementById('product-view');if(!el)return;
+  const id=new URLSearchParams(location.search).get('id')||'burger';
+  const local=product(id);
+  if(local){renderProductData(local);return}
+  try{
+    const businessId=window.TENANT_BUSINESS_ID || (typeof BUSINESS_ID!=='undefined'?BUSINESS_ID:'11111111-1111-4111-8111-111111111111');
+    const response=await fetch('https://restaurant-ordering-api-ow3p.onrender.com/api/menu/public?businessId='+encodeURIComponent(businessId));
+    if(!response.ok)throw new Error('Menu item could not be loaded');
+    const data=await response.json();
+    const remote=(data.products||[]).find(p=>String(p.id)===String(id));
+    renderProductData(remote?{id:remote.id,name:remote.name,category:remote.category_name||remote.category||'Menu',price:Number(remote.price||0),image:remote.image_url||'',desc:remote.description||'',options:Array.isArray(remote.options)?remote.options:[]}:null);
+  }catch{el.innerHTML='<div class="empty"><h2>Menu item unavailable.</h2><p>Please return to the menu and try again.</p><a class="btn" href="menu.html">Back to menu</a></div>'}
+}
 function renderCart(){const el=document.getElementById('cart-view');if(!el)return;const c=getCart();if(!c.length){el.innerHTML='<div class="empty"><h2>Your cart is empty.</h2><p>Add products from the menu or directly from the homepage.</p><a class="btn" href="menu.html">Browse menu</a></div>';return}const total=c.reduce((s,i)=>s+i.unit*i.qty,0);el.innerHTML=`<div class="cart-layout"><section><p class="eyebrow">YOUR ORDER</p><h1>Cart</h1>${c.map((i,n)=>`<article class="cart-item"><img src="${i.image}" alt=""><div class="cart-item-main"><h3>${i.name}</h3><p>${Object.entries(i.options||{}).map(x=>x[0]+': '+x[1]).join(' • ')||'Standard item'}</p><strong>${money(i.unit*i.qty)}</strong><div class="cart-controls"><button data-action="changeQty(${n},-1)">−</button><span>${i.qty}</span><button data-action="changeQty(${n},1)">+</button><button class="remove" data-action="removeItem(${n})">Remove</button></div></div></article>`).join('')}</section><aside class="panel cart-summary"><h2>Summary</h2><div class="summary-row"><span>Items</span><strong>${c.reduce((s,i)=>s+i.qty,0)}</strong></div><div class="summary-row total"><span>Total</span><strong>${money(total)}</strong></div><a class="btn wide" href="checkout.html">Continue to checkout</a><a class="text-link" href="menu.html">← Add more products</a></aside></div>`}
 function renderCheckout(){const el=document.getElementById('checkout-view');if(!el)return;const c=getCart();if(!c.length){el.innerHTML='<div class="empty"><h2>Your cart is empty.</h2><a class="btn" href="menu.html">Browse menu</a></div>';return}const subtotal=c.reduce((s,i)=>s+i.unit*i.qty,0);el.innerHTML=`<div class="checkout-layout"><section><p class="eyebrow">CHECKOUT</p><h1>Complete your order.</h1><div class="panel"><h2>Your items</h2>${c.map(i=>`<div class="summary-row"><span>${i.qty} × ${i.name}<small style="display:block">${Object.entries(i.options||{}).map(x=>x[0]+': '+x[1]).join(' • ')}</small></span><strong>${money(i.unit*i.qty)}</strong></div>`).join('')}<div class="summary-row total"><span>Total</span><span>${money(subtotal)}</span></div></div></section><section class="panel"><h2>Customer details</h2><form id="checkout-form"><div class="field"><label>Name</label><input id="customer" required placeholder="Your name"></div><div class="field"><label>Phone</label><input id="phone" required placeholder="07xx xxx xxx"></div><div class="field"><label>Delivery / pickup note</label><input id="note" placeholder="e.g. Westlands, apartment 4B"></div><div class="option-group payment"><h4>Payment method</h4><label><input type="radio" name="payment" value="M-Pesa" checked> M-Pesa</label><label><input type="radio" name="payment" value="Card"> Card</label><label><input type="radio" name="payment" value="PayPal"> PayPal</label></div><button class="btn wide">Pay ${money(subtotal)} <small>(demo)</small></button></form></section></div>`;document.getElementById('checkout-form').onsubmit=e=>{e.preventDefault();const order={id:'SB-'+Date.now().toString().slice(-6),customer:document.getElementById('customer').value,phone:document.getElementById('phone').value,note:document.getElementById('note').value,payment:document.querySelector('input[name=payment]:checked').value,items:c,total:subtotal,status:'New',paymentStatus:'Demo paid',created:new Date().toISOString()};const orders=read('doe_orders',[]);orders.unshift(order);write('doe_orders',orders);write('doe_last_order',order.id);localStorage.removeItem('doe_cart');location.href='order.html?id='+order.id}}
 function statusIndex(status){return ['New','Preparing','Ready','Completed'].indexOf(status)}

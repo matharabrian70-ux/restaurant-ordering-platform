@@ -391,7 +391,7 @@ function updateRiderProfileButton(){
   button.innerHTML=riderAvatarMarkup('rider-nav-avatar');
   button.setAttribute('aria-label','Open rider profile');
   button.classList.remove('hidden');
-  button.data-action=async(event)=>{
+  button.onclick=async(event)=>{
     event.preventDefault();event.stopPropagation();
     try{await renderRiderProfileModal();}
     catch(err){alert(err.message||'Unable to open rider profile.');}

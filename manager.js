@@ -39,6 +39,7 @@ const nav=(k,l)=>'<button class="manager-tab '+(T===k?'active':'')+'" data-actio
 const managerSidebar=()=>'<aside class="manager-sidebar" aria-label="Manager sections"><div class="manager-sidebar-label">RESTAURANT CONTROL</div><nav class="manager-sidebar-nav">'+NAV_ITEMS.map(x=>nav(x[0],x[2])).join('')+'</nav><div class="manager-sidebar-footer"><span>LIVE CONTROL CENTRE</span><small>Restaurant operations</small></div></aside>';
 const managerMobileSections=()=>'<details class="manager-mobile-sections"><summary><span>☰</span> Manager sections</summary><div class="manager-mobile-section-list">'+NAV_ITEMS.map(x=>nav(x[0],x[2])).join('')+'</div></details>';
 async function load(){
+  if(!getManagerToken()) return showLogin();
   try{ currentManager=await api('/api/manager/me'); }catch(e){ return showLogin(); }
   root.innerHTML='<div class="manager-loading"><div class="manager-spinner"></div><h2>Loading control centre…</h2></div>';
   try{
@@ -53,7 +54,8 @@ async function load(){
   }
 }
 function showLogin(message=''){
-  root.innerHTML='<section class="manager-login"><div class="manager-login-card"><span class="manager-kicker"><i></i> '+esc(window.TENANT_THEME?.name||'RESTAURANT')+'</span><h1>Manager sign in</h1><p>Use your restaurant manager account. Order-control devices use QR pairing and do not sign in here.</p>'+(message?'<div class="login-error">'+esc(message)+'</div>':'')+'<form onsubmit="loginManager(event)"><label>Email<input id="manager-email" type="email" autocomplete="username" required></label><label>Password<div class="password-field"><input id="manager-password" type="password" autocomplete="current-password" required><button type="button" class="password-toggle" data-action="toggleManagerPassword()" aria-label="Show password">SHOW</button></div></label><button class="btn wide">SIGN IN</button></form><div class="login-divider"><span>OR</span></div><div class="google-login" id="manager-google-btn" aria-label="Continue with Google"></div><p class="google-note">Google will ask which account you want to use before continuing.</p></div></section>';
+  root.innerHTML='<section class="manager-login"><div class="manager-login-card"><span class="manager-kicker"><i></i> '+esc(window.TENANT_THEME?.name||'RESTAURANT')+'</span><h1>Manager sign in</h1><p>Use your restaurant manager account. Order-control devices use QR pairing and do not sign in here.</p>'+(message?'<div class="login-error">'+esc(message)+'</div>':'')+'<form id="manager-login-form"><label>Email<input id="manager-email" type="email" autocomplete="username" required></label><label>Password<div class="password-field"><input id="manager-password" type="password" autocomplete="current-password" required><button type="button" class="password-toggle" data-action="toggleManagerPassword()" aria-label="Show password">SHOW</button></div></label><button class="btn wide">SIGN IN</button></form><div class="login-divider"><span>OR</span></div><div class="google-login" id="manager-google-btn" aria-label="Continue with Google"></div><p class="google-note">Google will ask which account you want to use before continuing.</p></div></section>';
+  bindManagerLoginForm();
   googleManagerLogin();
 }
 async function toggleManagerPassword(){
@@ -124,6 +126,12 @@ async function googleManagerLogin(){
     const note=document.querySelector('.google-note');
     if(note)note.textContent=e.message;
   }
+}
+function bindManagerLoginForm(){
+  const form=document.getElementById('manager-login-form');
+  if(!form||form.dataset.bound)return;
+  form.dataset.bound='1';
+  form.addEventListener('submit',loginManager);
 }
 async function loginManager(e){
   e.preventDefault();const b=e.submitter;b.disabled=true;b.textContent='SIGNING IN…';

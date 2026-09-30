@@ -109,10 +109,19 @@ export function registerAdvancedOperations(app,pool){
   app.post('/api/customer/reservations',customer,async(req,res)=>{
     const date=clean(req.body.reservationDate,20),time=clean(req.body.reservationTime,20),party=Number(req.body.partySize);
     if(!date||!time||!Number.isInteger(party)||party<1||party>100)return res.status(400).json({error:'Reservation date, time and party size are required'});
-    const conflict=await pool.query("select 1 from restaurant_reservations where business_id=$1 and reservation_date=$2 and reservation_time=$3 and status in ('PENDING','CONFIRMED','SEATED') limit 1",[req.customer.businessId,date,time]);
-    const status=conflict.rowCount?'WAITLISTED':'PENDING';
-    const r=await pool.query('insert into restaurant_reservations(business_id,customer_id,customer_name,phone,email,reservation_date,reservation_time,party_size,status,notes) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *',[req.customer.businessId,req.customer.id,req.customer.name,req.customer.phone,req.customer.email,date,time,party,status,clean(req.body.notes,1000)||null]);
-    res.status(201).json(r.rows[0]);
+    const client=await pool.connect();
+    try{
+      await client.query('begin');
+      await client.query('select pg_advisory_xact_lock(hashtext($1))',['RESERVATION:'+req.customer.businessId+':'+date+':'+time]);
+      const conflict=await client.query("select 1 from restaurant_reservations where business_id=$1 and reservation_date=$2 and reservation_time=$3 and status in ('PENDING','CONFIRMED','SEATED') limit 1",[req.customer.businessId,date,time]);
+      const status=conflict.rowCount?'WAITLISTED':'PENDING';
+      const r=await client.query('insert into restaurant_reservations(business_id,customer_id,customer_name,phone,email,reservation_date,reservation_time,party_size,status,notes) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *',[req.customer.businessId,req.customer.id,req.customer.name,req.customer.phone,req.customer.email,date,time,party,status,clean(req.body.notes,1000)||null]);
+      await client.query('commit');
+      res.status(201).json(r.rows[0]);
+    }catch(error){
+      try{await client.query('rollback')}catch{}
+      res.status(500).json({error:error.message||'Unable to create reservation'});
+    }finally{client.release();}
   });
   app.post('/api/customer/reservations/:id/cancel',customer,async(req,res)=>{
     const r=await pool.query("update restaurant_reservations set status='CANCELLED',updated_at=now() where id=$1 and customer_id=$2 and business_id=$3 and status in ('PENDING','CONFIRMED','WAITLISTED') returning *",[id(req.params.id),req.customer.id,req.customer.businessId]);if(!r.rowCount)return res.status(404).json({error:'Reservation not found or cannot be cancelled'});res.json(r.rows[0]);

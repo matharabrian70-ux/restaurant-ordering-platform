@@ -1583,6 +1583,8 @@ app.get('/api/events', async (req,res)=>{
 async function initiateRefundForOrder(orderId, customerNote = 'Customer cancelled before restaurant acceptance', merchantNote = 'Automatic cancellation refund') {
   const idempotencyKey='AUTO-CANCEL-'+String(orderId);
   const client=await pool.connect();
+  let refundIntent=null;
+  let order=null;
   try{
     await client.query('begin');
     await client.query('select pg_advisory_xact_lock(hashtext($1))',[idempotencyKey]);
@@ -1590,54 +1592,38 @@ async function initiateRefundForOrder(orderId, customerNote = 'Customer cancelle
     if(existing.rowCount){await client.query('commit');return existing.rows[0];}
     const orderResult=await client.query(
       `select o.id,o.business_id,o.total,o.payment_status,p.id as payment_id,p.provider_reference,p.amount as paid_amount,p.status as payment_state
-         from orders o
-         join payments p on p.order_id=o.id and p.provider='PAYSTACK'
-        where o.id=$1
-        for update of o,p`,
-      [orderId]
-    );
+         from orders o join payments p on p.order_id=o.id and p.provider='PAYSTACK'
+        where o.id=$1 for update of o,p`,[orderId]);
     if(!orderResult.rowCount){await client.query('rollback');throw new Error('Paid Paystack order not found');}
-    const order=orderResult.rows[0];
-    if(order.payment_status!=='PAID' || !order.provider_reference){await client.query('commit');return null;}
-    if(!['PAID'].includes(String(order.payment_state).toUpperCase())){await client.query('commit');return null;}
-    const refundedResult=await client.query(
-      `select coalesce(sum(amount),0) as total
-         from refunds
-        where payment_id=$1 and status in ('PENDING','PROCESSING','PROCESSED')`,
-      [order.payment_id]
-    );
+    order=orderResult.rows[0];
+    if(order.payment_status!=='PAID' || !order.provider_reference || String(order.payment_state).toUpperCase()!=='PAID'){await client.query('commit');return null;}
+    const refundedResult=await client.query(`select coalesce(sum(amount),0) as total from refunds where payment_id=$1 and status in ('PENDING','PROCESSING','PROCESSED','NEEDS-ATTENTION')`,[order.payment_id]);
     const remaining=Math.round((Number(order.paid_amount)-Number(refundedResult.rows[0].total))*100)/100;
     if(remaining<=0.0001){await client.query('commit');return null;}
-    const refund=await paystackRequest('/refund',{
-      method:'POST',
-      body:JSON.stringify({
-        transaction:order.provider_reference,
-        amount:String(Math.round(remaining*100)),
-        currency:'KES',
-        customer_note:customerNote,
-        merchant_note:merchantNote
-      })
-    });
-    const data=refund.data||{};
-    const insert=await client.query(
-      `insert into refunds(
-        id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,
-        customer_note,merchant_note,idempotency_key
-      ) values(
-        gen_random_uuid(),$1,$2,'PAYSTACK',$3,$4,$5,'KES',$6,$7,$8,$9
-      ) returning *`,
-      [
-        order.id,order.payment_id,data.id?String(data.id):null,order.provider_reference,remaining,
-        String(data.status||'pending').toUpperCase(),customerNote,merchantNote,idempotencyKey
-      ]
-    );
+    const inserted=await client.query(`insert into refunds(id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,customer_note,merchant_note,idempotency_key)
+      values(gen_random_uuid(),$1,$2,'PAYSTACK',null,$3,$4,'KES','PENDING',$5,$6,$7) returning *`,
+      [order.id,order.payment_id,order.provider_reference,remaining,customerNote,merchantNote,idempotencyKey]);
+    refundIntent=inserted.rows[0];
     await client.query('commit');
-    broadcastRealtime({businessId:order.business_id,orderId:order.id,event:'refund.updated',data:{orderId:order.id,refund:insert.rows[0]}});
-    return insert.rows[0];
   }catch(error){
     try{await client.query('rollback')}catch{}
     throw error;
   }finally{client.release();}
+
+  try{
+    const refund=await paystackRequest('/refund',{method:'POST',body:JSON.stringify({transaction:order.provider_reference,amount:String(Math.round(Number(refundIntent.amount)*100)),currency:'KES',customer_note:customerNote,merchant_note:merchantNote})});
+    const data=refund.data||{};
+    const updated=await pool.query(`update refunds set provider_refund_id=coalesce($1,provider_refund_id),status=$2,updated_at=now() where id=$3 returning *`,
+      [data.id?String(data.id):null,String(data.status||'pending').toUpperCase(),refundIntent.id]);
+    const result=updated.rows[0];
+    broadcastRealtime({businessId:order.business_id,orderId:order.id,event:'refund.updated',data:{orderId:order.id,refund:result}});
+    return result;
+  }catch(error){
+    const updated=await pool.query(`update refunds set status='NEEDS-ATTENTION',updated_at=now() where id=$1 and status in ('PENDING','PROCESSING') returning *`,[refundIntent.id]).catch(()=>({rows:[]}));
+    const result=updated.rows[0]||refundIntent;
+    await recordSystemIncident({businessId:order.business_id,source:'REFUNDS',severity:'CRITICAL',message:'Automatic refund provider outcome could not be confirmed; manual reconciliation is required.',metadata:{orderId:order.id,refundId:refundIntent.id,idempotencyKey,provider:'PAYSTACK'}});
+    return result;
+  }
 }
 
 async function markPaymentSuccessful(reference, paystackData = null, expectedOrderId = null) {

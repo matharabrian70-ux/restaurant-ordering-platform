@@ -1,0 +1,37 @@
+name: Database Restore Drill
+
+on:
+  workflow_dispatch:
+    inputs:
+      backup_url:
+        description: 'HTTPS URL of a known-good PostgreSQL custom-format backup'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  restore-drill:
+    runs-on: ubuntu-latest
+    environment: disaster-recovery
+    steps:
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Download backup
+        env:
+          BACKUP_URL: ${{ inputs.backup_url }}
+        run: curl --fail --location --proto '=https' --tlsv1.2 "$BACKUP_URL" --output /tmp/restaurant-ordering.dump
+      - name: Restore into DR database
+        env:
+          DR_DATABASE_URL: ${{ secrets.DR_DATABASE_URL }}
+        run: |
+          test -n "$DR_DATABASE_URL"
+          pg_restore --clean --if-exists --no-owner --no-privileges --dbname "$DR_DATABASE_URL" /tmp/restaurant-ordering.dump
+      - name: Validate restored schema
+        env:
+          DR_DATABASE_URL: ${{ secrets.DR_DATABASE_URL }}
+        run: |
+          psql "$DR_DATABASE_URL" -v ON_ERROR_STOP=1 -c "select count(*) as businesses from businesses;"
+          psql "$DR_DATABASE_URL" -v ON_ERROR_STOP=1 -c "select count(*) as orders from orders;"
+          psql "$DR_DATABASE_URL" -v ON_ERROR_STOP=1 -c "select count(*) as migrations from schema_migrations;"

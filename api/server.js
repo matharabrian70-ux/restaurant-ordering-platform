@@ -6,11 +6,25 @@ import pg from 'pg';
 import QRCode from 'qrcode';
 import { registerDeliveryEngine } from './delivery-engine.js';
 import { registerMenuEngine } from './menu-engine.js';
+import { registerPosEngine } from './pos-engine.js';
+import { registerCustomerGrowth } from './customer-growth.js';
+import { registerAdvancedOperations } from './advanced-operations.js';
+import { registerIntelligence, runIntelligenceSweep } from './intelligence.js';
 import { registerBrandingEngine } from './branding-engine.js';
 import { registerReceiptEngine, ensureReceipt } from './receipt-engine.js';
+import { runSelfHealingSweep } from './self-healing.js';
+import { registerProductionObservability } from './production-observability.js';
 
 const { Pool } = pg;
 const app = express();
+// Phase O correlation IDs provide a lightweight trace across production requests without persisting request payloads.
+app.use((req, res, next) => {
+  const supplied = String(req.get('X-Correlation-ID') || '').trim();
+  const id = /^[A-Za-z0-9._:-]{8,128}$/.test(supplied) ? supplied : crypto.randomUUID();
+  req.correlationId = id;
+  res.setHeader('X-Correlation-ID', id);
+  next();
+});
 const port = Number(process.env.PORT || 3000);
 const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false });
 const PAYSTACK_API = 'https://api.paystack.co';
@@ -39,6 +53,18 @@ function haversineMeters(lat1, lng1, lat2, lng2) {
   const dLat=(lat2-lat1)*rad, dLng=(lng2-lng1)*rad;
   const a=Math.sin(dLat/2)**2+Math.cos(lat1*rad)*Math.cos(lat2*rad)*Math.sin(dLng/2)**2;
   return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+function pointInPolygon(lat,lng,points){
+  if(!Array.isArray(points)||points.length<3)return false;
+  let inside=false;
+  for(let i=0,j=points.length-1;i<points.length;j=i++){
+    const yi=Number(points[i]?.lat),xi=Number(points[i]?.lng),yj=Number(points[j]?.lat),xj=Number(points[j]?.lng);
+    if(![yi,xi,yj,xj].every(Number.isFinite))continue;
+    const hit=((yi>lat)!==(yj>lat))&&(lng<(xj-xi)*(lat-yi)/(yj-yi)+xi);
+    if(hit)inside=!inside;
+  }
+  return inside;
 }
 
 function validateGpsSample({lat,lng,accuracy,previous=null,nowMs=Date.now()}) {
@@ -392,25 +418,52 @@ app.use('/api/riders', requireRiderModule);
 // Server-Sent Events: one persistent connection replaces the dashboard's 5-second polling.
 const realtimeClients = new Set();
 const stationRealtimeClients = new Set();
-function sendRealtime(client, event, data) {
-  try {
-    client.res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  } catch {}
+const realtimeBusInstanceId = crypto.randomUUID();
+let realtimeBusClient = null;
+function sendRealtime(client,event,data){
+  try{client.res.write(`event: ${event}\\ndata: ${JSON.stringify(data)}\\n\\n`)}catch{}
 }
-function broadcastRealtime({ businessId, orderId = null, riderId = null, event = 'order.updated', data = {} }) {
-  for (const client of realtimeClients) {
-    if (client.businessId !== String(businessId)) continue;
-    if (client.orderId && orderId && client.orderId !== String(orderId)) continue;
-    if (client.orderId && !orderId) continue;
-    if (client.riderId && riderId && client.riderId !== String(riderId)) continue;
-    if (client.riderId && !riderId) continue;
-    sendRealtime(client, event, data);
+function sendLocalRealtime(message){
+  const businessId=String(message.businessId||''),orderId=message.orderId?String(message.orderId):null,riderId=message.riderId?String(message.riderId):null;
+  for(const client of realtimeClients){
+    if(client.businessId!==businessId)continue;
+    if(client.orderId&&orderId&&client.orderId!==orderId)continue;
+    if(client.orderId&&!orderId)continue;
+    if(client.riderId&&riderId&&client.riderId!==riderId)continue;
+    if(client.riderId&&!riderId)continue;
+    sendRealtime(client,message.event,message.data);
   }
-  for (const client of stationRealtimeClients) {
-    if (client.businessId !== String(businessId)) continue;
-    sendRealtime(client, event, data);
+  for(const client of stationRealtimeClients){
+    if(client.businessId!==businessId)continue;
+    sendRealtime(client,message.event,message.data);
   }
 }
+async function publishRealtimeBus(message){
+  if(!realtimeBusClient)return;
+  try{await realtimeBusClient.query('select pg_notify($1,$2)',['restaurant_realtime',JSON.stringify({instanceId:realtimeBusInstanceId,message})])}catch{}
+}
+function broadcastRealtime({businessId,orderId=null,riderId=null,event='order.updated',data={}}){
+  const message={businessId:String(businessId),orderId,riderId,event,data};
+  sendLocalRealtime(message);
+  void publishRealtimeBus(message);
+}
+async function startRealtimeBus(){
+  try{
+    const client=new pg.Client({connectionString:process.env.DATABASE_URL,ssl:process.env.NODE_ENV==='production'?{rejectUnauthorized:false}:false});
+    await client.connect();
+    await client.query('listen restaurant_realtime');
+    client.on('notification',notification=>{
+      try{
+        const payload=JSON.parse(notification.payload||'{}');
+        if(payload.instanceId===realtimeBusInstanceId)return;
+        sendLocalRealtime(payload.message||{});
+      }catch{}
+    });
+    client.on('error',()=>{});
+    realtimeBusClient=client;
+  }catch(error){console.error('Realtime shared bus unavailable; local realtime only:',error.message)}
+}
+
 function broadcastRider({ businessId, riderId, orderId = null, action, data = {} }) {
   broadcastRealtime({businessId,riderId,orderId,event:'rider.updated',data:{riderId,action,...data}});
 }
@@ -461,9 +514,24 @@ function verifyPassword(password, stored) {
 function hashSessionToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
-function createCustomerOrderToken() {
+function createCustomerOrderToken(orderId = null) {
+  if (orderId) {
+    const secret = process.env.CUSTOMER_ORDER_TOKEN_SECRET || process.env.PAYSTACK_SECRET_KEY || process.env.DATABASE_URL || 'restaurant-ordering-order-token-secret';
+    const token = crypto.createHmac('sha256', secret).update(String(orderId)).digest('hex');
+    return { token, hash: hashSessionToken(token) };
+  }
   const token = crypto.randomBytes(32).toString('hex');
   return { token, hash: hashSessionToken(token) };
+}
+function stableSerialize(value) {
+  if (Array.isArray(value)) return '[' + value.map(stableSerialize).join(',') + ']';
+  if (value && typeof value === 'object') {
+    return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + stableSerialize(value[key])).join(',') + '}';
+  }
+  return JSON.stringify(value);
+}
+function hashOrderRequest(value) {
+  return crypto.createHash('sha256').update(stableSerialize(value)).digest('hex');
 }
 async function getCustomerOrderAccess(req) {
   const auth = String(req.headers.authorization || '');
@@ -558,6 +626,18 @@ async function ensureRealtimeAndExternalApiSecuritySchema() {
     create index if not exists external_api_usage_alerts_business_idx on external_api_usage_alerts(business_id,created_at desc);
   `);
 }
+async function issueTelemetryAccessToken({scope,businessId=null}){
+  const token=crypto.randomBytes(32).toString('hex');
+  await pool.query(`insert into telemetry_access_tokens(token_hash,scope,business_id,expires_at)
+    values($1,$2,$3,now()+interval '10 minutes')`,[hashSessionToken(token),scope,businessId]);
+  return token;
+}
+async function getTelemetryAccessToken(token){
+  if(!token)return null;
+  const r=await pool.query('select * from telemetry_access_tokens where token_hash=$1 and expires_at>now() limit 1',[hashSessionToken(token)]);
+  return r.rows[0]||null;
+}
+
 async function issueRealtimeAccessToken({scope,businessId,orderId=null,riderId=null,stationId=null}) {
   const token=crypto.randomBytes(32).toString('hex');
   await pool.query(`insert into realtime_access_tokens(token_hash,scope,business_id,order_id,rider_id,station_id,expires_at)
@@ -592,6 +672,87 @@ async function guardExternalApiQuota(args){
   const result=await consumeExternalApiQuota(args);
   if(!result.allowed){const e=new Error(`External ${args.provider} usage quota reached for this restaurant. The integration is temporarily paused until the quota window resets.`);e.status=429;e.code='EXTERNAL_API_QUOTA_EXCEEDED';e.quota=result;throw e}
   return result;
+}
+
+async function ensurePhaseASchema(){
+  await pool.query(`
+    alter table payments add column if not exists idempotency_key text;
+    alter table payments add column if not exists authorization_url text;
+    alter table payments add column if not exists payment_mode text;
+    create unique index if not exists payments_idempotency_key_idx on payments(idempotency_key) where idempotency_key is not null;
+    create table if not exists paystack_webhook_events (
+      id uuid primary key default gen_random_uuid(),
+      event_id text,
+      event_type text not null,
+      resource_id text,
+      payload jsonb not null,
+      received_at timestamptz not null default now(),
+      processed_at timestamptz,
+      unique(event_type,resource_id)
+    );
+    create index if not exists paystack_webhook_events_received_idx on paystack_webhook_events(received_at desc);
+    create table if not exists outbox_events (
+      id uuid primary key default gen_random_uuid(),
+      event_type text not null,
+      aggregate_type text,
+      aggregate_id uuid,
+      business_id uuid references businesses(id) on delete cascade,
+      payload jsonb not null default '{}'::jsonb,
+      status text not null default 'PENDING',
+      attempts integer not null default 0,
+      available_at timestamptz not null default now(),
+      processed_at timestamptz,
+      last_error text,
+      created_at timestamptz not null default now()
+    );
+    create index if not exists outbox_events_pending_idx on outbox_events(status,available_at,created_at);
+    alter table payments drop constraint if exists payments_amount_nonnegative;
+    alter table payments add constraint payments_amount_nonnegative check (amount >= 0) not valid;
+    alter table refunds drop constraint if exists refunds_amount_nonnegative;
+    alter table refunds add constraint refunds_amount_nonnegative check (amount > 0) not valid;
+  `);
+}
+
+async function ensurePhaseFSchema(){
+  const fs = await import('node:fs/promises');
+  const sql = await fs.readFile(new URL('./migrations/003_phase_f_customer_growth.sql', import.meta.url), 'utf8');
+  await pool.query(sql);
+}
+
+async function ensurePhaseGSchema(){
+  const fs = await import('node:fs/promises');
+  const sql = await fs.readFile(new URL('./migrations/004_phase_g_advanced_operations.sql', import.meta.url), 'utf8');
+  await pool.query(sql);
+}
+
+async function ensurePhaseISchema(){
+  const fs = await import('node:fs/promises');
+  const sql = await fs.readFile(new URL('./migrations/006_phase_i_transaction_integrity.sql', import.meta.url), 'utf8');
+  await pool.query(sql);
+}
+
+async function ensurePhaseJSchema(){
+  const fs = await import('node:fs/promises');
+  const sql = await fs.readFile(new URL('./migrations/007_phase_j_order_delivery_integrity.sql', import.meta.url), 'utf8');
+  await pool.query(sql);
+}
+
+async function ensurePhaseKSchema(){
+  const fs = await import('node:fs/promises');
+  const sql = await fs.readFile(new URL('./migrations/008_phase_k_tenant_authorization_lockdown.sql', import.meta.url), 'utf8');
+  await pool.query(sql);
+}
+
+async function ensurePhaseHSchema(){
+  const fs = await import('node:fs/promises');
+  const sql = await fs.readFile(new URL('./migrations/005_phase_h_intelligence.sql', import.meta.url), 'utf8');
+  await pool.query(sql);
+}
+
+async function ensurePhaseBSchema(){
+  const fs = await import('node:fs/promises');
+  const sql = await fs.readFile(new URL('./migrations/002_phase_b_restaurant_core.sql', import.meta.url), 'utf8');
+  await pool.query(sql);
 }
 
 async function ensurePhase1SecuritySchema() {
@@ -904,6 +1065,14 @@ async function requireManager(req, res, next) {
     if (requestedBusinessId && requestedBusinessId !== String(manager.business_id)) {
       return res.status(403).json({ error: 'You can only access your own restaurant' });
     }
+    // Tenant-scoped management endpoints under /api/businesses/:id must bind
+    // the URL tenant directly to the authenticated manager session. Never trust
+    // the URL tenant merely because the manager is otherwise authenticated.
+    if (req.params?.id && req.path.startsWith('/businesses/')) {
+      if (String(req.params.id) !== String(manager.business_id)) {
+        return res.status(403).json({ error: 'You can only access your own restaurant' });
+      }
+    }
     req.manager = manager;
     next();
   } catch { res.status(500).json({ error: 'Unable to verify manager session' }); }
@@ -939,7 +1108,7 @@ async function requireManagerStation(req, res, next) {
 }
 async function getStationFromSession(req) {
   const raw = String(req.headers.authorization || '');
-  const token = raw.startsWith('Bearer ') ? raw.slice(7).trim() : String(req.query.stationToken || '').trim();
+  const token = raw.startsWith('Bearer ') ? raw.slice(7).trim() : '';
   if (!token) return null;
   const result = await pool.query(`select s.*,st.name,st.device_type,st.mode,st.business_id,st.active
     from station_sessions s join restaurant_order_stations st on st.id=s.station_id
@@ -950,6 +1119,10 @@ async function requireStation(req, res, next) {
   try {
     const station = await getStationFromSession(req);
     if (!station) return res.status(401).json({ error: 'Station pairing required' });
+    const requestedBusinessId = String(req.body?.businessId || req.query?.businessId || req.params?.businessId || '');
+    if (requestedBusinessId && requestedBusinessId !== String(station.business_id)) {
+      return res.status(403).json({ error: 'You can only access your own restaurant station' });
+    }
     req.station = station;
     next();
   } catch { res.status(500).json({ error: 'Unable to verify station session' }); }
@@ -959,7 +1132,7 @@ async function getRiderFromSession(req) {
   const raw = String(req.headers.authorization || '');
   const token = raw.startsWith('Bearer ') ? raw.slice(7).trim() : '';
   if (!token) return null;
-  const result = await pool.query(`select r.*,s.id as session_id,s.expires_at from rider_sessions s join riders r on r.id=s.rider_id where s.token_hash=$1 and s.expires_at>now()`, [hashSessionToken(token)]);
+  const result = await pool.query(`select r.*,s.id as session_id,s.expires_at from rider_sessions s join riders r on r.id=s.rider_id where s.token_hash=$1 and s.expires_at>now() and r.active=true and r.rider_status='ACTIVE'`, [hashSessionToken(token)]);
   return result.rows[0] || null;
 }
 async function requireRiderAuth(req, res, next) {
@@ -967,6 +1140,10 @@ async function requireRiderAuth(req, res, next) {
     const rider = await getRiderFromSession(req);
     if (!rider) return res.status(401).json({ error: 'Rider login required' });
     if (req.params?.id && String(req.params.id) !== String(rider.id)) return res.status(403).json({ error: 'You can only access your own rider account' });
+    const requestedBusinessId = String(req.body?.businessId || req.query?.businessId || req.params?.businessId || '');
+    if (requestedBusinessId && requestedBusinessId !== String(rider.business_id)) {
+      return res.status(403).json({ error: 'You can only access your own restaurant rider resources' });
+    }
     req.rider = rider;
     next();
   } catch { res.status(500).json({ error: 'Unable to verify rider session' }); }
@@ -1405,45 +1582,127 @@ app.get('/api/events', async (req,res)=>{
 
 async function initiateRefundForOrder(orderId, customerNote = 'Customer cancelled before restaurant acceptance', merchantNote = 'Automatic cancellation refund') {
   const idempotencyKey='AUTO-CANCEL-'+String(orderId);
-  const existing=await pool.query('select * from refunds where idempotency_key=$1 limit 1',[idempotencyKey]);
-  if(existing.rowCount)return existing.rows[0];
-  const orderResult = await pool.query(`select o.id,o.business_id,o.total,o.payment_status,p.id as payment_id,p.provider_reference,p.amount as paid_amount from orders o join payments p on p.order_id=o.id and p.provider='PAYSTACK' where o.id=$1`, [orderId]);
-  if (!orderResult.rowCount) throw new Error('Paid Paystack order not found');
-  const order = orderResult.rows[0];
-  if (order.payment_status !== 'PAID' || !order.provider_reference) return null;
-  const refundedResult = await pool.query(`select coalesce(sum(amount),0) as total from refunds where payment_id=$1 and status in ('PENDING','PROCESSING','PROCESSED')`, [order.payment_id]);
-  const alreadyRefunded = Number(refundedResult.rows[0].total);
-  const remaining = Number(order.paid_amount) - alreadyRefunded;
-  if (remaining <= 0.0001) return null;
-  const refund = await paystackRequest('/refund', { method: 'POST', body: JSON.stringify({ transaction: order.provider_reference, amount: String(Math.round(remaining * 100)), currency: 'KES', customer_note: customerNote, merchant_note: merchantNote }) });
-  const data = refund.data || {};
-  const insert = await pool.query(`insert into refunds (id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,customer_note,merchant_note,idempotency_key) values (gen_random_uuid(),$1,$2,'PAYSTACK',$3,$4,$5,'KES',$6,$7,$8,$9) returning *`, [order.id, order.payment_id, data.id ? String(data.id) : null, order.provider_reference, remaining, String(data.status || 'pending').toUpperCase(), customerNote, merchantNote, idempotencyKey]);
-  broadcastRealtime({ businessId: order.business_id, orderId: order.id, event: 'refund.updated', data: { orderId: order.id, refund: insert.rows[0] } });
-  return insert.rows[0];
+  const client=await pool.connect();
+  let refundIntent=null;
+  let order=null;
+  try{
+    await client.query('begin');
+    await client.query('select pg_advisory_xact_lock(hashtext($1))',[idempotencyKey]);
+    const existing=await client.query('select * from refunds where idempotency_key=$1 limit 1 for update',[idempotencyKey]);
+    if(existing.rowCount){await client.query('commit');return existing.rows[0];}
+    const orderResult=await client.query(
+      `select o.id,o.business_id,o.total,o.payment_status,p.id as payment_id,p.provider_reference,p.amount as paid_amount,p.status as payment_state
+         from orders o join payments p on p.order_id=o.id and p.provider='PAYSTACK'
+        where o.id=$1 for update of o,p`,[orderId]);
+    if(!orderResult.rowCount){await client.query('rollback');throw new Error('Paid Paystack order not found');}
+    order=orderResult.rows[0];
+    if(order.payment_status!=='PAID' || !order.provider_reference || String(order.payment_state).toUpperCase()!=='PAID'){await client.query('commit');return null;}
+    const refundedResult=await client.query(`select coalesce(sum(amount),0) as total from refunds where payment_id=$1 and status in ('PENDING','PROCESSING','PROCESSED','NEEDS-ATTENTION')`,[order.payment_id]);
+    const remaining=Math.round((Number(order.paid_amount)-Number(refundedResult.rows[0].total))*100)/100;
+    if(remaining<=0.0001){await client.query('commit');return null;}
+    const inserted=await client.query(`insert into refunds(id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,customer_note,merchant_note,idempotency_key)
+      values(gen_random_uuid(),$1,$2,'PAYSTACK',null,$3,$4,'KES','PENDING',$5,$6,$7) returning *`,
+      [order.id,order.payment_id,order.provider_reference,remaining,customerNote,merchantNote,idempotencyKey]);
+    refundIntent=inserted.rows[0];
+    await client.query('commit');
+  }catch(error){
+    try{await client.query('rollback')}catch{}
+    throw error;
+  }finally{client.release();}
+
+  try{
+    const refund=await paystackRequest('/refund',{method:'POST',body:JSON.stringify({transaction:order.provider_reference,amount:String(Math.round(Number(refundIntent.amount)*100)),currency:'KES',customer_note:customerNote,merchant_note:merchantNote})});
+    const data=refund.data||{};
+    const updated=await pool.query(`update refunds set provider_refund_id=coalesce($1,provider_refund_id),status=$2,updated_at=now() where id=$3 returning *`,
+      [data.id?String(data.id):null,String(data.status||'pending').toUpperCase(),refundIntent.id]);
+    const result=updated.rows[0];
+    broadcastRealtime({businessId:order.business_id,orderId:order.id,event:'refund.updated',data:{orderId:order.id,refund:result}});
+    return result;
+  }catch(error){
+    const updated=await pool.query(`update refunds set status='NEEDS-ATTENTION',updated_at=now() where id=$1 and status in ('PENDING','PROCESSING') returning *`,[refundIntent.id]).catch(()=>({rows:[]}));
+    const result=updated.rows[0]||refundIntent;
+    await recordSystemIncident({businessId:order.business_id,source:'REFUNDS',severity:'CRITICAL',message:'Automatic refund provider outcome could not be confirmed; manual reconciliation is required.',metadata:{orderId:order.id,refundId:refundIntent.id,idempotencyKey,provider:'PAYSTACK'}});
+    return result;
+  }
 }
 
-async function markPaymentSuccessful(reference, paystackData = null) {
+async function markPaymentSuccessful(reference, paystackData = null, expectedOrderId = null) {
   const client = await pool.connect();
   let cancelledOrderId = null;
   let paidOrder = null;
   try {
     await client.query('begin');
-    const paymentResult = await client.query(`select p.*, o.total, o.id as order_id, o.business_id, o.status as order_status from payments p join orders o on o.id=p.order_id where p.provider='PAYSTACK' and p.provider_reference=$1 for update`, [reference]);
-    if (!paymentResult.rowCount) { await client.query('rollback'); return null; }
+    const paymentResult = await client.query(
+      `select p.*, o.total, o.id as order_id, o.business_id, o.status as order_status
+         from payments p
+         join orders o on o.id=p.order_id
+        where p.provider='PAYSTACK'
+          and p.provider_reference=$1
+          and ($2::uuid is null or o.id=$2::uuid)
+        for update`,
+      [reference, expectedOrderId || null]
+    );
+    if (!paymentResult.rowCount) {
+      await client.query('rollback');
+      return null;
+    }
     const payment = paymentResult.rows[0];
+    const paymentState=String(payment.status||'').toUpperCase();
+    if(paymentState==='REFUNDED'){
+      await client.query('rollback');
+      throw new Error('Payment has already been refunded');
+    }
+    if(paymentState==='PAID'){
+      await client.query('commit');
+      return payment.order_id;
+    }
+    if(!['PENDING','INITIALIZING'].includes(paymentState)){
+      await client.query('rollback');
+      throw new Error('Payment is not in a confirmable state');
+    }
     const expectedSubunit = Math.round(Number(payment.total) * 100);
-    if (paystackData && Number(paystackData.amount) !== expectedSubunit) { await client.query('rollback'); throw new Error('Paystack amount does not match the order total'); }
-    await client.query(`update payments set status='PAID', confirmed_at=coalesce(confirmed_at,now()) where id=$1`, [payment.id]);
-    const updated = await client.query(`update orders set payment_status='PAID' where id=$1 returning *`, [payment.order_id]);
+    if (paystackData && Number(paystackData.amount) !== expectedSubunit) {
+      await client.query('rollback');
+      throw new Error('Paystack amount does not match the order total');
+    }
+    if (paystackData && String(paystackData.reference||'') !== String(reference)) {
+      await client.query('rollback');
+      throw new Error('Paystack reference mismatch');
+    }
+    await client.query(
+      `update payments
+          set status='PAID', confirmed_at=coalesce(confirmed_at,now())
+        where id=$1 and status in ('PENDING','INITIALIZING')`,
+      [payment.id]
+    );
+    const updated = await client.query(
+      `update orders set payment_status='PAID' where id=$1 returning *`,
+      [payment.order_id]
+    );
     paidOrder = updated.rows[0];
     await ensureReceipt(client,payment.order_id);
     cancelledOrderId = payment.order_status === 'CANCELLED' ? payment.order_id : null;
+    if(paidOrder){
+      await client.query(
+        `insert into outbox_events(event_type,aggregate_type,aggregate_id,business_id,payload)
+         values('payment.confirmed','ORDER',$1,$2,$3)`,
+        [paidOrder.id,paidOrder.business_id,{orderId:paidOrder.id,orderNumber:paidOrder.order_number,paymentStatus:'PAID'}]
+      );
+    }
     await client.query('commit');
-    if (paidOrder) broadcastOrder(paidOrder, { reason: 'payment.confirmed', notification: 'New paid order' });
-    if (cancelledOrderId) await initiateRefundForOrder(cancelledOrderId, 'Customer cancelled before payment completed', 'Automatic refund because the order was cancelled before restaurant acceptance');
+    if(paidOrder) broadcastOrder(paidOrder,{reason:'payment.confirmed',notification:'New paid order'});
+    if(cancelledOrderId) await initiateRefundForOrder(
+      cancelledOrderId,
+      'Customer cancelled before payment completed',
+      'Automatic refund because the order was cancelled before restaurant acceptance'
+    );
     return payment.order_id;
-  } catch (error) { try { await client.query('rollback'); } catch {} throw error; }
-  finally { client.release(); }
+  } catch(error) {
+    try { await client.query('rollback'); } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function updateRefundFromWebhook(data) {
@@ -1625,7 +1884,24 @@ app.post('/api/orders/:id/status', requireManagerOrder, async (req, res) => { tr
     const result = await pool.query(`update orders set status='ACCEPTED',accepted_at=coalesce(accepted_at,now()) where id=$1 returning *`, [req.params.id]);
     broadcastOrder(result.rows[0], { reason: 'restaurant.accepted' });
     res.json(result.rows[0]); } catch { res.status(500).json({ error: 'Unable to update order status' }); } });
-app.post('/api/orders/:id/cancel', requireCustomerOrder, async (req, res) => { const client = await pool.connect(); try { let order; try { await client.query('begin'); const result = await client.query(`select * from orders where id=$1 for update`, [req.params.id]); if (!result.rowCount) { await client.query('rollback'); return res.status(404).json({ error: 'Order not found' }); } order = result.rows[0]; if (order.status !== 'NEW') { await client.query('rollback'); return res.status(409).json({ error: 'This order can no longer be cancelled because the restaurant has accepted it.' }); } await client.query(`update orders set status='CANCELLED' where id=$1`, [order.id]); const updated = await client.query(`select * from orders where id=$1`, [order.id]); await client.query('commit'); order = updated.rows[0]; broadcastOrder(order, { reason: 'customer.cancelled' }); } catch (error) { try { await client.query('rollback'); } catch {} throw error; } let refund = null; if (order.payment_status === 'PAID') refund = await initiateRefundForOrder(order.id, 'Customer cancelled before restaurant acceptance', 'Automatic cancellation refund'); const latest = await pool.query(`select * from orders where id=$1`, [order.id]); res.json({ order: latest.rows[0], refund }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to cancel order' }); } finally { client.release(); } });
+app.post('/api/orders/:id/cancel', requireCustomerOrder, async (req, res) => { const client = await pool.connect(); try { let order; try { await client.query('begin'); const result = await client.query(`select * from orders where id=$1 for update`, [req.params.id]); if (!result.rowCount) { await client.query('rollback'); return res.status(404).json({ error: 'Order not found' }); } order = result.rows[0]; if (order.status !== 'NEW') { await client.query('rollback'); return res.status(409).json({ error: 'This order can no longer be cancelled because the restaurant has accepted it.' }); } await client.query(`update orders set status='CANCELLED' where id=$1`, [order.id]);
+      if (order.coupon_id && order.payment_status !== 'PAID') {
+        const released = await client.query(
+          `delete from customer_coupon_redemptions
+            where order_id=$1 and coupon_id=$2
+            returning coupon_id`,
+          [order.id, order.coupon_id]
+        );
+        if (released.rowCount) {
+          await client.query(
+            `update customer_coupons
+                set redeemed_count=greatest(0,redeemed_count-1)
+              where id=$1`,
+            [order.coupon_id]
+          );
+        }
+      }
+      const updated = await client.query(`select * from orders where id=$1`, [order.id]); await client.query('commit'); order = updated.rows[0]; broadcastOrder(order, { reason: 'customer.cancelled' }); } catch (error) { try { await client.query('rollback'); } catch {} throw error; } let refund = null; if (order.payment_status === 'PAID') refund = await initiateRefundForOrder(order.id, 'Customer cancelled before restaurant acceptance', 'Automatic cancellation refund'); const latest = await pool.query(`select * from orders where id=$1`, [order.id]); res.json({ order: latest.rows[0], refund }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to cancel order' }); } finally { client.release(); } });
 const deliveryQuoteCache = new Map();
 const DELIVERY_QUOTE_CACHE_SECONDS = parsePositiveInt(process.env.DELIVERY_QUOTE_CACHE_SECONDS, 45, 5, 300);
 const DELIVERY_QUOTE_MAX_ADDRESS_LENGTH = 500;
@@ -1666,22 +1942,97 @@ app.post('/api/delivery/quote', quoteRateLimit, quoteBusinessRateLimit, async (r
   }
 });
 
-app.post('/api/orders', sharedRateLimit({windowMs:10*60_000,max:20,keyFn:req=>`orders:${clientIp(req)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts. Please wait before placing another order.'}), sharedRateLimit({windowMs:10*60_000,max:12,keyFn:req=>`order-fingerprint:${clientIp(req)}:${String(req.headers['user-agent']||'').slice(0,120)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts from this client. Please wait before trying again.'}), async (req, res) => {
+app.post('/api/orders',
+  sharedRateLimit({windowMs:10*60_000,max:20,keyFn:req=>`orders:${clientIp(req)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts. Please wait before placing another order.'}),
+  sharedRateLimit({windowMs:10*60_000,max:12,keyFn:req=>`order-fingerprint:${clientIp(req)}:${String(req.headers['user-agent']||'').slice(0,120)}:${String(req.body?.businessId||'')}`,message:'Too many order attempts from this client. Please wait before trying again.'}),
+  async (req, res) => {
   const client=await pool.connect();
   try{
-    const {businessId,customer,items,paymentMethod,deliveryNote,quoteId}=req.body;
+    const {businessId,customer,items,paymentMethod,deliveryNote,quoteId,couponCode}=req.body;
     const normalizedPaymentMethod=paymentMethod==='M-Pesa'?'M-Pesa':paymentMethod==='Card'?'Card':null;
+    const idempotencyKey=String(req.headers['idempotency-key']||req.body?.idempotencyKey||'').trim();
+    if(!idempotencyKey||idempotencyKey.length<8||idempotencyKey.length>200)return res.status(400).json({error:'Idempotency-Key is required for order creation'});
     if(!businessId||!customer?.name||!customer?.phone||!customer?.email||!Array.isArray(items)||!items.length||!normalizedPaymentMethod) return res.status(400).json({error:'Missing order fields'});
     if(items.length>50) return res.status(400).json({error:'Too many order items'});
-    const pendingSpam=await pool.query(`select count(*)::int as count from orders o join customers c on c.id=o.customer_id where o.business_id=$1 and c.phone=$2 and o.status='NEW' and o.payment_status='PENDING' and o.created_at>now()-interval '30 minutes'`,[businessId,String(customer.phone).trim()]);
-    if(Number(pendingSpam.rows[0]?.count||0)>=5) return res.status(429).json({error:'Too many unpaid orders are already pending for this customer. Please complete or wait for an existing order.'});
+
+    const requestFingerprint=hashOrderRequest({
+      businessId,
+      customer:{name:String(customer.name).trim(),phone:String(customer.phone).trim(),email:String(customer.email).trim()},
+      items:items.map(item=>({productId:String(item.productId||'').trim(),quantity:Number(item.quantity),options:item.options&&typeof item.options==='object'?item.options:{}})),
+      paymentMethod:normalizedPaymentMethod,
+      deliveryNote:String(deliveryNote||'').trim(),
+      quoteId:quoteId?String(quoteId):null,
+      couponCode:couponCode?String(couponCode).trim().toUpperCase():null
+    });
+
+    await client.query('begin');
+    await client.query('select pg_advisory_xact_lock(hashtext($1))',[String(businessId)+':ORDER-IDEMP:'+idempotencyKey]);
+
+    const idemInsert=await client.query(
+      `insert into order_idempotency_keys(business_id,idempotency_key,request_hash)
+       values($1,$2,$3)
+       on conflict(business_id,idempotency_key) do nothing
+       returning business_id,idempotency_key,request_hash,order_id`,
+      [businessId,idempotencyKey,requestFingerprint]
+    );
+    if(!idemInsert.rowCount){
+      const existing=await client.query(
+        'select request_hash,order_id from order_idempotency_keys where business_id=$1 and idempotency_key=$2 for update',
+        [businessId,idempotencyKey]
+      );
+      if(!existing.rowCount){
+        await client.query('rollback');
+        return res.status(409).json({error:'Order idempotency record is unavailable. Please retry with the same key.'});
+      }
+      if(existing.rows[0].request_hash!==requestFingerprint){
+        await client.query('rollback');
+        return res.status(409).json({error:'Idempotency-Key was already used for a different order request'});
+      }
+      if(existing.rows[0].order_id){
+        const existingOrder=await client.query('select * from orders where id=$1 and business_id=$2',[existing.rows[0].order_id,businessId]);
+        if(!existingOrder.rowCount){
+          await client.query('rollback');
+          return res.status(409).json({error:'The previous order result is unavailable. Please contact the restaurant.'});
+        }
+        await client.query('commit');
+        const access=createCustomerOrderToken(existingOrder.rows[0].id);
+        return res.status(200).json({...existingOrder.rows[0],customerAccessToken:access.token,idempotent:true});
+      }
+    }
+
+    const pendingSpam=await client.query(`select count(*)::int as count from orders o join customers c on c.id=o.customer_id where o.business_id=$1 and c.phone=$2 and o.status='NEW' and o.payment_status='PENDING' and o.created_at>now()-interval '30 minutes'`,[businessId,String(customer.phone).trim()]);
+    if(Number(pendingSpam.rows[0]?.count||0)>=5){
+      await client.query('rollback');
+      return res.status(429).json({error:'Too many unpaid orders are already pending for this customer. Please complete or wait for an existing order.'});
+    }
+
     let deliveryFee=0,deliveryData=null;
     if(quoteId){
-      const quote=await pool.query('select * from delivery_quotes where id=$1 and business_id=$2 and status=\'QUOTED\'',[quoteId,businessId]);
-      if(!quote.rowCount) return res.status(400).json({error:'Delivery quote expired or invalid'});
-      deliveryData=quote.rows[0]; deliveryFee=Number(deliveryData.delivery_fee_kes);
+      const quote=await client.query(
+        `select * from delivery_quotes
+          where id=$1 and business_id=$2 and status='QUOTED' and order_id is null
+            and expires_at>now()
+          for update`,
+        [quoteId,businessId]
+      );
+      if(!quote.rowCount){
+        await client.query('rollback');
+        return res.status(400).json({error:'Delivery quote expired, already used, or invalid'});
+      }
+      deliveryData=quote.rows[0];
+      deliveryFee=Number(deliveryData.delivery_fee_kes||0);
+      const marked=await client.query(
+        `update delivery_quotes set status='USED',updated_at=now()
+          where id=$1 and status='QUOTED' and order_id is null
+          returning id`,
+        [quoteId]
+      );
+      if(!marked.rowCount){
+        await client.query('rollback');
+        return res.status(409).json({error:'Delivery quote was already used. Please request a new quote.'});
+      }
     }
-    await client.query('begin');
+
     let foodSubtotal=0;
     const trustedItems=[];
     for(const item of items){
@@ -1709,89 +2060,268 @@ app.post('/api/orders', sharedRateLimit({windowMs:10*60_000,max:20,keyFn:req=>`o
       trustedItems.push({productId,productName:product.name,quantity,unitPrice,options:submittedOptions});
     }
     foodSubtotal=Math.round(foodSubtotal*100)/100;
-    const numericTotal=Math.round((foodSubtotal+deliveryFee)*100)/100;
-    await client.query(`update delivery_quotes set status='USED' where id=$1 and status='QUOTED'`,[quoteId||null]);
-    const customerResult=await client.query(`insert into customers(id,business_id,name,phone,email) values(gen_random_uuid(),$1,$2,$3,$4) on conflict(business_id,phone) do update set name=excluded.name,email=coalesce(excluded.email,customers.email) returning id`,[businessId,customer.name.trim(),customer.phone.trim(),customer.email.trim()]);
-    const orderNumber='SB-'+Date.now().toString().slice(-8);
-    const pickupAddress=deliveryData?.pickup_address||null, deliveryAddress=deliveryData?.delivery_address||deliveryNote?.trim()||null;
-    const customerAccess=createCustomerOrderToken();
-    const orderResult=await client.query(`insert into orders(id,business_id,customer_id,order_number,status,payment_status,payment_method,delivery_note,subtotal,total,delivery_fee,food_subtotal,delivery_status,pickup_address,delivery_address,delivery_lat,delivery_lng,route_distance_meters,route_duration_seconds,delivery_fee_status,rider_earning,branch_id,customer_lat,customer_lng,selected_branch_distance_meters,selected_branch_duration_seconds,customer_access_token_hash) values(gen_random_uuid(),$1,$2,$3,'NEW','PENDING',$4,$5,$6,$7,$8,$6,$9,$10,$11,$12,$13,$14,$15,'HELD',$16,$17,$18,$19,$20,$21,$22) returning *`,[businessId,customerResult.rows[0].id,orderNumber,normalizedPaymentMethod,deliveryNote?.trim()||null,foodSubtotal,numericTotal,deliveryFee,deliveryFee>0?'QUOTED':'NONE',pickupAddress,deliveryAddress,deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,deliveryData?.duration_seconds||null,deliveryFee,deliveryData?.branch_id||null,deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,deliveryData?.duration_seconds||null,customerAccess.hash]);
-    for(const item of trustedItems){
-      await client.query(`insert into order_items(id,order_id,product_id,product_name,quantity,unit_price,options) values(gen_random_uuid(),$1,$2,$3,$4,$5,$6)`,[orderResult.rows[0].id,item.productId,item.productName,item.quantity,item.unitPrice,item.options]);
+
+    if (deliveryData) {
+      const zoneRows=await client.query(
+        `select * from delivery_zones
+          where business_id=$1 and active=true
+          order by priority desc`,
+        [businessId]
+      );
+      if(zoneRows.rowCount){
+        const lat=Number(deliveryData.customer_lat),lng=Number(deliveryData.customer_lng);
+        if(!Number.isFinite(lat)||!Number.isFinite(lng)) throw new Error('Delivery location coordinates are required for this restaurant');
+        const matches=zoneRows.rows.filter(z=>
+          z.zone_type==='RADIUS'
+            ? Number.isFinite(Number(z.center_latitude)) &&
+              Number.isFinite(Number(z.center_longitude)) &&
+              haversineMeters(Number(z.center_latitude),Number(z.center_longitude),lat,lng)<=Number(z.radius_meters)
+            : pointInPolygon(lat,lng,z.polygon)
+        );
+        if(!matches.length) throw new Error('Delivery location is outside the configured delivery zones');
+        const zone=matches[0];
+        if(foodSubtotal<Number(zone.minimum_order||0)) throw new Error('Order does not meet the delivery zone minimum order');
+        deliveryFee=Number(zone.fee||0);
+      }
     }
-    if(deliveryData) await client.query('update delivery_quotes set order_id=$1 where id=$2',[orderResult.rows[0].id,quoteId]);
-    await client.query(`insert into payments(id,order_id,provider,amount,status) values(gen_random_uuid(),$1,'PAYSTACK',$2,'PENDING')`,[orderResult.rows[0].id,numericTotal]);
+
+    let coupon=null;
+    let couponDiscount=0;
+    const normalizedCouponCode=String(couponCode||'').trim().toUpperCase();
+    if(normalizedCouponCode){
+      const couponResult=await client.query(
+        `select id,code,discount_type,discount_value,min_order_amount,max_redemptions,redeemed_count
+           from customer_coupons
+          where business_id=$1 and code=$2 and active=true and starts_at<=now()
+            and (expires_at is null or expires_at>now())
+          for update`,
+        [businessId,normalizedCouponCode]
+      );
+      if(!couponResult.rowCount) throw new Error('Coupon is invalid or expired');
+      coupon=couponResult.rows[0];
+      if(foodSubtotal<Number(coupon.min_order_amount)) throw new Error('Order does not meet the coupon minimum');
+      if(coupon.max_redemptions!==null && Number(coupon.redeemed_count)>=Number(coupon.max_redemptions)) throw new Error('Coupon redemption limit has been reached');
+      couponDiscount=coupon.discount_type==='PERCENT'
+        ? Math.min(foodSubtotal,Math.round(foodSubtotal*Number(coupon.discount_value)/100*100)/100)
+        : Math.min(foodSubtotal,Number(coupon.discount_value));
+      couponDiscount=Math.round(couponDiscount*100)/100;
+    }
+
+    const numericTotal=Math.round((foodSubtotal-couponDiscount+deliveryFee)*100)/100;
+    if(numericTotal<0) throw new Error('Invalid order total');
+
+    const customerResult=await client.query(
+      `insert into customers(id,business_id,name,phone,email)
+       values(gen_random_uuid(),$1,$2,$3,$4)
+       on conflict(business_id,phone)
+       do update set name=excluded.name,email=coalesce(excluded.email,customers.email)
+       returning id`,
+      [businessId,String(customer.name).trim(),String(customer.phone).trim(),String(customer.email).trim()]
+    );
+
+    if(coupon){
+      const used=await client.query(
+        'select id from customer_coupon_redemptions where coupon_id=$1 and customer_id=$2 limit 1 for update',
+        [coupon.id,customerResult.rows[0].id]
+      );
+      if(used.rowCount) throw new Error('Coupon has already been used by this customer');
+    }
+
+    const orderId=crypto.randomUUID();
+    const orderNumber='SB-'+Date.now().toString().slice(-8)+'-'+orderId.slice(0,4).toUpperCase();
+    const pickupAddress=deliveryData?.pickup_address||null;
+    const deliveryAddress=deliveryData?.delivery_address||req.body.deliveryAddress?.trim()||deliveryNote?.trim()||null;
+    const customerAccess=createCustomerOrderToken(orderId);
+
+    const orderResult=await client.query(
+      `insert into orders(
+        id,business_id,customer_id,order_number,status,payment_status,payment_method,delivery_note,
+        subtotal,total,delivery_fee,food_subtotal,coupon_id,coupon_discount,delivery_status,pickup_address,
+        delivery_address,delivery_lat,delivery_lng,route_distance_meters,route_duration_seconds,
+        delivery_fee_status,rider_earning,branch_id,customer_lat,customer_lng,
+        selected_branch_distance_meters,selected_branch_duration_seconds,customer_access_token_hash
+      ) values(
+        $1,$2,$3,$4,'NEW','PENDING',$5,$6,$7,$8,$9,$7,$10,$11,$12,$13,$14,$15,$16,$17,$18,
+        'HELD',$19,$20,$21,$22,$23,$24,$25
+      ) returning *`,
+      [
+        orderId,businessId,customerResult.rows[0].id,orderNumber,normalizedPaymentMethod,
+        deliveryNote?.trim()||null,foodSubtotal,numericTotal,deliveryFee,coupon?.id||null,couponDiscount,
+        deliveryFee>0?'QUOTED':'NONE',pickupAddress,deliveryAddress,
+        deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,
+        deliveryData?.duration_seconds||null,deliveryFee,deliveryData?.branch_id||null,
+        deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,
+        deliveryData?.duration_seconds||null,customerAccess.hash
+      ]
+    );
+
+    for(const item of trustedItems){
+      await client.query(
+        `insert into order_items(id,order_id,product_id,product_name,quantity,unit_price,options)
+         values(gen_random_uuid(),$1,$2,$3,$4,$5,$6)`,
+        [orderId,item.productId,item.productName,item.quantity,item.unitPrice,item.options]
+      );
+    }
+
+    if(coupon){
+      await client.query(
+        `insert into customer_coupon_redemptions(id,coupon_id,customer_id,order_id)
+         values(gen_random_uuid(),$1,$2,$3)`,
+        [coupon.id,customerResult.rows[0].id,orderId]
+      );
+      await client.query(
+        'update customer_coupons set redeemed_count=redeemed_count+1 where id=$1',
+        [coupon.id]
+      );
+    }
+
+    if(deliveryData){
+      await client.query('update delivery_quotes set order_id=$1,updated_at=now() where id=$2 and status=\'USED\'',[orderId,quoteId]);
+    }
+
+    await client.query(
+      `insert into payments(id,order_id,provider,amount,status)
+       values(gen_random_uuid(),$1,'PAYSTACK',$2,'PENDING')`,
+      [orderId,numericTotal]
+    );
+    await client.query(
+      'update order_idempotency_keys set order_id=$1,updated_at=now() where business_id=$2 and idempotency_key=$3',
+      [orderId,businessId,idempotencyKey]
+    );
     await client.query('commit');
-    res.status(201).json({...orderResult.rows[0], customerAccessToken: customerAccess.token});
-  }catch(error){try{await client.query('rollback')}catch{}res.status(500).json({error:error.message==='Invalid order item'?error.message:'Unable to create order'});}
-  finally{client.release();}
+    res.status(201).json({...orderResult.rows[0],customerAccessToken:customerAccess.token});
+  }catch(error){
+    try{await client.query('rollback')}catch{}
+    const status=error.message==='Invalid order item'?400:(
+      ['Coupon is invalid or expired','Order does not meet the coupon minimum','Coupon redemption limit has been reached','Coupon has already been used by this customer','Invalid order total','Menu item is unavailable','Delivery location coordinates are required for this restaurant','Delivery location is outside the configured delivery zones','Order does not meet the delivery zone minimum order','Delivery quote expired, already used, or invalid'].includes(error.message)?400:500
+    );
+    res.status(status).json({error:status===400?error.message:'Unable to create order'});
+  }finally{client.release();}
 });
 app.post('/api/payments/paystack/initialize', requireCustomerOrderBody, async (req,res)=>{
+  const idempotencyKey=String(req.headers['idempotency-key']||req.body?.idempotencyKey||'').trim();
+  if(!idempotencyKey||idempotencyKey.length>200)return res.status(400).json({error:'Idempotency-Key is required for payment initialization'});
+  const {orderId}=req.body;
+  if(!orderId)return res.status(400).json({error:'orderId is required'});
+  const client=await pool.connect();
+  let order;
   try{
-    const {orderId}=req.body;
-    if(!orderId) return res.status(400).json({error:'orderId is required'});
-    const result=await pool.query(`select o.id,o.order_number,o.total,o.food_subtotal,o.delivery_fee,o.payment_status,o.payment_method,o.status,c.email,c.phone,b.paystack_subaccount_code from orders o join customers c on c.id=o.customer_id join businesses b on b.id=o.business_id where o.id=$1`,[orderId]);
-    if(!result.rowCount) return res.status(404).json({error:'Order not found'});
-    const order=result.rows[0];
-    if(order.status==='CANCELLED') return res.status(409).json({error:'Order is cancelled'});
-    if(order.payment_status==='PAID') return res.json({paid:true,orderId});
-    const reference=`SB-${orderId.replace(/-/g,'')}-${Date.now()}`;
-    await pool.query(`update payments set provider_reference=$1,status='PENDING' where order_id=$2 and provider='PAYSTACK'`,[reference,orderId]);
-    const split=order.paystack_subaccount_code?{type:'flat',bearer_type:'account',subaccounts:[{subaccount:order.paystack_subaccount_code,share:Math.round(Number(order.food_subtotal)*100)}]}:null;
+    await client.query('begin');
+    await client.query('select pg_advisory_xact_lock(hashtext($1))',[String(orderId)]);
+    const result=await client.query(`select o.id,o.order_number,o.total,o.food_subtotal,o.delivery_fee,o.payment_status,o.payment_method,o.status,
+      c.email,c.phone,b.paystack_subaccount_code,p.id as payment_id,p.provider_reference,p.status as payment_state,
+      p.idempotency_key,p.authorization_url,p.payment_mode
+      from orders o join customers c on c.id=o.customer_id join businesses b on b.id=o.business_id
+      join payments p on p.order_id=o.id and p.provider='PAYSTACK'
+      where o.id=$1 for update`,[orderId]);
+    if(!result.rowCount){await client.query('rollback');return res.status(404).json({error:'Order or payment not found'});}
+    order=result.rows[0];
+    if(order.status==='CANCELLED'){await client.query('rollback');return res.status(409).json({error:'Order is cancelled'});}
+    if(order.payment_status==='PAID'){await client.query('commit');return res.json({paid:true,orderId});}
+    if(order.idempotency_key&&order.idempotency_key!==idempotencyKey&&order.provider_reference&&['INITIALIZING','PENDING'].includes(String(order.payment_state||'').toUpperCase())){
+      await client.query('rollback');
+      return res.status(409).json({error:'A payment is already being initialized for this order'});
+    }
+    if(order.idempotency_key===idempotencyKey&&order.provider_reference){
+      await client.query('commit');
+      if(order.payment_mode==='mobile_money')return res.json({mode:'mobile_money',orderId,reference:order.provider_reference,status:order.payment_state,displayText:'Check your phone and approve the M-Pesa payment.',idempotent:true});
+      return res.json({mode:'redirect',orderId,reference:order.provider_reference,authorizationUrl:order.authorization_url,idempotent:true});
+    }
+    await client.query(`update payments set idempotency_key=$1,status='INITIALIZING' where id=$2`,[idempotencyKey,order.payment_id]);
+    await client.query('commit');
+  }catch(error){
+    try{await client.query('rollback')}catch{}
+    return res.status(500).json({error:error.message||'Unable to reserve payment intent'});
+  }finally{client.release();}
+
+  const reference=`SB-${orderId.replace(/-/g,'')}-${crypto.randomBytes(10).toString('hex')}`;
+  const split=order.paystack_subaccount_code?{type:'flat',bearer_type:'account',subaccounts:[{subaccount:order.paystack_subaccount_code,share:Math.round(Number(order.food_subtotal)*100)}]}:null;
+  try{
     if(order.payment_method==='M-Pesa'){
       const payload={email:order.email,amount:String(Math.round(Number(order.total)*100)),currency:'KES',reference,mobile_money:{phone:normalizeKenyanPhone(order.phone),provider:'mpesa'}};
-      if(split) payload.split=split;
+      if(split)payload.split=split;
       const charge=await paystackRequest('/charge',{method:'POST',body:JSON.stringify(payload)});
-      if(charge.data?.reference&&charge.data.reference!==reference) await pool.query(`update payments set provider_reference=$1 where order_id=$2 and provider='PAYSTACK'`,[charge.data.reference,orderId]);
-      return res.json({mode:'mobile_money',orderId,reference:charge.data.reference||reference,status:charge.data.status,displayText:charge.data.display_text||'Check your phone and approve the M-Pesa payment.'});
+      const providerReference=charge.data?.reference||reference;
+      await pool.query(`update payments set provider_reference=$1,status='PENDING',payment_mode='mobile_money' where order_id=$2 and provider='PAYSTACK' and idempotency_key=$3`,[providerReference,orderId,idempotencyKey]);
+      return res.json({mode:'mobile_money',orderId,reference:providerReference,status:charge.data?.status,displayText:charge.data?.display_text||'Check your phone and approve the M-Pesa payment.'});
     }
-    const payload={email:order.email,amount:String(Math.round(Number(order.total)*100)),currency:'KES',reference,channels:['card'],callback_url:`${process.env.API_PUBLIC_URL||'https://restaurant-ordering-api-ow3p.onrender.com'}/api/payments/paystack/callback`,metadata:{order_id:order.id,order_number:order.order_number}};
-    if(split) payload.split=split;
+    const apiPublicUrl=process.env.API_PUBLIC_URL||'https://restaurant-ordering-api-ow3p.onrender.com';
+    const payload={email:order.email,amount:String(Math.round(Number(order.total)*100)),currency:'KES',reference,channels:['card'],callback_url:apiPublicUrl+'/api/payments/paystack/callback',metadata:{order_id:order.id,order_number:order.order_number}};
+    if(split)payload.split=split;
     const transaction=await paystackRequest('/transaction/initialize',{method:'POST',body:JSON.stringify(payload)});
+    await pool.query(`update payments set provider_reference=$1,status='PENDING',authorization_url=$2,payment_mode='redirect' where order_id=$3 and provider='PAYSTACK' and idempotency_key=$4`,[transaction.data.reference,transaction.data.authorization_url,orderId,idempotencyKey]);
     return res.json({mode:'redirect',orderId,reference:transaction.data.reference,authorizationUrl:transaction.data.authorization_url});
-  }catch(error){res.status(500).json({error:error.message||'Unable to initialize payment'});}
+  }catch(error){
+    await pool.query(`update payments set status='PENDING' where order_id=$1 and provider='PAYSTACK' and idempotency_key=$2 and status='INITIALIZING'`,[orderId,idempotencyKey]).catch(()=>{});
+    res.status(502).json({error:error.message||'Unable to initialize payment'});
+  }
 });
 app.get('/api/payments/paystack/callback', async (req, res) => { const reference = String(req.query.reference || ''); if (!reference) return res.redirect(`${FRONTEND_URL}/order.html?payment=missing`); try { const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' }); const data = verified.data; if (data?.status !== 'success') throw new Error('Payment was not successful'); const orderId = await markPaymentSuccessful(reference, data); if (!orderId) return res.redirect(`${FRONTEND_URL}/order.html?payment=not-found`); const receipt = await pool.query('select receipt_access_token from receipts where order_id=$1',[orderId]); const token = receipt.rows[0]?.receipt_access_token || ''; return res.redirect(`${FRONTEND_URL}/order.html?id=${encodeURIComponent(orderId)}&payment=success${token?'&receipt='+encodeURIComponent(token):''}`); } catch { const payment = await pool.query(`select order_id from payments where provider='PAYSTACK' and provider_reference=$1`, [reference]); const orderId = payment.rows[0]?.order_id; const target = orderId ? `${FRONTEND_URL}/order.html?id=${encodeURIComponent(orderId)}&payment=failed` : `${FRONTEND_URL}/order.html?payment=failed`; return res.redirect(target); } });
-app.post('/api/payments/paystack/verify', requireCustomerOrderBody, async (req, res) => { try { const reference = String(req.body.reference || ''); if (!reference) return res.status(400).json({ error: 'reference is required' }); const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' }); if (verified.data?.status === 'success') { const orderId = await markPaymentSuccessful(reference, verified.data); const receipt = orderId ? await pool.query('select receipt_access_token from receipts where order_id=$1',[orderId]) : null; return res.json({ status: 'success', orderId, receiptToken: receipt?.rows[0]?.receipt_access_token || null }); } res.json({ status: verified.data?.status || 'pending' }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to verify payment' }); } });
+app.post('/api/payments/paystack/verify', requireCustomerOrderBody, async (req, res) => { try { const reference = String(req.body.reference || ''); if (!reference) return res.status(400).json({ error: 'reference is required' }); const verified = await paystackRequest(`/transaction/verify/${encodeURIComponent(reference)}`, { method: 'GET' }); if (verified.data?.status === 'success') { if (String(verified.data?.reference || '') !== reference) throw new Error('Paystack reference mismatch'); const orderId = await markPaymentSuccessful(reference, verified.data, req.customerOrder.id); const receipt = orderId ? await pool.query('select receipt_access_token from receipts where order_id=$1',[orderId]) : null; return res.json({ status: 'success', orderId, receiptToken: receipt?.rows[0]?.receipt_access_token || null }); } res.json({ status: verified.data?.status || 'pending' }); } catch (error) { res.status(500).json({ error: error.message || 'Unable to verify payment' }); } });
 app.get('/api/payments/paystack/webhook', (_req, res) => { res.status(405).json({ error: 'Webhook endpoint accepts POST requests from Paystack.' }); });
-app.post('/api/payments/paystack/webhook', async (req, res) => { const signature = req.headers['x-paystack-signature']; const secret = process.env.PAYSTACK_SECRET_KEY; if (!signature || !secret || !req.rawBody) return res.sendStatus(401); const expected = crypto.createHmac('sha512', secret).update(req.rawBody).digest('hex'); const providedBuffer = Buffer.from(String(signature), 'utf8'); const expectedBuffer = Buffer.from(expected, 'utf8'); if (providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) return res.sendStatus(401); try { const event = req.body; if (event.event === 'charge.success' && event.data?.reference && event.data?.status === 'success') await markPaymentSuccessful(event.data.reference, event.data); if (event.event?.startsWith('refund.') && event.data) await updateRefundFromWebhook(event.data); return res.sendStatus(200); } catch (error) { console.error('Paystack webhook processing failed:', error.message); return res.sendStatus(500); } });
+app.post('/api/payments/paystack/webhook', async (req, res) => { const signature = req.headers['x-paystack-signature']; const secret = process.env.PAYSTACK_SECRET_KEY; if (!signature || !secret || !req.rawBody) return res.sendStatus(401); const expected = crypto.createHmac('sha512', secret).update(req.rawBody).digest('hex'); const providedBuffer = Buffer.from(String(signature), 'utf8'); const expectedBuffer = Buffer.from(expected, 'utf8'); if (providedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(providedBuffer, expectedBuffer)) return res.sendStatus(401); try { const event = req.body;
+    const resourceId=String(event?.data?.id||event?.data?.reference||event?.data?.transaction_reference||'');
+    if(resourceId){
+      const seen=await pool.query(`insert into paystack_webhook_events(event_id,event_type,resource_id,payload)
+        values($1,$2,$3,$4) on conflict(event_type,resource_id) do nothing returning id`,
+        [String(event?.id||'')||null,String(event?.event||'UNKNOWN'),resourceId,event]);
+      if(!seen.rowCount)return res.sendStatus(200);
+    }
+    if (event.event === 'charge.success' && event.data?.reference && event.data?.status === 'success') await markPaymentSuccessful(event.data.reference, event.data); if (event.event?.startsWith('refund.') && event.data) await updateRefundFromWebhook(event.data); return res.sendStatus(200); } catch (error) { console.error('Paystack webhook processing failed:', error.message); return res.sendStatus(500); } });
 app.post('/api/admin/refunds', async (req, res) => {
   if (!requireRefundAdmin(req, res)) return;
+  const {orderId,amount,customerNote,merchantNote}=req.body;
+  const requestedAmount=Number(amount);
+  const idempotencyKey=String(req.headers['idempotency-key']||req.body.idempotencyKey||'').trim();
+  if(!idempotencyKey||idempotencyKey.length>200)return res.status(400).json({error:'Idempotency-Key is required for refunds'});
+  if(!orderId||!Number.isFinite(requestedAmount)||requestedAmount<=0)return res.status(400).json({error:'orderId and a positive refund amount are required'});
   const client=await pool.connect();
+  let refundIntent=null;
+  let order=null;
   try{
-    const {orderId,amount,customerNote,merchantNote}=req.body;
-    const requestedAmount=Number(amount);
-    const idempotencyKey=String(req.headers['idempotency-key']||req.body.idempotencyKey||'').trim();
-    if(!idempotencyKey||idempotencyKey.length>200)return res.status(400).json({error:'Idempotency-Key is required for refunds'});
-    if(!orderId||!Number.isFinite(requestedAmount)||requestedAmount<=0)return res.status(400).json({error:'orderId and a positive refund amount are required'});
     await client.query('begin');
     await client.query('select pg_advisory_xact_lock(hashtext($1))',[idempotencyKey]);
-    const existing=await client.query('select * from refunds where idempotency_key=$1 limit 1',[idempotencyKey]);
-    if(existing.rowCount){await client.query('commit');return res.json({refund:existing.rows[0],idempotent:true});}
+    const existing=await client.query('select * from refunds where idempotency_key=$1 limit 1 for update',[idempotencyKey]);
+    if(existing.rowCount){
+      await client.query('commit');
+      return res.json({refund:existing.rows[0],idempotent:true,reconciliationPending:['PENDING','PROCESSING','NEEDS-ATTENTION'].includes(String(existing.rows[0].status).toUpperCase())});
+    }
     const orderResult=await client.query(`select o.id,o.business_id,o.total,o.food_subtotal,o.subtotal,o.payment_status,o.delivery_fee_released_at,p.id as payment_id,p.provider_reference,p.amount as paid_amount
       from orders o join payments p on p.order_id=o.id and p.provider='PAYSTACK'
       where o.id=$1 for update`,[orderId]);
     if(!orderResult.rowCount){await client.query('rollback');return res.status(404).json({error:'Paid Paystack order not found'});}
-    const order=orderResult.rows[0];
+    order=orderResult.rows[0];
     if(order.payment_status!=='PAID'){await client.query('rollback');return res.status(409).json({error:'Only paid orders can be refunded'});}
     if(order.delivery_fee_released_at&&requestedAmount>Number(order.food_subtotal||order.subtotal)){await client.query('rollback');return res.status(400).json({error:'Delivery fee is not refundable after completed delivery; refund can only cover the food portion.'});}
     if(!order.provider_reference){await client.query('rollback');return res.status(409).json({error:'Paystack transaction reference is missing'});}
-    const refundedResult=await client.query(`select coalesce(sum(amount),0) as total from refunds where payment_id=$1 and status in ('PENDING','PROCESSING','PROCESSED')`,[order.payment_id]);
+    const refundedResult=await client.query(`select coalesce(sum(amount),0) as total from refunds where payment_id=$1 and status in ('PENDING','PROCESSING','PROCESSED','NEEDS-ATTENTION')`,[order.payment_id]);
     const remaining=Number(order.paid_amount)-Number(refundedResult.rows[0].total);
     if(requestedAmount>remaining+0.0001){await client.query('rollback');return res.status(400).json({error:`Refund exceeds the remaining refundable amount (${remaining.toFixed(2)} KES)`});}
-    const refund=await paystackRequest('/refund',{method:'POST',body:JSON.stringify({transaction:order.provider_reference,amount:String(Math.round(requestedAmount*100)),currency:'KES',customer_note:customerNote||undefined,merchant_note:merchantNote||undefined})});
-    const data=refund.data||{};
-    const insert=await client.query(`insert into refunds (id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,customer_note,merchant_note,idempotency_key)
-      values(gen_random_uuid(),$1,$2,'PAYSTACK',$3,$4,$5,'KES',$6,$7,$8,$9) returning *`,
-      [order.id,order.payment_id,data.id?String(data.id):null,order.provider_reference,requestedAmount,String(data.status||'pending').toUpperCase(),customerNote||null,merchantNote||null,idempotencyKey]);
+    const inserted=await client.query(`insert into refunds (id,order_id,payment_id,provider,provider_refund_id,transaction_reference,amount,currency,status,customer_note,merchant_note,idempotency_key)
+      values(gen_random_uuid(),$1,$2,'PAYSTACK',null,$3,$4,'KES','PENDING',$5,$6,$7) returning *`,
+      [order.id,order.payment_id,order.provider_reference,requestedAmount,customerNote||null,merchantNote||null,idempotencyKey]);
+    refundIntent=inserted.rows[0];
     await client.query('commit');
-    broadcastRealtime({businessId:order.business_id,orderId:order.id,event:'refund.updated',data:{orderId:order.id,refund:insert.rows[0]}});
-    res.json({refund:insert.rows[0],idempotent:false});
   }catch(error){
     try{await client.query('rollback')}catch{}
     if(error.code==='23505')return res.status(409).json({error:'A refund with this Idempotency-Key already exists'});
-    res.status(500).json({error:error.message||'Unable to process refund'});
+    return res.status(500).json({error:error.message||'Unable to create refund intent'});
   }finally{client.release();}
+
+  try{
+    const refund=await paystackRequest('/refund',{method:'POST',body:JSON.stringify({transaction:order.provider_reference,amount:String(Math.round(requestedAmount*100)),currency:'KES',customer_note:customerNote||undefined,merchant_note:merchantNote||undefined})});
+    const data=refund.data||{};
+    const updated=await pool.query(`update refunds set provider_refund_id=coalesce($1,provider_refund_id),status=$2,updated_at=now() where id=$3 returning *`,
+      [data.id?String(data.id):null,String(data.status||'pending').toUpperCase(),refundIntent.id]);
+    const result=updated.rows[0];
+    broadcastRealtime({businessId:order.business_id,orderId:order.id,event:'refund.updated',data:{orderId:order.id,refund:result}});
+    return res.json({refund:result,idempotent:false});
+  }catch(error){
+    const updated=await pool.query(`update refunds set status='NEEDS-ATTENTION',updated_at=now() where id=$1 and status in ('PENDING','PROCESSING') returning *`,[refundIntent.id]).catch(()=>({rows:[]}));
+    const result=updated.rows[0]||refundIntent;
+    await recordSystemIncident({businessId:order.business_id,source:'REFUNDS',severity:'CRITICAL',message:'Refund provider outcome could not be confirmed; manual reconciliation is required.',metadata:{orderId:order.id,refundId:refundIntent.id,idempotencyKey,provider:'PAYSTACK'}});
+    return res.status(202).json({refund:result,reconciliationPending:true,error:'Refund outcome could not be confirmed. No automatic retry was performed.'});
+  }
 });
 
 app.get('/api/riders/events', requireRiderModule, async(req,res)=>{
@@ -2560,6 +3090,14 @@ async function ensurePlatformObservabilitySchema(){
     create unique index if not exists platform_incidents_fingerprint_idx on platform_incidents(fingerprint);
     create index if not exists platform_incidents_business_idx on platform_incidents(business_id,last_seen_at desc);
     create index if not exists platform_incidents_status_idx on platform_incidents(status,last_seen_at desc);
+    create table if not exists telemetry_access_tokens (
+      token_hash text primary key,
+      scope text not null check (scope in ('MANAGER','RIDER','STATION','PLATFORM')),
+      business_id uuid references businesses(id) on delete cascade,
+      expires_at timestamptz not null,
+      created_at timestamptz not null default now()
+    );
+    create index if not exists telemetry_access_tokens_expiry_idx on telemetry_access_tokens(expires_at);
   `);
 }
 
@@ -2794,11 +3332,41 @@ app.post('/api/platform/incidents/:id/resolve',requirePlatformAdmin,requirePlatf
   }catch(e){res.status(500).json({error:e.message||'Unable to resolve incident'});}
 });
 
+app.post('/api/telemetry-token',async(req,res)=>{
+  try{
+    const bearer=String(req.headers.authorization||'').startsWith('Bearer ')?String(req.headers.authorization).slice(7).trim():'';
+    if(!bearer)return res.status(401).json({error:'Authentication required'});
+    const scope=String(req.body?.scope||'').toUpperCase();
+    if(scope==='MANAGER'){
+      const manager=await getManagerFromSession({headers:{authorization:'Bearer '+bearer}});
+      if(!manager)return res.status(401).json({error:'Manager login required'});
+      return res.json({token:await issueTelemetryAccessToken({scope,businessId:manager.business_id}),expiresIn:600});
+    }
+    if(scope==='RIDER'){
+      const rider=await getRiderFromSession({headers:{authorization:'Bearer '+bearer}});
+      if(!rider)return res.status(401).json({error:'Rider login required'});
+      return res.json({token:await issueTelemetryAccessToken({scope,businessId:rider.business_id}),expiresIn:600});
+    }
+    if(scope==='STATION'){
+      const station=await getStationFromSession({headers:{authorization:'Bearer '+bearer}});
+      if(!station)return res.status(401).json({error:'Station login required'});
+      return res.json({token:await issueTelemetryAccessToken({scope,businessId:station.business_id}),expiresIn:600});
+    }
+    const platform=await getPlatformAdmin({headers:{authorization:'Bearer '+bearer}});
+    if(!platform)return res.status(401).json({error:'Platform login required'});
+    return res.json({token:await issueTelemetryAccessToken({scope:'PLATFORM'}),expiresIn:600});
+  }catch(error){res.status(500).json({error:error.message||'Unable to create telemetry token'});}
+});
+
 app.post('/api/platform/telemetry',telemetryRateLimit,async(req,res)=>{
   try{
+    const telemetryToken=String(req.headers.authorization||'').startsWith('Bearer ')?String(req.headers.authorization).slice(7).trim():'';
+    const telemetryAccess=await getTelemetryAccessToken(telemetryToken);
+    if(!telemetryAccess)return res.status(401).json({error:'Telemetry authorization required'});
     const message=String(req.body.message||'').trim().slice(0,1000);
     if(!message)return res.status(400).json({error:'Error message is required'});
-    const businessId=String(req.body.businessId||'').trim()||null;
+    const requestedBusinessId=String(req.body.businessId||'').trim()||null;
+    const businessId=telemetryAccess.scope==='PLATFORM' ? requestedBusinessId : (telemetryAccess.business_id ? String(telemetryAccess.business_id) : null);
     const source=String(req.body.source||'WEB').trim().slice(0,40)||'WEB';
     const dashboard=String(req.body.dashboard||'UNKNOWN').trim().slice(0,80)||'UNKNOWN';
     const severity=['INFO','WARN','ERROR','CRITICAL'].includes(String(req.body.severity||'ERROR').toUpperCase())?String(req.body.severity).toUpperCase():'ERROR';
@@ -3065,6 +3633,11 @@ registerBrandingEngine(app,pool,{requireControl,requireManager,broadcastRealtime
 registerReceiptEngine(app,pool,{requireManager});
 registerDeliveryEngine(app,pool,requireManager);
 registerMenuEngine(app,pool,requireManager,broadcastRealtime);
+registerPosEngine(app,pool,{requireManager,broadcastRealtime});
+registerCustomerGrowth(app,pool);
+registerAdvancedOperations(app,pool);
+registerIntelligence(app,pool);
+registerProductionObservability(app,pool,{requirePlatformAdmin,requirePlatformRole,recordSystemIncident});
 
 
 function integrationTypeLabel(type){
@@ -3177,18 +3750,88 @@ app.get('/api/public/integrations/:token.js',(req,res)=>{
   })();
 });
 
+async function recordSystemIncident({businessId=null,source='SYSTEM',dashboard='CONTROL_CENTRE',severity='ERROR',message,metadata={}}){
+  const cleanMessage=String(message||'').slice(0,1000);
+  const fingerprint=crypto.createHash('sha256').update(JSON.stringify({businessId,source,dashboard,message:cleanMessage})).digest('hex');
+  try{
+    await pool.query(`insert into platform_incidents(business_id,source,dashboard,severity,status,fingerprint,message,metadata)
+      values($1,$2,$3,$4,'OPEN',$5,$6,$7)
+      on conflict(fingerprint) do update set occurrences=platform_incidents.occurrences+1,last_seen_at=now(),severity=excluded.severity,metadata=excluded.metadata,status='OPEN',resolved_at=null`,
+      [businessId,source,dashboard,severity,fingerprint,cleanMessage,metadata]);
+  }catch(error){ console.error('Incident recording warning:',error.message); }
+}
+
+async function runIncidentSweep(){
+  try{ await pool.query('select 1'); }
+  catch{
+    await recordSystemIncident({source:'SYSTEM',severity:'CRITICAL',message:'Database is unavailable.',metadata:{database:false}});
+    return {database:false};
+  }
+
+  try{
+    const [pending,stuck,failedOutboxRows,refunds]=await Promise.all([
+      pool.query("select count(*)::int as count from orders where payment_status='PENDING' and status<>'CANCELLED' and created_at < now()-interval '30 minutes'"),
+      pool.query("select count(*)::int as count from orders where status in ('ACCEPTED','OUT_FOR_DELIVERY') and created_at < now()-interval '6 hours'"),
+      pool.query("select count(*)::int as count from outbox_events where status='FAILED' and attempts >= 3"),
+      pool.query("select count(*)::int as count from refunds where status='NEEDS-ATTENTION'")
+    ]);
+    const oldPayments=Number(pending.rows[0]?.count||0);
+    const stuckOrders=Number(stuck.rows[0]?.count||0);
+    const failedOutbox=Number(failedOutboxRows.rows[0]?.count||0);
+    const needsAttentionRefunds=Number(refunds.rows[0]?.count||0);
+
+    if(oldPayments>0) await recordSystemIncident({source:'PAYMENTS',severity:'ERROR',message:String(oldPayments)+' order payment(s) have remained pending for more than 30 minutes. No payment is marked successful by the incident system.',metadata:{count:oldPayments}});
+    if(stuckOrders>0) await recordSystemIncident({source:'ORDERS',severity:'ERROR',message:String(stuckOrders)+' order(s) have remained in an active delivery state for more than 6 hours. No order status is changed automatically.',metadata:{count:stuckOrders}});
+    if(failedOutbox>0) await recordSystemIncident({source:'OUTBOX',severity:'ERROR',message:String(failedOutbox)+' outbox event(s) exhausted their bounded retry limit.',metadata:{count:failedOutbox,maxAttempts:3}});
+    if(needsAttentionRefunds>0) await recordSystemIncident({source:'REFUNDS',severity:'CRITICAL',message:String(needsAttentionRefunds)+' refund(s) require manual reconciliation.',metadata:{count:needsAttentionRefunds}});
+  }catch(error){
+    await recordSystemIncident({source:'SYSTEM',severity:'CRITICAL',message:'Incident sweep could not complete its database checks.',metadata:{error:String(error.message||'unknown').slice(0,500)}});
+  }
+
+  const dependencies={
+    payments:Boolean(String(process.env.PAYSTACK_SECRET_KEY||'').trim()),
+    googleMaps:Boolean(String(process.env.GOOGLE_MAPS_API_KEY||'').trim()),
+    sms:Boolean(String(process.env.AFRICASTALKING_USERNAME||'').trim()&&String(process.env.AFRICASTALKING_API_KEY||'').trim())
+  };
+  if(!dependencies.payments) await recordSystemIncident({source:'PAYMENTS',severity:'CRITICAL',message:'Payment provider configuration is missing.',metadata:{configured:false}});
+  if(!dependencies.googleMaps) await recordSystemIncident({source:'MAPS',severity:'ERROR',message:'Google Maps configuration is missing; delivery route features may be unavailable.',metadata:{configured:false}});
+  if(!dependencies.sms) await recordSystemIncident({source:'SMS',severity:'ERROR',message:'SMS provider configuration is missing; SMS delivery is unavailable.',metadata:{configured:false}});
+  return {database:true,dependencies};
+}
+
 async function cleanupSecurityArtifacts(){
-  try{ await pool.query("update delivery_quotes set status='EXPIRED' where status='QUOTED' and created_at < now()-interval '30 minutes'"); }
+  try{
+    await pool.query("update delivery_quotes set status='EXPIRED' where status='QUOTED' and expires_at<=now()");
+    await pool.query("delete from telemetry_access_tokens where expires_at<=now()");
+    await pool.query("delete from realtime_access_tokens where expires_at<=now()");
+    await pool.query("delete from outbox_events where status='PUBLISHED' and processed_at < now()-interval '7 days'"); }
   catch(error){ console.error('Security cleanup warning:',error.message); }
 }
 async function startServer(){
+  await ensurePhaseASchema();
+  await ensurePhaseBSchema();
+  await ensurePhaseFSchema();
+  await ensurePhaseGSchema();
+  await ensurePhaseHSchema();
+  await ensurePhaseISchema();
+  await ensurePhaseJSchema();
+  await ensurePhaseKSchema();
   await ensureIntegrationSchema();
   await ensurePhase1SecuritySchema();
   await ensurePhase3SecuritySchema();
   await cleanupSecurityArtifacts();
+  await runSelfHealingSweep(pool);
+  await runIncidentSweep();
+  await runIntelligenceSweep(pool);
+  setInterval(() => runIntelligenceSweep(pool), 6 * 60 * 60_000).unref?.();
   setInterval(cleanupSecurityArtifacts,30*60_000).unref?.();
+  // Phase M recovery is deliberately infrequent and bounded. It only reconciles
+  // existing infrastructure state; it never changes payment/order outcomes.
+  setInterval(() => runSelfHealingSweep(pool).catch(() => {}), 5*60_000).unref?.();
+  setInterval(() => runIncidentSweep().catch(() => {}), 5*60_000).unref?.();
   await ensureSmsSchema();
   await ensurePlatformObservabilitySchema();
+  await startRealtimeBus();
   app.listen(port, () => console.log(`Ordering API listening on ${port}`));
 }
 startServer().catch(error => { console.error('Unable to start ordering API', error); process.exit(1); });

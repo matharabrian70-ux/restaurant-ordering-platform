@@ -14,14 +14,14 @@ async function pair(token){
     location.href='station.html';
   }catch(e){
     pairingInProgress=false;
-    view.innerHTML='<section class="connect-card"><span class="eyebrow">PAIRING FAILED</span><h1>Could not connect</h1><p>'+esc(e.message)+'</p><button class="station-btn" onclick="render()">TRY AGAIN</button></section>';
+    view.innerHTML='<section class="connect-card"><span class="eyebrow">PAIRING FAILED</span><h1>Could not connect</h1><p>'+esc(e.message)+'</p><button class="station-btn" data-action="render()">TRY AGAIN</button></section>';
   }
 }
 function render(){
   pairingInProgress=false;
   const q=new URLSearchParams(location.search),t=q.get('token');
   if(t)return pair(t);
-  view.innerHTML='<section class="connect-card"><span class="eyebrow">ORDER CONTROL DEVICE</span><h1>Connect this device</h1><p>Open the camera scanner to scan the QR shown on the manager dashboard.</p><div id="reader"></div><label class="manual-code">Or paste connection link/token<input id="manual" placeholder="https://…/connect-device.html?token=…"><button class="station-btn" onclick="pair(tokenFromValue(document.getElementById(\'manual\').value))">CONNECT</button></label><p class="connect-note">Camera scanning requires the site to be opened over HTTPS and camera permission.</p></section>';
+  view.innerHTML='<section class="connect-card"><span class="eyebrow">ORDER CONTROL DEVICE</span><h1>Connect this device</h1><p>Open the camera scanner to scan the QR shown on the manager dashboard.</p><div id="reader"></div><label class="manual-code">Or paste connection link/token<input id="manual" placeholder="https://…/connect-device.html?token=…"><button class="station-btn" data-action="pair(tokenFromValue(document.getElementById(\'manual\').value))">CONNECT</button></label><p class="connect-note">Camera scanning requires the site to be opened over HTTPS and camera permission.</p></section>';
   startScanner();
 }
 async function startScanner(){

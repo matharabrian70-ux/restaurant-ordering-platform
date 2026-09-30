@@ -19,7 +19,7 @@ function has(text, value, message = value) {
 }
 
 test('Phase 1: order pricing is server-authoritative', () => {
-  const block = section("app.post('/api/orders'");
+  const block = section("app.post('/api/orders'", 14000);
   has(block, 'productId'); assert.match(block, /from products/i); for (const value of ['foodSubtotal','deliveryFee','numericTotal']) has(block, value);
   assert.doesNotMatch(block, /body\\.unitPrice/);
   assert.doesNotMatch(block, /body\\.subtotal/);

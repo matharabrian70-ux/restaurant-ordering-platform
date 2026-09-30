@@ -2,19 +2,16 @@
 'use strict';
 const trustedSanitizer=(()=>{
   const sanitize=(input)=>{
-    const parsed=new DOMParser().parseFromString(String(input??''),'text/html');
-    const template=document.createElement('template');
-    template.content.append(...Array.from(parsed.body.childNodes).map(node=>node.cloneNode(true)));
-    const blocked=new Set(['SCRIPT','IFRAME','OBJECT','EMBED','BASE','META','LINK']);
-    template.content.querySelectorAll('*').forEach(node=>{
-      if(blocked.has(node.tagName)){node.remove();return}
-      [...node.attributes].forEach(attr=>{
-        const name=attr.name.toLowerCase(),value=attr.value.trim();
-        if(name.startsWith('on')||name==='srcdoc'){node.removeAttribute(attr.name);return}
-        if(['href','src','action','formaction','xlink:href'].includes(name)&&/^(javascript|vbscript):/i.test(value))node.removeAttribute(attr.name);
-      });
-    });
-    return template.innerHTML;
+    let html=String(input??'');
+    // Keep the Trusted Types policy callback free of DOM/HTML parser sinks.
+    // Those sinks would invoke the default policy again and recurse.
+    html=html.replace(/<\s*(script|iframe|object|embed|base|meta|link)(?:\s[^>]*)?>[\s\S]*?<\s*\/\s*\1\s*>/gi,'');
+    html=html.replace(/<\s*(script|iframe|object|embed|base|meta|link)(?:\s[^>]*)?\/\s*>/gi,'');
+    html=html.replace(/\s+on[a-z0-9_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi,'');
+    html=html.replace(/\s+srcdoc\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi,'');
+    html=html.replace(/\s+(href|src|action|formaction|xlink:href)\s*=\s*(["'])\s*(?:javascript|vbscript):[^"']*\2/gi,'');
+    html=html.replace(/\s+(href|src|action|formaction|xlink:href)\s*=\s*(?:javascript|vbscript):[^\s>]+/gi,'');
+    return html;
   };
   try{
     if(window.trustedTypes)return window.trustedTypes.createPolicy('default',{createHTML:sanitize});

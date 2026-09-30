@@ -5,11 +5,11 @@ const trustedSanitizer=(()=>{
     let html=String(input??'');
     // Keep the Trusted Types policy callback free of DOM/HTML parser sinks.
     // Those sinks would invoke the default policy again and recurse.
-    html=html.replace(/<\s*(script|iframe|object|embed|base|meta|link)(?:\s[^>]*)?>[\s\S]*?<\s*\/\s*\\1\s*>/gi,'');
+    html=html.replace(/<\s*(script|iframe|object|embed|base|meta|link)(?:\s[^>]*)?>[\s\S]*?<\s*\/\s*\1\s*>/gi,'');
     html=html.replace(/<\s*(script|iframe|object|embed|base|meta|link)(?:\s[^>]*)?\/\s*>/gi,'');
     html=html.replace(/\s+on[a-z0-9_-]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi,'');
     html=html.replace(/\s+srcdoc\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi,'');
-    html=html.replace(/\s+(href|src|action|formaction|xlink:href)\s*=\s*(["'])\s*(?:javascript|vbscript):[^"']*\\2/gi,'');
+    html=html.replace(/\s+(href|src|action|formaction|xlink:href)\s*=\s*(["'])\s*(?:javascript|vbscript):[^"']*\2/gi,'');
     html=html.replace(/\s+(href|src|action|formaction|xlink:href)\s*=\s*(?:javascript|vbscript):[^\s>]+/gi,'');
     return html;
   };

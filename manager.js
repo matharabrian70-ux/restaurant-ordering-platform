@@ -347,11 +347,15 @@ function makeVariableKey(value){return String(value??'').trim().toLowerCase().re
 function cloneMenuVariables(options){return Array.isArray(options)?JSON.parse(JSON.stringify(options)):[]}
 function renderVariableGroups(targetId='new-variable-groups',draft=newMenuVariables){
   const el=document.getElementById(targetId);if(!el)return;
+  const editMode=targetId==='edit-variable-groups';
+  const removeGroupFn=editMode?'removeEditVariableGroup':'removeVariableGroup';
+  const addChoiceFn=editMode?'addEditVariableChoice':'addVariableChoice';
+  const removeChoiceFn=editMode?'removeEditVariableChoice':'removeVariableChoice';
   el.innerHTML=draft.length?draft.map((g,gi)=>`
     <div class="menu-variable-group" data-variable-group="${gi}">
       <div class="menu-variable-group-head">
         <input class="variable-draft-input" data-group-index="${gi}" data-variable-field="name" value="${esc(g.name||'')}" placeholder="Variable name e.g. Size" maxlength="80">
-        <button type="button" class="btn btn-small secondary" data-action="removeVariableGroup(${gi})">REMOVE</button>
+        <button type="button" class="btn btn-small secondary" data-action="${removeGroupFn}(${gi})">REMOVE</button>
       </div>
       <div class="menu-variable-choices">
         ${(g.choices||[]).map((ch,ci)=>`
@@ -359,30 +363,16 @@ function renderVariableGroups(targetId='new-variable-groups',draft=newMenuVariab
             <input class="variable-draft-input" data-group-index="${gi}" data-choice-index="${ci}" data-variable-field="key" value="${esc(ch?.[0]||'')}" placeholder="Key" maxlength="80">
             <input class="variable-draft-input" data-group-index="${gi}" data-choice-index="${ci}" data-variable-field="label" value="${esc(ch?.[1]||'')}" placeholder="Customer label" maxlength="120">
             <input class="variable-draft-input" data-group-index="${gi}" data-choice-index="${ci}" data-variable-field="price" type="number" min="0" max="100000" step=".01" value="${Number(ch?.[2]||0)}" placeholder="+ KES">
-            <button type="button" class="btn btn-small secondary" data-action="removeVariableChoice(${gi},${ci})" aria-label="Remove choice">×</button>
+            <button type="button" class="btn btn-small secondary" data-action="${removeChoiceFn}(${gi},${ci})" aria-label="Remove choice">×</button>
           </div>`).join('')}
       </div>
-      <button type="button" class="btn btn-small" data-action="addVariableChoice(${gi})">+ ADD CHOICE</button>
-    </div>`).join(''):'<p class="muted menu-variable-empty">No variables yet. Add one when customers need to choose a size, side, spice level, add-on or other variation.</p>';
+      <button type="button" class="btn btn-small" data-action="${addChoiceFn}(${gi})">+ ADD CHOICE</button>
+    </div>`).join(''):'<p class="muted menu-variable-empty">No variables yet. Add one when customers need to choose a size, side, spice level, portion, add-on or other variation.</p>';
 }
-function addVariableGroup(target='new'){
-  const draft=target==='new'?newMenuVariables:(variableDraftProductId?cloneMenuVariables(D.menu.products.find(p=>p.id===variableDraftProductId)?.options):[]);
-  draft.push({name:'',choices:[['','',0]]});
-  if(target==='new'){newMenuVariables=draft;renderVariableGroups();}else{window.variableEditDraft=draft;renderVariableGroups('edit-variable-groups',draft);}
-}
-function removeVariableGroup(index){newMenuVariables.splice(index,1);renderVariableGroups();}
-function addVariableChoice(index){newMenuVariables[index]=newMenuVariables[index]||{name:'',choices:[]};newMenuVariables[index].choices.push(['','',0]);renderVariableGroups();}
-function removeVariableChoice(gi,ci){if(newMenuVariables[gi]){newMenuVariables[gi].choices.splice(ci,1);if(!newMenuVariables[gi].choices.length)newMenuVariables[gi].choices.push(['','',0]);renderVariableGroups();}}
-function readVariableDraftInputs(draft,targetId){
-  const root=document.getElementById(targetId);if(!root)return draft;
-  root.querySelectorAll('.variable-draft-input').forEach(input=>{
-    const gi=Number(input.dataset.groupIndex),ci=input.dataset.choiceIndex==null?null:Number(input.dataset.choiceIndex),field=input.dataset.variableField;
-    if(!draft[gi])return;
-    if(ci===null)draft[gi][field]=input.value;
-    else if(draft[gi].choices?.[ci])draft[gi].choices[ci][field==='price'?2:field==='key'?0:1]=field==='price'?Number(input.value||0):input.value;
-  });
-  return draft;
-}
+function addVariableGroup(){newMenuVariables=readVariableDraftInputs(newMenuVariables,'new-variable-groups');newMenuVariables.push({name:'',choices:[['','',0]]});renderVariableGroups();}
+function removeVariableGroup(index){newMenuVariables=readVariableDraftInputs(newMenuVariables,'new-variable-groups');newMenuVariables.splice(index,1);renderVariableGroups();}
+function addVariableChoice(index){newMenuVariables=readVariableDraftInputs(newMenuVariables,'new-variable-groups');newMenuVariables[index]=newMenuVariables[index]||{name:'',choices:[]};newMenuVariables[index].choices.push(['','',0]);renderVariableGroups();}
+function removeVariableChoice(gi,ci){newMenuVariables=readVariableDraftInputs(newMenuVariables,'new-variable-groups');if(newMenuVariables[gi]){newMenuVariables[gi].choices.splice(ci,1);if(!newMenuVariables[gi].choices.length)newMenuVariables[gi].choices.push(['','',0]);}renderVariableGroups();}
 function normalizeManagerVariables(draft){
   const groups=cloneMenuVariables(draft);
   const seen=new Set();
@@ -432,10 +422,11 @@ function openVariableEditor(id){
   host.innerHTML='<section class="refund-modal variable-editor-modal" role="dialog" aria-modal="true"><button type="button" class="modal-close" data-action="closeVariableEditor()" aria-label="Close">×</button><span class="eyebrow">MENU ITEM VARIABLES</span><h2>'+esc(p.name)+'</h2><p class="muted">Customers will see these choices when they add this item. Price adjustments are added to the base item price.</p><div id="edit-variable-groups"></div><div class="button-row variable-editor-actions"><button type="button" class="btn btn-small" data-action="addEditVariableGroup()">+ ADD VARIABLE</button><button type="button" class="btn wide" data-action="saveVariableEditor()">SAVE VARIABLES</button></div></section>';
   document.body.appendChild(host);renderVariableGroups('edit-variable-groups',window.variableEditDraft);
 }
-function addEditVariableGroup(){const draft=window.variableEditDraft||[];draft.push({name:'',choices:[['','',0]]});window.variableEditDraft=draft;renderVariableGroups('edit-variable-groups',draft);}
-function removeEditVariableGroup(index){const draft=window.variableEditDraft||[];draft.splice(index,1);window.variableEditDraft=draft;renderVariableGroups('edit-variable-groups',draft);}
-function addEditVariableChoice(index){const draft=window.variableEditDraft||[];draft[index]?.choices.push(['','',0]);renderVariableGroups('edit-variable-groups',draft);}
-function removeEditVariableChoice(gi,ci){const draft=window.variableEditDraft||[];if(draft[gi]){draft[gi].choices.splice(ci,1);if(!draft[gi].choices.length)draft[gi].choices.push(['','',0]);}renderVariableGroups('edit-variable-groups',draft);}
+function syncEditVariableDraft(){window.variableEditDraft=readVariableDraftInputs(window.variableEditDraft||[],'edit-variable-groups');return window.variableEditDraft}
+function addEditVariableGroup(){const draft=syncEditVariableDraft();draft.push({name:'',choices:[['','',0]]});renderVariableGroups('edit-variable-groups',draft);}
+function removeEditVariableGroup(index){const draft=syncEditVariableDraft();draft.splice(index,1);renderVariableGroups('edit-variable-groups',draft);}
+function addEditVariableChoice(index){const draft=syncEditVariableDraft();draft[index]?.choices.push(['','',0]);renderVariableGroups('edit-variable-groups',draft);}
+function removeEditVariableChoice(gi,ci){const draft=syncEditVariableDraft();if(draft[gi]){draft[gi].choices.splice(ci,1);if(!draft[gi].choices.length)draft[gi].choices.push(['','',0]);}renderVariableGroups('edit-variable-groups',draft);}
 async function saveVariableEditor(){
   try{
     const draft=readVariableDraftInputs(window.variableEditDraft||[],'edit-variable-groups');

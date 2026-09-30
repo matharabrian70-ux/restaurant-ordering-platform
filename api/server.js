@@ -1132,7 +1132,7 @@ async function getRiderFromSession(req) {
   const raw = String(req.headers.authorization || '');
   const token = raw.startsWith('Bearer ') ? raw.slice(7).trim() : '';
   if (!token) return null;
-  const result = await pool.query(`select r.*,s.id as session_id,s.expires_at from rider_sessions s join riders r on r.id=s.rider_id where s.token_hash=$1 and s.expires_at>now()`, [hashSessionToken(token)]);
+  const result = await pool.query(`select r.*,s.id as session_id,s.expires_at from rider_sessions s join riders r on r.id=s.rider_id where s.token_hash=$1 and s.expires_at>now() and r.active=true and r.rider_status='ACTIVE'`, [hashSessionToken(token)]);
   return result.rows[0] || null;
 }
 async function requireRiderAuth(req, res, next) {

@@ -1,0 +1,1 @@
+(()=>{const ready=()=>document.querySelector('.manager-sidebar');if(ready()){}else setTimeout(ready,200)})();

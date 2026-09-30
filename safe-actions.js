@@ -14,9 +14,33 @@ const trustedSanitizer=(()=>{
     return html;
   };
   try{
-    if(window.trustedTypes)return window.trustedTypes.createPolicy('default',{createHTML:sanitize});
+    if(window.trustedTypes)return window.trustedTypes.createPolicy('default',{
+      createHTML:sanitize,
+      createScriptURL(input){
+        const value=String(input||'');
+        let url;
+        try{url=new URL(value,location.href);}catch{throw new TypeError('Blocked invalid script URL');}
+        const allowed=url.origin===location.origin
+          || url.href==='https://accounts.google.com/gsi/client'
+          || url.href==='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+        if(!allowed)throw new TypeError('Blocked untrusted script URL: '+url.href);
+        return url.href;
+      }
+    });
   }catch{}
-  return {createHTML:sanitize};
+  return {
+    createHTML:sanitize,
+    createScriptURL(input){
+      const value=String(input||'');
+      let url;
+      try{url=new URL(value,location.href);}catch{throw new TypeError('Blocked invalid script URL');}
+      const allowed=url.origin===location.origin
+        || url.href==='https://accounts.google.com/gsi/client'
+        || url.href==='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+      if(!allowed)throw new TypeError('Blocked untrusted script URL: '+url.href);
+      return url.href;
+    }
+  };
 })();
 function splitTop(input,separator=','){
   const out=[];let start=0,depth=0,quote=null,escape=false;

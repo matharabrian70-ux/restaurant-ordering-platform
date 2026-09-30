@@ -373,11 +373,12 @@ function bindMenuVariableControls(){
   if(window.__menuVariableControlsBound)return;
   window.__menuVariableControlsBound=true;
   document.addEventListener('click',event=>{
-    const button=event.target.closest?.('[data-menu-variable-add="new"]');
+    const button=event.target.closest?.('[data-menu-variable-add]');
     if(!button)return;
     event.preventDefault();
     event.stopPropagation();
-    addVariableGroup();
+    if(button.dataset.menuVariableAdd==='new')addVariableGroup();
+    else if(button.dataset.menuVariableAdd==='edit')addEditVariableGroup();
   });
 }
 bindMenuVariableControls();
@@ -431,7 +432,7 @@ function openVariableEditor(id){
   const p=D.menu.products.find(x=>x.id===id);if(!p)return;
   variableDraftProductId=id;window.variableEditDraft=cloneMenuVariables(p.options);
   const host=document.createElement('div');host.id='menu-variable-editor-modal';host.className='modal-backdrop';
-  host.innerHTML='<section class="refund-modal variable-editor-modal" role="dialog" aria-modal="true"><button type="button" class="modal-close" data-action="closeVariableEditor()" aria-label="Close">×</button><span class="eyebrow">MENU ITEM VARIABLES</span><h2>'+esc(p.name)+'</h2><p class="muted">Customers will see these choices when they add this item. Price adjustments are added to the base item price.</p><div id="edit-variable-groups"></div><div class="button-row variable-editor-actions"><button type="button" class="btn btn-small" data-action="addEditVariableGroup()">+ ADD VARIABLE</button><button type="button" class="btn wide" data-action="saveVariableEditor()">SAVE VARIABLES</button></div></section>';
+  host.innerHTML='<section class="refund-modal variable-editor-modal" role="dialog" aria-modal="true"><button type="button" class="modal-close" data-action="closeVariableEditor()" aria-label="Close">×</button><span class="eyebrow">MENU ITEM VARIABLES</span><h2>'+esc(p.name)+'</h2><p class="muted">Customers will see these choices when they add this item. Price adjustments are added to the base item price.</p><div id="edit-variable-groups"></div><div class="button-row variable-editor-actions"><button type="button" class="btn btn-small" data-menu-variable-add="edit">+ ADD VARIABLE</button><button type="button" class="btn wide" data-action="saveVariableEditor()">SAVE VARIABLES</button></div></section>';
   document.body.appendChild(host);renderVariableGroups('edit-variable-groups',window.variableEditDraft);
 }
 function syncEditVariableDraft(){window.variableEditDraft=readVariableDraftInputs(window.variableEditDraft||[],'edit-variable-groups');return window.variableEditDraft}

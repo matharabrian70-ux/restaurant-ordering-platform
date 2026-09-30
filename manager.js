@@ -345,6 +345,21 @@ function cleanMenuVariableName(value){return String(value??'').trim().slice(0,80
 function cleanMenuVariableChoice(value){return String(value??'').trim().slice(0,120)}
 function makeVariableKey(value){return String(value??'').trim().toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,60)||('choice-'+Date.now())}
 function cloneMenuVariables(options){return Array.isArray(options)?JSON.parse(JSON.stringify(options)):[]}
+function readVariableDraftInputs(fallback=[],targetId='new-variable-groups'){
+  const root=document.getElementById(targetId);
+  if(!root)return cloneMenuVariables(fallback);
+  const groups=[...root.querySelectorAll('[data-variable-group]')];
+  return groups.map(group=>{
+    const nameInput=group.querySelector('[data-variable-field="name"]');
+    const choices=[...group.querySelectorAll('.menu-variable-choice')].map(choice=>{
+      const key=choice.querySelector('[data-variable-field="key"]')?.value||'';
+      const label=choice.querySelector('[data-variable-field="label"]')?.value||'';
+      const price=Number(choice.querySelector('[data-variable-field="price"]')?.value||0);
+      return [key,label,Number.isFinite(price)?price:0];
+    });
+    return {name:nameInput?.value||'',choices};
+  });
+}
 function renderVariableGroups(targetId='new-variable-groups',draft=newMenuVariables){
   const el=document.getElementById(targetId);if(!el)return;
   const editMode=targetId==='edit-variable-groups';

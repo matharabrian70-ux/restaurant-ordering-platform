@@ -367,6 +367,29 @@ async function requireRiderModule(req, res, next) {
       return res.status(404).json({ error: 'Rider module is not enabled for this business' });
     }
 
+    // An already authenticated active rider is an explicit tenant-level
+    // entitlement. This prevents package-feature metadata drift from locking
+    // an existing rider out immediately after successful authentication.
+    if (req.path !== '/login' && req.path !== '/rider-invites/:token' && req.headers.authorization) {
+      const rawToken = String(req.headers.authorization || '');
+      const bearer = rawToken.startsWith('Bearer ') ? rawToken.slice(7).trim() : '';
+      if (bearer) {
+        const authenticatedRider = await pool.query(
+          `select r.id
+             from rider_sessions s
+             join riders r on r.id=s.rider_id
+            where s.token_hash=$1
+              and s.expires_at>now()
+              and r.active=true
+              and r.rider_status='ACTIVE'
+              and r.business_id=$2
+            limit 1`,
+          [hashSessionToken(bearer), businessId]
+        );
+        if (authenticatedRider.rowCount) return next();
+      }
+    }
+
     // The package plan is the authoritative platform-level entitlement.
     // Keep the explicit business feature flag as an override, but do not make
     // rider approval depend on the platform_packages row existing in production.
@@ -413,7 +436,12 @@ async function requireRiderModule(req, res, next) {
     res.status(500).json({ error: 'Unable to check rider module status' });
   }
 }
-app.use('/api/riders', requireRiderModule);
+app.use('/api/riders', (req,res,next)=>{
+  // Login must reach the credential check itself. The login handler validates
+  // the business, rider status and password before issuing a session.
+  if(req.path==='/login' && req.method==='POST') return next();
+  return requireRiderModule(req,res,next);
+});
 
 // Server-Sent Events: one persistent connection replaces the dashboard's 5-second polling.
 const realtimeClients = new Set();

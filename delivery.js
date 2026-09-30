@@ -397,6 +397,12 @@ function updateRiderProfileButton(){
     catch(err){alert(err.message||'Unable to open rider profile.');}
   };
 }
+function bindRiderLoginForm(){
+  const form=document.getElementById('rider-login-form');
+  if(!form||form.dataset.bound)return;
+  form.dataset.bound='1';
+  form.addEventListener('submit',loginRider);
+}
 async function loginRider(e){
   e?.preventDefault();
   const phone=document.getElementById('rider-phone').value.trim(),password=document.getElementById('rider-password').value;
@@ -404,7 +410,8 @@ async function loginRider(e){
   error.classList.remove('hidden');error.textContent='Signing in…';button.disabled=true;button.textContent='SIGNING IN…';
   try{
     const data=await riderApi('/api/riders/login',{method:'POST',body:JSON.stringify({businessId:RIDER_BUSINESS_ID,phone,password})});
-    sessionStorage.setItem(RIDER_TOKEN_KEY,data.token);localStorage.removeItem(RIDER_TOKEN_KEY);rider=data.rider;await bootRider();
+    sessionStorage.setItem(RIDER_TOKEN_KEY,data.token);localStorage.removeItem(RIDER_TOKEN_KEY);rider=data.rider;await bindRiderLoginForm();
+bootRider();
   }catch(err){
     error.textContent=err.message||'Could not sign in.';
     button.disabled=false;button.textContent='SIGN IN';

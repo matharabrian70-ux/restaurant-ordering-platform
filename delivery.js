@@ -513,6 +513,7 @@ function statusSteps(current){
   return '<div class="timeline-mini">'+steps.map((s,i)=>'<span class="'+(i<=index?'active':'')+'">'+s.replaceAll('_',' ')+'</span>').join('')+'</div>';
 }
 function activeCard(a){
+  if(a)detailRegister('order',a.id||a.trip_id,a);
   if(!a)return '<div class="empty" style="padding:30px 10px"><h3>No active delivery.</h3><p>When the restaurant assigns a job to you, it will appear here.</p></div>';
   const current=(a.delivery_status||'ASSIGNED');
   let action='';
@@ -522,16 +523,13 @@ function activeCard(a){
   else if(current==='PICKED_UP') action='<button data-action="setTripStatus(\''+a.trip_id+'\',\'ON_THE_WAY\')">ON THE WAY</button>';
   else if(current==='ON_THE_WAY') action='<button data-action="setTripStatus(\''+a.trip_id+'\',\'DELIVERED\')">MARK DELIVERED</button>';
   const mapAction=current!=='ASSIGNED'?'<a class="rider-map-action" href="'+mapsUrl(a.pickup_address,a.delivery_address)+'" target="_blank" rel="noopener">GOOGLE MAPS</a>':'';
-  return '<article class="rider-card rider-active-card"><div class="rider-active-top"><div><span class="eyebrow">ACTIVE DELIVERY</span><h3>'+esc(a.order_number)+'</h3></div><span class="rider-active-status">'+esc(current.replaceAll('_',' '))+'</span></div>'+
+  return '<article class="rider-card rider-active-card" data-detail-type="order" data-detail-id="'+esc(a.id||a.trip_id)+'"><div class="rider-active-top"><div><span class="eyebrow">ACTIVE DELIVERY</span><h3>'+esc(a.order_number)+'</h3></div><span class="rider-active-status">'+esc(current.replaceAll('_',' '))+'</span></div>'+
     '<div class="rider-active-route"><div><small>FROM</small><strong>'+esc(a.pickup_address||'Restaurant')+'</strong></div><span>→</span><div><small>TO</small><strong>'+esc(a.delivery_address||a.delivery_note||'Customer location')+'</strong></div></div>'+
     '<div class="rider-active-info"><div><small>CUSTOMER</small><strong>'+esc(a.customer_name||'Customer')+'</strong></div><div><small>FEE</small><strong>'+riderMoney(a.delivery_fee)+'</strong></div><div><small>DISTANCE</small><strong>'+((Number(a.route_distance_meters||0)/1000).toFixed(1))+' km</strong></div></div>'+
     '<div class="rider-status-steps-wrap">'+statusSteps(current)+'</div><div class="rider-actions">'+action+mapAction+'</div></article>'+
     (current!=='ASSIGNED'?'<section id="rider-live-route-panel" class="rider-live-route-panel"><div class="rider-live-route-head"><div><span class="eyebrow">LIVE ROUTE</span><h3>Delivery navigation</h3><p>Follow the same two-wheeler route used by the delivery system.</p></div><div class="rider-live-route-tools"><span id="rider-live-map-status" class="rider-live-map-status">LOADING…</span><button type="button" id="rider-map-fullscreen-button" class="rider-map-fullscreen-button" data-action="toggleRiderMapFullscreen()" aria-label="Open full screen map">⛶</button></div></div><div class="rider-live-map-wrap"><div id="rider-live-map" class="rider-live-map"></div><button type="button" id="rider-map-floating-exit" class="rider-map-floating-fullscreen" data-action="toggleRiderMapFullscreen()" aria-label="Open full screen map">⛶</button></div><div class="rider-live-route-note">Your live position follows your phone GPS while this delivery is active.</div><button type="button" class="rider-demo-launch" data-action="startDemoTracking()">TEST LIVE TRACKING (DEMO)</button></section>':'<button type="button" class="rider-demo-launch standalone" data-action="startDemoTracking()">TEST LIVE TRACKING (DEMO)</button>');
 }
-function renderAvailable(list){
-  if(!list.length)return '<p class="muted">No new assignments.</p>';
-  return list.map(a=>'<article class="rider-card"><h3>'+esc(a.order_number)+' · '+esc(a.restaurant_name)+'</h3><div class="rider-meta"><span>Customer: '+esc(a.customer_name)+'</span><span>'+esc(a.delivery_address||'Location pending')+'</span></div><p>'+Number(a.route_distance_meters||0)/1000+' km · '+riderMoney(a.delivery_fee)+' delivery fee</p></article>').join('');
-}
+function renderAvailable(list){if(!list.length)return '<p class="muted">No new assignments.</p>';return list.map(function(a){detailRegister('order',a.id||a.trip_id,a);return '<article class="rider-card" data-detail-type="order" data-detail-id="'+esc(a.id||a.trip_id)+'"><h3>'+esc(a.order_number)+' · '+esc(a.restaurant_name)+'</h3><div class="rider-meta"><span>Customer: '+esc(a.customer_name)+'</span><span>'+esc(a.delivery_address||'Location pending')+'</span></div><p>'+Number(a.route_distance_meters||0)/1000+' km · '+riderMoney(a.delivery_fee)+' delivery fee</p></article>';}).join('')}
 function localDateKey(value){
   const d=new Date(value);
   if(Number.isNaN(d.getTime()))return '';

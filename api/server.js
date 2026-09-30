@@ -413,7 +413,12 @@ async function requireRiderModule(req, res, next) {
     res.status(500).json({ error: 'Unable to check rider module status' });
   }
 }
-app.use('/api/riders', requireRiderModule);
+app.use('/api/riders', (req,res,next)=>{
+  // Login must reach the credential check itself. The login handler validates
+  // the business, rider status and password before issuing a session.
+  if(req.path==='/login' && req.method==='POST') return next();
+  return requireRiderModule(req,res,next);
+});
 
 // Server-Sent Events: one persistent connection replaces the dashboard's 5-second polling.
 const realtimeClients = new Set();

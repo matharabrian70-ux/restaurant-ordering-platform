@@ -48,7 +48,7 @@ function renderSignatureMenu(products){
         </div>
       </div>
       <div class="signature-menu-actions">
-        <button type="button" class="signature-add-btn" data-menu-add="${id}"><span class="signature-cart-icon">🛒</span> ADD TO CART</button>
+        <button type="button" class="signature-add-btn" data-menu-add="${id}"><span class="signature-cart-icon">🛒</span> ${Array.isArray(p.options)&&p.options.length?'CHOOSE OPTIONS':'ADD TO CART'}</button>
       </div>
     </article>`;
   }).join('');

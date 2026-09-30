@@ -380,6 +380,7 @@ function bindMenuVariableControls(){
     addVariableGroup();
   });
 }
+bindMenuVariableControls();
 function addVariableGroup(){newMenuVariables=readVariableDraftInputs(newMenuVariables,'new-variable-groups');newMenuVariables.push({name:'',choices:[['','',0]]});renderVariableGroups();}
 function removeVariableGroup(index){newMenuVariables=readVariableDraftInputs(newMenuVariables,'new-variable-groups');newMenuVariables.splice(index,1);renderVariableGroups();}
 function addVariableChoice(index){newMenuVariables=readVariableDraftInputs(newMenuVariables,'new-variable-groups');newMenuVariables[index]=newMenuVariables[index]||{name:'',choices:[]};newMenuVariables[index].choices.push(['','',0]);renderVariableGroups();}

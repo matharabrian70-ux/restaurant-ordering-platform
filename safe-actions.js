@@ -2,8 +2,9 @@
 'use strict';
 const trustedSanitizer=(()=>{
   const sanitize=(input)=>{
+    const parsed=new DOMParser().parseFromString(String(input??''),'text/html');
     const template=document.createElement('template');
-    template.innerHTML=String(input??'');
+    template.content.append(...Array.from(parsed.body.childNodes).map(node=>node.cloneNode(true)));
     const blocked=new Set(['SCRIPT','IFRAME','OBJECT','EMBED','BASE','META','LINK']);
     template.content.querySelectorAll('*').forEach(node=>{
       if(blocked.has(node.tagName)){node.remove();return}

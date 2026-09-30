@@ -641,6 +641,12 @@ async function loadRiderDashboard(){
   if(!riderDashboardInitialized){riderDashboardInitialized=true;}
 }
 async function bootRider(){
+  if(!sessionStorage.getItem(RIDER_TOKEN_KEY)){
+    document.getElementById('rider-login')?.classList.remove('hidden');
+    document.getElementById('rider-app')?.classList.add('hidden');
+    bindRiderLoginForm();
+    return;
+  }
   try{
     rider=await riderApi('/api/riders/me');
     document.getElementById('rider-login').classList.add('hidden');document.getElementById('rider-app').classList.remove('hidden');updateRiderProfileButton();

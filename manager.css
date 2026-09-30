@@ -537,3 +537,5 @@
   .menu-variable-choice input[type=number]{text-align:left}
   .variable-editor-actions{display:grid}
 }
+
+.manager-advanced-links{margin-top:14px;padding-top:10px;border-top:1px solid var(--line)}.manager-sidebar-group{display:grid;gap:4px;margin-bottom:10px}.manager-section-jump{width:100%;display:flex;align-items:center;gap:10px;border:0;background:transparent;color:#667069;text-align:left;border-radius:8px;padding:11px 10px;font:inherit;font-size:10px;font-weight:850;cursor:pointer}.manager-section-jump:hover{background:#f4f4ef;color:var(--ink)}.manager-section-focus{outline:2px solid var(--ink);outline-offset:6px;transition:outline .2s ease}.manager-mobile-group{display:grid;gap:5px;grid-column:1/-1;padding-top:8px;border-top:1px solid var(--line)}.manager-mobile-group>span{font-size:8px;font-weight:950;letter-spacing:.12em;color:var(--muted);padding:4px}.manager-mobile-group .manager-section-jump{background:var(--paper);border:1px solid var(--line)}

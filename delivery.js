@@ -513,6 +513,7 @@ function statusSteps(current){
   return '<div class="timeline-mini">'+steps.map((s,i)=>'<span class="'+(i<=index?'active':'')+'">'+s.replaceAll('_',' ')+'</span>').join('')+'</div>';
 }
 function activeCard(a){
+  if(a)detailRegister('order',a.id||a.trip_id,a);
   if(!a)return '<div class="empty" style="padding:30px 10px"><h3>No active delivery.</h3><p>When the restaurant assigns a job to you, it will appear here.</p></div>';
   const current=(a.delivery_status||'ASSIGNED');
   let action='';
@@ -522,7 +523,7 @@ function activeCard(a){
   else if(current==='PICKED_UP') action='<button data-action="setTripStatus(\''+a.trip_id+'\',\'ON_THE_WAY\')">ON THE WAY</button>';
   else if(current==='ON_THE_WAY') action='<button data-action="setTripStatus(\''+a.trip_id+'\',\'DELIVERED\')">MARK DELIVERED</button>';
   const mapAction=current!=='ASSIGNED'?'<a class="rider-map-action" href="'+mapsUrl(a.pickup_address,a.delivery_address)+'" target="_blank" rel="noopener">GOOGLE MAPS</a>':'';
-  return '<article class="rider-card rider-active-card"><div class="rider-active-top"><div><span class="eyebrow">ACTIVE DELIVERY</span><h3>'+esc(a.order_number)+'</h3></div><span class="rider-active-status">'+esc(current.replaceAll('_',' '))+'</span></div>'+
+  return '<article class="rider-card rider-active-card" data-detail-type="order" data-detail-id="'+esc(a.id||a.trip_id)+'"><div class="rider-active-top"><div><span class="eyebrow">ACTIVE DELIVERY</span><h3>'+esc(a.order_number)+'</h3></div><span class="rider-active-status">'+esc(current.replaceAll('_',' '))+'</span></div>'+
     '<div class="rider-active-route"><div><small>FROM</small><strong>'+esc(a.pickup_address||'Restaurant')+'</strong></div><span>→</span><div><small>TO</small><strong>'+esc(a.delivery_address||a.delivery_note||'Customer location')+'</strong></div></div>'+
     '<div class="rider-active-info"><div><small>CUSTOMER</small><strong>'+esc(a.customer_name||'Customer')+'</strong></div><div><small>FEE</small><strong>'+riderMoney(a.delivery_fee)+'</strong></div><div><small>DISTANCE</small><strong>'+((Number(a.route_distance_meters||0)/1000).toFixed(1))+' km</strong></div></div>'+
     '<div class="rider-status-steps-wrap">'+statusSteps(current)+'</div><div class="rider-actions">'+action+mapAction+'</div></article>'+
@@ -530,7 +531,7 @@ function activeCard(a){
 }
 function renderAvailable(list){
   if(!list.length)return '<p class="muted">No new assignments.</p>';
-  return list.map(a=>'<article class="rider-card"><h3>'+esc(a.order_number)+' · '+esc(a.restaurant_name)+'</h3><div class="rider-meta"><span>Customer: '+esc(a.customer_name)+'</span><span>'+esc(a.delivery_address||'Location pending')+'</span></div><p>'+Number(a.route_distance_meters||0)/1000+' km · '+riderMoney(a.delivery_fee)+' delivery fee</p></article>').join('');
+  return list.map(a=>{detailRegister('order',a.id||a.trip_id,a);return '<article class="rider-card" data-detail-type="order" data-detail-id="'+esc(a.id||a.trip_id)+'"><h3>'+esc(a.order_number)+' · '+esc(a.restaurant_name)+'</h3><div class="rider-meta"><span>Customer: '+esc(a.customer_name)+'</span><span>'+esc(a.delivery_address||'Location pending')+'</span></div><p>'+Number(a.route_distance_meters||0)/1000+' km · '+riderMoney(a.delivery_fee)+' delivery fee</p></article>').join('');
 }
 function localDateKey(value){
   const d=new Date(value);

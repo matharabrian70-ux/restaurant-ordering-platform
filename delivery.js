@@ -531,7 +531,7 @@ function activeCard(a){
 }
 function renderAvailable(list){
   if(!list.length)return '<p class="muted">No new assignments.</p>';
-  return list.map(a=>{detailRegister('order',a.id||a.trip_id,a);return '<article class="rider-card" data-detail-type="order" data-detail-id="'+esc(a.id||a.trip_id)+'"><h3>'+esc(a.order_number)+' · '+esc(a.restaurant_name)+'</h3><div class="rider-meta"><span>Customer: '+esc(a.customer_name)+'</span><span>'+esc(a.delivery_address||'Location pending')+'</span></div><p>'+Number(a.route_distance_meters||0)/1000+' km · '+riderMoney(a.delivery_fee)+' delivery fee</p></article>').join('');
+  return list.map(a=>{detailRegister('order',a.id||a.trip_id,a);return '<article class="rider-card" data-detail-type="order" data-detail-id="'+esc(a.id||a.trip_id)+'"><h3>'+esc(a.order_number)+' · '+esc(a.restaurant_name)+'</h3><div class="rider-meta"><span>Customer: '+esc(a.customer_name)+'</span><span>'+esc(a.delivery_address||'Location pending')+'</span></div><p>'+Number(a.route_distance_meters||0)/1000+' km · '+riderMoney(a.delivery_fee)+' delivery fee</p></article>')}).join('');
 }
 function localDateKey(value){
   const d=new Date(value);

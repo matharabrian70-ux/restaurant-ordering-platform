@@ -410,8 +410,7 @@ async function loginRider(e){
   error.classList.remove('hidden');error.textContent='Signing in…';button.disabled=true;button.textContent='SIGNING IN…';
   try{
     const data=await riderApi('/api/riders/login',{method:'POST',body:JSON.stringify({businessId:RIDER_BUSINESS_ID,phone,password})});
-    sessionStorage.setItem(RIDER_TOKEN_KEY,data.token);localStorage.removeItem(RIDER_TOKEN_KEY);rider=data.rider;await bindRiderLoginForm();
-bootRider();
+    sessionStorage.setItem(RIDER_TOKEN_KEY,data.token);localStorage.removeItem(RIDER_TOKEN_KEY);rider=data.rider;await bootRider();
   }catch(err){
     error.textContent=err.message||'Could not sign in.';
     button.disabled=false;button.textContent='SIGN IN';

@@ -399,6 +399,7 @@ function capabilityForRequest(req) {
   }
   if (/^\/manager\/intelligence(?:\/|$)/.test(path)) {
     capabilities.push('advancedAnalytics');
+    if (/^\/manager\/intelligence\/(?:branches|benchmarks)(?:\/|$)/.test(path)) capabilities.push('multiBranch');
   }
   if (/^\/manager\/sms(?:-|\/|$)/.test(path)) {
     capabilities.push('sms');
@@ -430,6 +431,21 @@ async function resolveFeatureTenant(req) {
   if (businessMatch) return businessMatch[1];
   if (req.body?.businessId) return String(req.body.businessId);
   if (req.query?.businessId) return String(req.query.businessId);
+
+  const riderInviteMatch = path.match(/^\/rider-invites\/([^/]+)/);
+  if (riderInviteMatch) {
+    const invite = await pool.query(
+      'select business_id from rider_invites where token_hash=$1 limit 1',
+      [hashSessionToken(String(riderInviteMatch[1]))]
+    );
+    if (invite.rows[0]?.business_id) return String(invite.rows[0].business_id);
+  }
+
+  const orderMatch = path.match(/^\/orders\/([^/]+)/);
+  if (orderMatch) {
+    const order = await pool.query('select business_id from orders where id=$1 limit 1',[orderMatch[1]]);
+    if (order.rows[0]?.business_id) return String(order.rows[0].business_id);
+  }
 
   const manager = await getManagerFromSession(req);
   if (manager?.business_id) return String(manager.business_id);

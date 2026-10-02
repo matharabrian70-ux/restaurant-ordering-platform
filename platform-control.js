@@ -4,7 +4,7 @@
 const API='https://restaurant-ordering-api-ow3p.onrender.com';
 const root=document.getElementById('platform-view');
 const state={
-  me:null,overview:{},command:null,businesses:[],packages:[],health:null,orders:[],riders:[],incidents:[],system:null,
+  me:null,overview:{},command:null,businesses:[],packages:[],health:null,orders:[],riders:[],incidents:[],complianceProcessors:[],privacyIncidents:[],system:null,
   selected:null,selectedInspect:null,showCreate:false,createDraft:{name:'',website:'',address:'',plan:'',domain:'',color:'#c96b3b'},section:'overview',menu:false,loading:false
 };
 let refreshTimer=null;
@@ -100,10 +100,12 @@ async function load(){
       api('/api/platform/orders?limit=100').catch(()=>[]),
       api('/api/platform/riders?limit=200').catch(()=>[]),
       api('/api/platform/incidents?limit=100').catch(()=>[]),
+      api('/api/platform/compliance/processors').catch(()=>[]),
+      api('/api/platform/compliance/incidents').catch(()=>[]),
       api('/api/platform/system').catch(()=>null),
       api('/api/platform/audit?limit=30').catch(()=>[])
     ]);
-    [state.overview,state.businesses,state.packages,state.health,state.command,state.orders,state.riders,state.incidents,state.system,state.audit]=results;
+    [state.overview,state.businesses,state.packages,state.health,state.command,state.orders,state.riders,state.incidents,state.complianceProcessors,state.privacyIncidents,state.system,state.audit]=results;
     state.loading=false;
     // Keep active forms/modals mounted during background refreshes. Replacing
     // root.innerHTML destroys input elements and clears values being typed.
@@ -117,7 +119,7 @@ async function load(){
 function packageFor(b){return state.packages.find(p=>p.key===b.plan_key);}
 function riderEnabled(b){return Boolean(packageFor(b)?.features?.riderModule);}
 function incidentClass(s){return String(s||'').toLowerCase();}
-function currentSectionLabel(){return ({overview:'Command Centre',restaurants:'Restaurants',orders:'Orders',delivery:'Riders & Delivery',health:'System Health',issues:'Issues & Alerts',activity:'Activity Log',updates:'System Updates'}[state.section]||'Command Centre');}
+function currentSectionLabel(){return ({overview:'Command Centre',restaurants:'Restaurants',orders:'Orders',delivery:'Riders & Delivery',health:'System Health',issues:'Issues & Alerts',activity:'Activity Log',updates:'System Updates',compliance:'Compliance'}[state.section]||'Command Centre');}
 
 function render(){
   const o=state.overview||{},c=state.command||{},m=c.metrics||{},t=c.tenants||{};
@@ -158,7 +160,7 @@ function render(){
 }
 
 function navItems(){
-  const items=[['overview','⌂','Command Centre'],['restaurants','▦','Restaurants'],['orders','▤','Orders'],['delivery','◉','Riders & Delivery'],['health','✓','System Health'],['issues','!','Issues & Alerts'],['activity','≡','Activity Log'],['updates','↻','System Updates']];
+  const items=[['overview','⌂','Command Centre'],['restaurants','▦','Restaurants'],['orders','▤','Orders'],['delivery','◉','Riders & Delivery'],['health','✓','System Health'],['issues','!','Issues & Alerts'],['activity','≡','Activity Log'],['updates','↻','System Updates'],['compliance','⚖','Compliance']];
   return '<nav class="pc-nav-menu">'+items.map(([id,icon,label])=>`<button class="${state.section===id?'active':''}" data-section="${id}"><span>${icon}</span>${label}${id==='issues'&&state.incidents.length?`<b class="pc-nav-badge">${state.incidents.length}</b>`:''}</button>`).join('')+'</nav>';
 }
 function bindNav(){document.querySelectorAll('[data-section]').forEach(b=>b.onclick=()=>{state.section=b.dataset.section;state.menu=false;render();});}
@@ -174,6 +176,7 @@ function sectionContent(){
   if(state.section==='issues')return issuesSection();
   if(state.section==='activity')return activitySection();
   if(state.section==='updates')return updatesSection();
+  if(state.section==='compliance')return complianceSection();
   return overviewSection();
 }
 
@@ -242,6 +245,12 @@ function issueRows(rows,table=false){
 }
 function bindIncidentActions(){document.querySelectorAll('.pc-resolve').forEach(b=>b.onclick=async()=>{b.disabled=true;b.textContent='…';try{await api('/api/platform/incidents/'+encodeURIComponent(b.dataset.id)+'/resolve',{method:'POST',body:'{}'});await load();}catch(e){alert(e.message);b.disabled=false;b.textContent='RESOLVE';}});}
 
+function complianceSection(){
+  const processors=state.complianceProcessors||[],incidents=state.privacyIncidents||[];
+  return `<header class="pc-head compact"><div><span class="pc-kicker">DATA GOVERNANCE</span><h1>Compliance.</h1><p>Privacy requests, processor safeguards and suspected personal-data incidents are tracked here. This workflow does not replace legal review.</p></div><div class="pc-actions"><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></div></header>
+  <section class="pc-panel"><div class="pc-panel-head"><div><span class="pc-kicker">PROCESSOR REGISTER</span><h2>Third-party data services</h2></div></div><div class="pc-table-wrap"><table class="pc-table"><thead><tr><th>SERVICE</th><th>PURPOSE</th><th>DATA</th><th>AGREEMENT</th></tr></thead><tbody>${processors.length?processors.map(p=>'<tr><td><strong>'+esc(p.name)+'</strong></td><td>'+esc(p.purpose)+'</td><td>'+esc(p.data_categories)+'</td><td>'+esc(p.agreement_status)+'</td></tr>').join(''):'<tr><td colspan="4" class="pc-empty">Processor register unavailable.</td></tr>'}</tbody></table></div></section>
+  <section class="pc-panel"><div class="pc-panel-head"><div><span class="pc-kicker">PRIVACY INCIDENTS</span><h2>Breach response register</h2><p class="pc-panel-sub">Record, contain, assess and escalate suspected personal-data incidents. Statutory reporting decisions require the responsible controller and privacy/legal review.</p></div></div><div class="pc-table-wrap"><table class="pc-table"><thead><tr><th>SEVERITY</th><th>STATUS</th><th>RESTAURANT</th><th>DISCOVERED</th><th>DESCRIPTION</th></tr></thead><tbody>${incidents.length?incidents.map(i=>'<tr><td>'+esc(i.severity)+'</td><td>'+esc(i.status)+'</td><td>'+esc(i.business_name||'Platform')+'</td><td>'+dt(i.discovered_at)+'</td><td class="pc-issue-message">'+esc(i.description)+'</td></tr>').join(''):'<tr><td colspan="5" class="pc-empty">No privacy incidents recorded.</td></tr>'}</tbody></table></div></section>`;
+}
 function activitySection(){
   return `<header class="pc-head compact"><div><span class="pc-kicker">AUDIT TRAIL</span><h1>Activity log.</h1><p>A chronological record of platform-owner and system activity.</p></div><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></header>
   <section class="pc-panel"><div class="pc-activity-list">${(state.audit||[]).length?(state.audit||[]).map(a=>'<article><span class="pc-activity-dot"></span><div><strong>'+esc(a.action)+'</strong><p>'+esc(a.note||'System event')+'</p></div><time>'+dt(a.created_at)+'</time></article>').join(''):'<div class="pc-empty-card">No activity recorded yet.</div>'}</div></section>`;

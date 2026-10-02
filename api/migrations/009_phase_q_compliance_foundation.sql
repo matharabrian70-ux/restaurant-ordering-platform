@@ -115,6 +115,8 @@ alter table business_privacy_settings add column if not exists support_phone tex
 alter table business_privacy_settings add column if not exists complaints_email text;
 alter table business_privacy_settings add column if not exists contracting_party_notice text;
 
+update business_privacy_settings set privacy_notice_version='2026-10-02-v1',terms_version='2026-10-02-v1',cookie_policy_version='2026-10-02-v1',updated_at=now();
+
 insert into compliance_processors(id,name,purpose,data_categories,jurisdictions,transfer_safeguard)
 select gen_random_uuid(),'Paystack','Payment processing and payment status confirmation','Customer name, email, phone, order/payment identifiers','Potential cross-border processing','Verify current contractual transfer safeguards before launch'
 where not exists(select 1 from compliance_processors where lower(name)='paystack');

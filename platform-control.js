@@ -5,7 +5,7 @@ const API=window.PLATFORM_API_ORIGIN || 'https://restaurant-ordering-api-ow3p.on
 const root=document.getElementById('platform-view');
 const state={
   me:null,overview:{},command:null,businesses:[],packages:[],health:null,disputes:[],incidents:[],audit:[],system:null,
-  selected:null,selectedInspect:null,selectedCase:null,showCreate:false,section:'overview',menu:false,loading:false
+  selected:null,selectedInspect:null,selectedCase:null,showCreate:false,section:'overview',menu:false,loading:false,complianceProcessors:[],privacyIncidents:[]
 };
 let refreshTimer=null;
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -82,9 +82,11 @@ async function load(){
       api('/api/control/disputes?status=ALL').catch(()=>[]),
       api('/api/platform/incidents?limit=100').catch(()=>[]),
       api('/api/platform/system').catch(()=>null),
-      api('/api/platform/audit?limit=30').catch(()=>[])
+      api('/api/platform/audit?limit=30').catch(()=>[]),
+      api('/api/platform/compliance/processors').catch(()=>[]),
+      api('/api/platform/compliance/incidents').catch(()=>[])
     ]);
-    [state.overview,state.businesses,state.packages,state.health,state.command,state.disputes,state.incidents,state.system,state.audit]=results;
+    [state.overview,state.businesses,state.packages,state.health,state.command,state.disputes,state.incidents,state.system,state.audit,state.complianceProcessors,state.privacyIncidents]=results;
     state.loading=false;
     if(!state.selected&&!state.selectedCase)render();
     clearTimeout(refreshTimer);refreshTimer=setTimeout(load,30000);
@@ -109,7 +111,7 @@ function render(){
 }
 
 function navItems(){
-  const items=[['overview','⌂','Command Centre'],['restaurants','▦','Restaurants'],['disputes','⚖','Dispute Access'],['health','✓','System Health'],['issues','!','Issues & Alerts'],['activity','≡','Activity Log'],['updates','↻','System Updates']];
+  const items=[['overview','⌂','Command Centre'],['restaurants','▦','Restaurants'],['disputes','⚖','Dispute Access'],['health','✓','System Health'],['issues','!','Issues & Alerts'],['activity','≡','Activity Log'],['updates','↻','System Updates'],['compliance','⚖','Compliance']];
   return '<nav class="pc-nav-menu">'+items.map(x=>'<button class="'+(state.section===x[0]?'active':'')+'" data-section="'+x[0]+'"><span>'+x[1]+'</span>'+x[2]+(x[0]==='issues'&&state.incidents.length?'<b class="pc-nav-badge">'+state.incidents.length+'</b>':'')+'</button>').join('')+'</nav>';
 }
 function bindNav(){document.querySelectorAll('[data-section]').forEach(b=>b.onclick=()=>{state.section=b.dataset.section;state.menu=false;state.selectedCase=null;render();});}
@@ -122,6 +124,7 @@ function sectionContent(){
   if(state.section==='issues')return issuesSection();
   if(state.section==='activity')return activitySection();
   if(state.section==='updates')return updatesSection();
+  if(state.section==='compliance')return complianceSection();
   return overviewSection();
 }
 

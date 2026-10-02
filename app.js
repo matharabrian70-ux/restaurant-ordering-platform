@@ -128,7 +128,64 @@ async function renderProduct(){
     renderProductData(remote?{id:remote.id,name:remote.name,category:remote.category_name||remote.category||'Menu',price:Number(remote.price||0),image:remote.image_url||'',desc:remote.description||'',options:Array.isArray(remote.options)?remote.options:[]}:null);
   }catch{el.innerHTML='<div class="empty"><h2>Menu item unavailable.</h2><p>Please return to the menu and try again.</p><a class="btn" href="menu.html">Back to menu</a></div>'}
 }
-function renderCart(){const el=document.getElementById('cart-view');if(!el)return;const c=getCart();if(!c.length){el.innerHTML='<div class="empty"><h2>Your cart is empty.</h2><p>Add products from the menu or directly from the homepage.</p><a class="btn" href="menu.html">Browse menu</a></div>';return}const total=c.reduce((s,i)=>s+i.unit*i.qty,0);el.innerHTML=`<div class="cart-layout"><section><p class="eyebrow">YOUR ORDER</p><h1>Cart</h1>${c.map((i,n)=>`<article class="cart-item"><img src="${i.image}" alt=""><div class="cart-item-main"><h3>${i.name}</h3><p>${Object.entries(i.options||{}).map(x=>x[0]+': '+x[1]).join(' • ')||'Standard item'}</p><strong>${money(i.unit*i.qty)}</strong><div class="cart-controls"><button data-action="changeQty(${n},-1)">−</button><span>${i.qty}</span><button data-action="changeQty(${n},1)">+</button><button class="remove" data-action="removeItem(${n})">Remove</button></div></div></article>`).join('')}</section><aside class="panel cart-summary"><h2>Summary</h2><div class="summary-row"><span>Items</span><strong>${c.reduce((s,i)=>s+i.qty,0)}</strong></div><div class="summary-row total"><span>Total</span><strong>${money(total)}</strong></div><a class="btn wide" href="checkout.html">Continue to checkout</a><a class="text-link" href="menu.html">← Add more products</a></aside></div>`}
+function renderCart(){
+ const el=document.getElementById('cart-view');if(!el)return;
+ const c=getCart();
+ if(!c.length){
+   el.innerHTML='<section class="cart-empty"><div class="cart-empty-icon">🛍</div><p class="cart-kicker">YOUR BAG</p><h1>Your cart is waiting.</h1><p>Discover something delicious from the menu and build your order here.</p><a class="cart-primary-btn" href="menu.html">Explore the menu</a></section>';
+   return;
+ }
+ const itemCount=c.reduce((s,i)=>s+i.qty,0);
+ const total=c.reduce((s,i)=>s+i.unit*i.qty,0);
+ const itemLabel=itemCount===1?'item':'items';
+ el.innerHTML=`
+ <section class="cart-hero">
+   <div>
+     <p class="cart-kicker">YOUR ORDER</p>
+     <h1>Your cart</h1>
+     <p class="cart-subtitle">${itemCount} ${itemLabel} ready to make your meal.</p>
+   </div>
+   <a class="cart-back-link" href="menu.html">← Keep browsing</a>
+ </section>
+ <div class="cart-progress" aria-label="Order progress">
+   <span class="cart-progress-step active"><b>1</b> Cart</span>
+   <i></i><span class="cart-progress-step"><b>2</b> Checkout</span><i></i><span class="cart-progress-step"><b>3</b> Confirmation</span>
+ </div>
+ <div class="cart-layout-v2">
+   <section class="cart-items-panel">
+     <div class="cart-panel-heading"><div><h2>Your picks</h2><p>Review your items before checkout.</p></div><span class="cart-count-pill">${itemCount} ${itemLabel}</span></div>
+     <div class="cart-item-list">
+       ${c.map((i,n)=>`
+         <article class="cart-item-v2">
+           <div class="cart-item-image-wrap"><img src="${e(i.image||'')}" alt="${e(i.name)}" loading="lazy"></div>
+           <div class="cart-item-content">
+             <div class="cart-item-top"><div><h3>${e(i.name)}</h3><p>${Object.entries(i.options||{}).map(x=>e(x[0])+': '+e(x[1])).join(' • ')||'Standard item'}</p></div><strong class="cart-item-price">${money(i.unit*i.qty)}</strong></div>
+             <div class="cart-item-bottom">
+               <div class="cart-quantity" aria-label="Quantity">
+                 <button type="button" aria-label="Decrease quantity" data-action="changeQty(${n},-1)">−</button>
+                 <span>${i.qty}</span>
+                 <button type="button" aria-label="Increase quantity" data-action="changeQty(${n},1)">+</button>
+               </div>
+               <button type="button" class="cart-remove" data-action="removeItem(${n})">Remove</button>
+             </div>
+           </div>
+         </article>`).join('')}
+     </div>
+     <a class="cart-continue-link" href="menu.html">＋ Add more delicious things</a>
+   </section>
+   <aside class="cart-summary-v2">
+     <div class="cart-summary-top"><p class="cart-kicker">ORDER SUMMARY</p><h2>Almost there.</h2></div>
+     <div class="cart-summary-lines">
+       <div><span>Items</span><strong>${itemCount}</strong></div>
+       <div><span>Subtotal</span><strong>${money(total)}</strong></div>
+       <div class="cart-delivery-note"><span>Delivery</span><span>Calculated at checkout</span></div>
+     </div>
+     <div class="cart-total"><span>Total</span><strong>${money(total)}</strong></div>
+     <a class="cart-primary-btn" href="checkout.html">Continue to checkout <span>→</span></a>
+     <div class="cart-trust-row"><span>🔒 Secure checkout</span><span>✓ Easy to review</span></div>
+   </aside>
+ </div>`;
+}
 function renderCheckout(){const el=document.getElementById('checkout-view');if(!el)return;const c=getCart();if(!c.length){el.innerHTML='<div class="empty"><h2>Your cart is empty.</h2><a class="btn" href="menu.html">Browse menu</a></div>';return}const subtotal=c.reduce((s,i)=>s+i.unit*i.qty,0);el.innerHTML=`<div class="checkout-layout"><section><p class="eyebrow">CHECKOUT</p><h1>Complete your order.</h1><div class="panel"><h2>Your items</h2>${c.map(i=>`<div class="summary-row"><span>${i.qty} × ${i.name}<small style="display:block">${Object.entries(i.options||{}).map(x=>x[0]+': '+x[1]).join(' • ')}</small></span><strong>${money(i.unit*i.qty)}</strong></div>`).join('')}<div class="summary-row total"><span>Total</span><span>${money(subtotal)}</span></div></div></section><section class="panel"><h2>Customer details</h2><form id="checkout-form"><div class="field"><label>Name</label><input id="customer" required placeholder="Your name"></div><div class="field"><label>Phone</label><input id="phone" required placeholder="07xx xxx xxx"></div><div class="field"><label>Delivery / pickup note</label><input id="note" placeholder="e.g. Westlands, apartment 4B"></div><div class="option-group payment"><h4>Payment method</h4><label><input type="radio" name="payment" value="M-Pesa" checked> M-Pesa</label><label><input type="radio" name="payment" value="Card"> Card</label><label><input type="radio" name="payment" value="PayPal"> PayPal</label></div><button class="btn wide">Pay ${money(subtotal)} <small>(demo)</small></button></form></section></div>`;document.getElementById('checkout-form').onsubmit=e=>{e.preventDefault();const order={id:'SB-'+Date.now().toString().slice(-6),customer:document.getElementById('customer').value,phone:document.getElementById('phone').value,note:document.getElementById('note').value,payment:document.querySelector('input[name=payment]:checked').value,items:c,total:subtotal,status:'New',paymentStatus:'Demo paid',created:new Date().toISOString()};const orders=read('doe_orders',[]);orders.unshift(order);write('doe_orders',orders);write('doe_last_order',order.id);localStorage.removeItem('doe_cart');location.href='order.html?id='+order.id}}
 function statusIndex(status){return ['New','Preparing','Ready','Completed'].indexOf(status)}
 function renderOrder(){const el=document.getElementById('order-view');if(!el)return;const id=new URLSearchParams(location.search).get('id')||localStorage.getItem('doe_last_order');const o=read('doe_orders',[]).find(x=>x.id===id);if(!o){el.innerHTML='<div class="empty"><h2>Order not found.</h2><a class="btn" href="menu.html">Start an order</a></div>';return}const statuses=['New','Preparing','Ready','Completed'];el.innerHTML=`<div class="track-head"><p class="eyebrow">ORDER ${o.id}</p><h1>We have your order.</h1><p>Payment: <strong>${o.paymentStatus}</strong> · ${o.payment}</p></div><div class="panel tracking"><div class="timeline">${statuses.map((s,i)=>`<div class="timeline-step ${i<=statusIndex(o.status)?'active':''}"><span>${i+1}</span><strong>${s}</strong></div>`).join('')}</div><div class="order-details"><h2>Order summary</h2>${o.items.map(i=>`<div class="summary-row"><span>${i.qty} × ${i.name}<small style="display:block">${Object.entries(i.options||{}).map(x=>x[0]+': '+x[1]).join(' • ')}</small></span><strong>${money(i.unit*i.qty)}</strong></div>`).join('')}<div class="summary-row total"><span>Total</span><strong>${money(o.total)}</strong></div></div></div><p class="muted">Demo mode: the restaurant dashboard can change your order status, and refreshing this page will show the new status.</p>`}

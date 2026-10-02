@@ -4,13 +4,11 @@
 const API=window.PLATFORM_API_ORIGIN || 'https://restaurant-ordering-api-ow3p.onrender.com';
 const root=document.getElementById('platform-view');
 const state={
-  me:null,overview:{},command:null,businesses:[],packages:[],health:null,orders:[],riders:[],incidents:[],complianceProcessors:[],privacyIncidents:[],system:null,
-  selected:null,selectedInspect:null,showCreate:false,createDraft:{name:'',website:'',address:'',plan:'',domain:'',color:'#c96b3b'},section:'overview',menu:false,loading:false
+  me:null,overview:{},command:null,businesses:[],packages:[],health:null,disputes:[],incidents:[],audit:[],system:null,
+  selected:null,selectedInspect:null,selectedCase:null,showCreate:false,section:'overview',menu:false,loading:false,complianceProcessors:[],privacyIncidents:[]
 };
 let refreshTimer=null;
-
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const money=v=>new Intl.NumberFormat('en-KE',{style:'currency',currency:'KES',maximumFractionDigits:0}).format(Number(v||0));
 const dt=v=>v?new Date(v).toLocaleString('en-KE',{dateStyle:'medium',timeStyle:'short'}):'—';
 const token=()=>window.PlatformSession?PlatformSession.getLegacyToken('platform'):localStorage.getItem('platform_admin_token')||'';
 
@@ -23,27 +21,11 @@ async function api(path,opt={}){
   return data;
 }
 
-function login(message=''){
-  root.innerHTML=`
-    <section class="pc-login">
-      <div class="pc-login-card">
-        <span class="pc-kicker">PLATFORM OWNER</span>
-        <h1>Control Centre.</h1>
-        <p>Operate the entire restaurant platform from one independent command centre.</p>
-        ${message?`<div class="pc-message pc-error">${esc(message)}</div>`:''}
-        <form id="login-form">
-          <label>Email<input id="pa-email" type="email" autocomplete="username" required></label>
-          <label>Password
-            <span class="pc-password-field"><input id="pa-password" type="password" autocomplete="current-password" required><button type="button" class="pc-password-toggle" id="pa-password-toggle">SHOW</button></span>
-          </label>
-          <button type="submit" class="pc-btn pc-signin-btn">SIGN IN</button>
-        </form>
-        <div class="pc-login-divider"><span>OR</span></div>
-        <div class="pc-google-btn" id="platform-google-btn"></div>
-        <p class="pc-google-note">Google will ask which account you want to use before continuing.</p>
-        <p class="pc-note">Platform owner access only. Restaurant dashboards remain independent.</p>
-      </div>
-    </section>`;
+function login(message){
+  root.innerHTML='<section class="pc-login"><div class="pc-login-card"><span class="pc-kicker">PLATFORM OWNER</span><h1>Control Centre.</h1><p>Platform operations, security, health and controlled dispute evidence — without routine access to restaurant/customer operational data.</p>'+
+    (message?'<div class="pc-message pc-error">'+esc(message)+'</div>':'')+
+    '<form id="login-form"><label>Email<input id="pa-email" type="email" autocomplete="username" required></label><label>Password<span class="pc-password-field"><input id="pa-password" type="password" autocomplete="current-password" required><button type="button" class="pc-password-toggle" id="pa-password-toggle">SHOW</button></span></label><button type="submit" class="pc-btn pc-signin-btn">SIGN IN</button></form>'+
+    '<div class="pc-login-divider"><span>OR</span></div><div class="pc-google-btn" id="platform-google-btn"></div><p class="pc-google-note">Google will ask which account you want to use before continuing.</p><p class="pc-note">Platform owner access only. Restaurant dashboards remain independent.</p></div></section>';
   document.getElementById('login-form').addEventListener('submit',loginSubmit);
   document.getElementById('pa-password-toggle').addEventListener('click',togglePlatformPassword);
   googlePlatformLogin();
@@ -54,7 +36,8 @@ async function loginSubmit(e){
   const button=e.submitter;button.disabled=true;button.textContent='SIGNING IN…';
   try{
     const data=await api('/api/platform/login',{method:'POST',body:JSON.stringify({email:document.getElementById('pa-email').value.trim(),password:document.getElementById('pa-password').value})});
-    if(window.PlatformSession)PlatformSession.setLegacyToken('platform',data.token);else if(window.PlatformSession)PlatformSession.setLegacyToken('platform',data.token);else localStorage.setItem('platform_admin_token',data.token);await load();
+    if(window.PlatformSession)PlatformSession.setLegacyToken('platform',data.token);else localStorage.setItem('platform_admin_token',data.token);
+    await load();
   }catch(error){button.disabled=false;button.textContent='SIGN IN';login(error.message);}
 }
 function togglePlatformPassword(){
@@ -62,7 +45,6 @@ function togglePlatformPassword(){
   if(!input||!button)return;
   input.type=input.type==='password'?'text':'password';button.textContent=input.type==='password'?'SHOW':'HIDE';
 }
-
 let googlePlatformInitialized=false;
 async function loadGoogleIdentity(){
   if(window.google?.accounts?.id)return;
@@ -79,7 +61,7 @@ async function googlePlatformLogin(){
     await loadGoogleIdentity();
     if(!googlePlatformInitialized){
       google.accounts.id.initialize({client_id:cfg.clientId,callback:async response=>{
-        try{const data=await api('/api/platform/google',{method:'POST',body:JSON.stringify({credential:response.credential})});localStorage.setItem('platform_admin_token',data.token);await load();}
+        try{const data=await api('/api/platform/google',{method:'POST',body:JSON.stringify({credential:response.credential})});if(window.PlatformSession)PlatformSession.setLegacyToken('platform',data.token);else localStorage.setItem('platform_admin_token',data.token);await load();}
         catch(error){const note=document.querySelector('.pc-google-note');if(note)note.textContent=error.message;}
       }});googlePlatformInitialized=true;
     }
@@ -97,81 +79,47 @@ async function load(){
       api('/api/platform/packages'),
       api('/api/platform/health').catch(()=>({ok:false,tenants:[],environment:{}})),
       api('/api/platform/command-center').catch(()=>null),
-      api('/api/platform/orders?limit=100').catch(()=>[]),
-      api('/api/platform/riders?limit=200').catch(()=>[]),
+      api('/api/control/disputes?status=ALL').catch(()=>[]),
       api('/api/platform/incidents?limit=100').catch(()=>[]),
-      api('/api/platform/compliance/processors').catch(()=>[]),
-      api('/api/platform/compliance/incidents').catch(()=>[]),
       api('/api/platform/system').catch(()=>null),
-      api('/api/platform/audit?limit=30').catch(()=>[])
+      api('/api/platform/audit?limit=30').catch(()=>[]),
+      api('/api/platform/compliance/processors').catch(()=>[]),
+      api('/api/platform/compliance/incidents').catch(()=>[])
     ]);
-    [state.overview,state.businesses,state.packages,state.health,state.command,state.orders,state.riders,state.incidents,state.complianceProcessors,state.privacyIncidents,state.system,state.audit]=results;
+    [state.overview,state.businesses,state.packages,state.health,state.command,state.disputes,state.incidents,state.system,state.audit,state.complianceProcessors,state.privacyIncidents]=results;
     state.loading=false;
-    // Keep active forms/modals mounted during background refreshes. Replacing
-    // root.innerHTML destroys input elements and clears values being typed.
-    if(!state.showCreate&&!state.selected)render();
+    if(!state.selected&&!state.selectedCase)render();
     clearTimeout(refreshTimer);refreshTimer=setTimeout(load,30000);
   }catch(error){
-    state.loading=false;if(window.PlatformSession)PlatformSession.clearLegacyToken('platform');else localStorage.removeItem('platform_admin_token');login(error.message);
+    state.loading=false;
+    if(window.PlatformSession)PlatformSession.clearLegacyToken('platform');else localStorage.removeItem('platform_admin_token');
+    login(error.message);
   }
 }
 
 function packageFor(b){return state.packages.find(p=>p.key===b.plan_key);}
-function riderEnabled(b){return Boolean(packageFor(b)?.features?.riderModule);}
-function incidentClass(s){return String(s||'').toLowerCase();}
-function currentSectionLabel(){return ({overview:'Command Centre',restaurants:'Restaurants',orders:'Orders',delivery:'Riders & Delivery',health:'System Health',issues:'Issues & Alerts',activity:'Activity Log',updates:'System Updates',compliance:'Compliance'}[state.section]||'Command Centre');}
+function currentSectionLabel(){return ({overview:'Command Centre',restaurants:'Restaurants',disputes:'Dispute Access',health:'System Health',issues:'Issues & Alerts',activity:'Activity Log',updates:'System Updates'}[state.section]||'Command Centre');}
 
 function render(){
-  const o=state.overview||{},c=state.command||{},m=c.metrics||{},t=c.tenants||{};
-  root.innerHTML=`
-  <div class="pc-shell">
-    <header class="pc-nav">
-      <div class="pc-brand"><span>PLATFORM OWNER</span><strong>RESTAURANT ORDERING PLATFORM</strong></div>
-      <div class="pc-nav-right"><span class="pc-live-dot"></span><span class="pc-admin">${esc(state.me?.name||'Platform Owner')}</span><button class="pc-menu-btn" id="pc-menu-btn">☰ MENU</button></div>
-    </header>
-
-    <div class="pc-body">
-      <aside class="pc-sidebar">
-        ${navItems()}
-        <div class="pc-sidebar-foot"><span>BUILD</span><strong>${esc(state.system?.version||'PHASE 6')}</strong><small>Independent platform control</small></div>
-      </aside>
-
-      <main class="pc-main">
-        <div class="pc-mobile-section"><span class="pc-kicker">CONTROL CENTRE</span><strong>${esc(currentSectionLabel())}</strong></div>
-        ${sectionContent()}
-      </main>
-    </div>
-
-    ${state.menu?menuDrawer():''}
-    ${state.showCreate?createPanel():''}
-    ${state.selected?tenantPanel(state.selected):''}
-  </div>`;
-
-  document.getElementById('pc-menu-btn').onclick=()=>{state.menu=!state.menu;render();};
-  bindNav();
-  document.getElementById('refresh-btn')?.addEventListener('click',load);
-  document.getElementById('health-refresh')?.addEventListener('click',load);
+  root.innerHTML='<div class="pc-shell"><header class="pc-nav"><div class="pc-brand"><span>PLATFORM OWNER</span><strong>RESTAURANT ORDERING PLATFORM</strong></div><div class="pc-nav-right"><span class="pc-live-dot"></span><span class="pc-admin">'+esc(state.me?.name||'Platform Owner')+'</span><button class="pc-menu-btn" id="pc-menu-btn">☰ MENU</button></div></header>'+
+    '<div class="pc-body"><aside class="pc-sidebar">'+navItems()+'<div class="pc-sidebar-foot"><span>SECURITY MODEL</span><strong>ISOLATED DATA</strong><small>Break-glass dispute access</small></div></aside><main class="pc-main"><div class="pc-mobile-section"><span class="pc-kicker">CONTROL CENTRE</span><strong>'+esc(currentSectionLabel())+'</strong></div>'+sectionContent()+'</main></div>'+
+    (state.menu?menuDrawer():'')+(state.showCreate?createPanel():'')+(state.selected?tenantPanel(state.selected):'')+(state.selectedCase?disputePanel():'')+'</div>';
+  document.getElementById('pc-menu-btn')?.addEventListener('click',()=>{state.menu=!state.menu;render();});
+  bindNav();document.getElementById('refresh-btn')?.addEventListener('click',load);document.getElementById('health-refresh')?.addEventListener('click',load);
   document.getElementById('add-btn')?.addEventListener('click',()=>{state.showCreate=true;render();document.getElementById('new-name')?.focus();});
-  bindCreate();
-  bindRows();
-  bindTenant();
-  bindIncidentActions();
-  bindOrderFilter();
+  bindCreate();bindRows();bindDisputes();bindIncidentActions();bindTenant();
 }
 
 function navItems(){
-  const items=[['overview','⌂','Command Centre'],['restaurants','▦','Restaurants'],['orders','▤','Orders'],['delivery','◉','Riders & Delivery'],['health','✓','System Health'],['issues','!','Issues & Alerts'],['activity','≡','Activity Log'],['updates','↻','System Updates'],['compliance','⚖','Compliance']];
-  return '<nav class="pc-nav-menu">'+items.map(([id,icon,label])=>`<button class="${state.section===id?'active':''}" data-section="${id}"><span>${icon}</span>${label}${id==='issues'&&state.incidents.length?`<b class="pc-nav-badge">${state.incidents.length}</b>`:''}</button>`).join('')+'</nav>';
+  const items=[['overview','⌂','Command Centre'],['restaurants','▦','Restaurants'],['disputes','⚖','Dispute Access'],['health','✓','System Health'],['issues','!','Issues & Alerts'],['activity','≡','Activity Log'],['updates','↻','System Updates'],['compliance','⚖','Compliance']];
+  return '<nav class="pc-nav-menu">'+items.map(x=>'<button class="'+(state.section===x[0]?'active':'')+'" data-section="'+x[0]+'"><span>'+x[1]+'</span>'+x[2]+(x[0]==='issues'&&state.incidents.length?'<b class="pc-nav-badge">'+state.incidents.length+'</b>':'')+'</button>').join('')+'</nav>';
 }
-function bindNav(){document.querySelectorAll('[data-section]').forEach(b=>b.onclick=()=>{state.section=b.dataset.section;state.menu=false;render();});}
-function menuDrawer(){
-  return '<div class="pc-drawer-backdrop" id="pc-drawer-backdrop"><aside class="pc-drawer"><div class="pc-drawer-head"><div><span class="pc-kicker">MASTER MENU</span><h2>Control Centre</h2></div><button class="pc-modal-close" id="pc-drawer-close">×</button></div>'+navItems()+'<div class="pc-drawer-rule"></div><button class="pc-drawer-signout" id="logout-btn">SIGN OUT</button><p class="pc-drawer-note">This control centre monitors and operates the platform without connecting restaurant dashboards to one another.</p></aside></div>';
-}
+function bindNav(){document.querySelectorAll('[data-section]').forEach(b=>b.onclick=()=>{state.section=b.dataset.section;state.menu=false;state.selectedCase=null;render();});}
+function menuDrawer(){return '<div class="pc-drawer-backdrop"><aside class="pc-drawer"><div class="pc-drawer-head"><div><span class="pc-kicker">MASTER MENU</span><h2>Control Centre</h2></div><button class="pc-modal-close" id="pc-drawer-close">×</button></div>'+navItems()+'<div class="pc-drawer-rule"></div><button class="pc-drawer-signout" id="logout-btn">SIGN OUT</button><p class="pc-drawer-note">Normal Control Centre access excludes restaurant orders, revenue, customer records and rider personal data.</p></aside></div>';}
 
 function sectionContent(){
   if(state.section==='restaurants')return restaurantsSection();
-  if(state.section==='orders')return ordersSection();
-  if(state.section==='delivery')return deliverySection();
+  if(state.section==='disputes')return disputesSection();
   if(state.section==='health')return healthSection();
   if(state.section==='issues')return issuesSection();
   if(state.section==='activity')return activitySection();
@@ -180,155 +128,132 @@ function sectionContent(){
   return overviewSection();
 }
 
-function overviewSection(){
-  const c=state.command||{},m=c.metrics||{},t=c.tenants||{},issues=c.openIssues||[];
-  return `
-  <header class="pc-head">
-    <div><span class="pc-kicker">MASTER CONTROL CENTRE</span><h1>Everything under control.</h1><p>Monitor restaurants, orders, delivery, devices, integrations, health and platform activity from one independent owner view.</p></div>
-    <div class="pc-actions"><button class="pc-btn" id="add-btn">+ ADD RESTAURANT</button><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></div>
-  </header>
-  <section class="pc-grid pc-grid-6">
-    ${stat('RESTAURANTS',t.active||0,'active of '+(t.total||0))}${stat('ORDERS TODAY',m.ordersToday||0,'all restaurants')}${stat('PAID VALUE',money(m.paidValue),'paid order value')}${stat('ACTIVE TRIPS',m.activeTrips||0,(m.onlineRiders||0)+' riders online')}${stat('CUSTOMERS',m.customers||0,'customer records')}${stat('OPEN ISSUES',c.incidents?.total||0,(c.incidents?.critical||0)+' critical')}
-  </section>
-  ${healthPanel()}
-  <div class="pc-two-col">
-    <section class="pc-panel"><div class="pc-panel-head"><div><span class="pc-kicker">LIVE OPERATIONS</span><h2>Recent orders</h2></div><button class="pc-mini" data-section="orders">VIEW ALL</button></div>${recentOrders(c.recentOrders||[])}</section>
-    <section class="pc-panel"><div class="pc-panel-head"><div><span class="pc-kicker">ATTENTION</span><h2>Open issues</h2></div><button class="pc-mini" data-section="issues">ISSUE CENTRE</button></div>${issueRows(issues.slice(0,6))}</section>
-  </div>`;
-}
 function stat(label,value,note){return '<article class="pc-stat"><span>'+label+'</span><strong>'+esc(value)+'</strong><small>'+esc(note)+'</small></article>';}
-
+function overviewSection(){
+  const o=state.overview||{},c=state.command||{};
+  return '<header class="pc-head"><div><span class="pc-kicker">MASTER CONTROL CENTRE</span><h1>Platform, not restaurant data.</h1><p>Operate platform configuration, health, security and disputes without routine access to restaurant orders, revenue, customer records or rider personal data.</p></div><div class="pc-actions"><button class="pc-btn" id="add-btn">+ ADD RESTAURANT</button><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></div></header>'+
+    '<section class="pc-grid pc-grid-6">'+stat('RESTAURANTS',o.restaurants||0,'tenant registry')+stat('ACTIVE',o.active||0,'active tenants')+stat('INTEGRATIONS',c.metrics?.activeIntegrations||0,'active integrations')+stat('OPEN ISSUES',c.incidents?.total||0,(c.incidents?.critical||0)+' critical')+stat('DISPUTES',state.disputes.length,'controlled evidence cases')+stat('DIRECT DB','BLOCKED','no general browsing')+'</section>'+
+    healthPanel()+
+    '<div class="pc-two-col"><section class="pc-panel"><div class="pc-panel-head"><div><span class="pc-kicker">DATA ACCESS</span><h2>Isolation policy</h2></div><button class="pc-mini" data-section="disputes">OPEN DISPUTE ACCESS</button></div><div class="pc-list">'+
+    '<div class="pc-list-row"><div><strong>Restaurant orders</strong><small>Removed from the normal Control Centre.</small></div><strong class="pc-health-ok">BLOCKED</strong></div>'+
+    '<div class="pc-list-row"><div><strong>Restaurant revenue</strong><small>No platform-wide revenue browser.</small></div><strong class="pc-health-ok">BLOCKED</strong></div>'+
+    '<div class="pc-list-row"><div><strong>Customer personal data</strong><small>Not returned by normal platform endpoints.</small></div><strong class="pc-health-ok">BLOCKED</strong></div>'+
+    '<div class="pc-list-row"><div><strong>Dispute evidence</strong><small>Purpose-bound, minimum-necessary and time-limited.</small></div><strong class="pc-health-ok">CONTROLLED</strong></div>'+
+    '</div></section><section class="pc-panel"><div class="pc-panel-head"><div><span class="pc-kicker">ATTENTION</span><h2>Open issues</h2></div><button class="pc-mini" data-section="issues">ISSUE CENTRE</button></div>'+issueRows((c.openIssues||[]).slice(0,6))+'</section></div>';
+}
 function healthPanel(){
   const h=state.health||{},env=h.environment||{},tenants=h.tenants||[];
   const envItems=[['DATABASE',env.database],['GOOGLE MAPS',env.googleMaps],['SMS',env.smsProvider],['PAYMENTS',env.payments]];
-  const broken=tenants.filter(t=>!t.ok&&t.status==='ACTIVE').length;
-  return `<section class="pc-panel pc-health"><div class="pc-panel-head"><div><span class="pc-kicker">AUTOMATIC HEALTH</span><h2>System health</h2><p class="pc-panel-sub">The platform checks its infrastructure and every active restaurant.</p></div><div class="pc-health-actions"><span class="pc-health-status ${h.ok?'ok':'warn'}">${h.ok?'HEALTHY':'ATTENTION NEEDED'}</span><button class="pc-mini" id="health-refresh">RUN CHECK</button></div></div><div class="pc-health-grid">${envItems.map(x=>'<div class="pc-health-card"><span>'+x[0]+'</span><strong class="'+(x[1]?'ok':'warn')+'">'+(x[1]?'READY':'NOT CONFIGURED')+'</strong></div>').join('')}<div class="pc-health-card"><span>RESTAURANTS</span><strong>'+tenants.length+'</strong><small>'+broken+' active issue'+(broken===1?'':'s')+'</small></div></div><div class="pc-health-foot"><span>Checked '+(h.checkedAt?dt(h.checkedAt):'not yet')+'</span><span>'+((h.responseMs||0)?h.responseMs+' ms':'')+'</span></div></section>`;
+  return '<section class="pc-panel pc-health"><div class="pc-panel-head"><div><span class="pc-kicker">AUTOMATIC HEALTH</span><h2>System health</h2><p class="pc-panel-sub">Infrastructure and tenant configuration health only.</p></div><div class="pc-health-actions"><span class="pc-health-status '+(h.ok?'ok':'warn')+'">'+(h.ok?'HEALTHY':'ATTENTION NEEDED')+'</span><button class="pc-mini" id="health-refresh">RUN CHECK</button></div></div><div class="pc-health-grid">'+envItems.map(x=>'<div class="pc-health-card"><span>'+x[0]+'</span><strong class="'+(x[1]?'ok':'warn')+'">'+(x[1]?'READY':'NOT CONFIGURED')+'</strong></div>').join('')+'<div class="pc-health-card"><span>TENANTS</span><strong>'+tenants.length+'</strong><small>configuration checks only</small></div></div><div class="pc-health-foot"><span>Checked '+(h.checkedAt?dt(h.checkedAt):'not yet')+'</span><span>'+((h.responseMs||0)?h.responseMs+' ms':'')+'</span></div></section>';
 }
 
 function restaurantsSection(){
-  return `
-  <header class="pc-head compact"><div><span class="pc-kicker">TENANT OPERATIONS</span><h1>Restaurants.</h1><p>Every tenant, package, integration and operational state is visible here without opening another dashboard.</p></div><div class="pc-actions"><button class="pc-btn" id="add-btn">+ ADD RESTAURANT</button><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></div></header>
-  <section class="pc-panel"><div class="pc-panel-head"><div><span class="pc-kicker">TENANTS</span><h2>Restaurant registry</h2></div><span class="pc-count">${state.businesses.length} tenant${state.businesses.length===1?'':'s'}</span></div><div class="pc-table-wrap"><table class="pc-table"><thead><tr><th>RESTAURANT</th><th>PACKAGE</th><th>WEBSITE</th><th>RIDER</th><th>ORDERS</th><th>REVENUE</th><th>STATUS</th><th></th></tr></thead><tbody>${state.businesses.length?state.businesses.map(row).join(''):'<tr><td colspan="8" class="pc-empty">No restaurants have been provisioned.</td></tr>'}</tbody></table></div></section>`;
+  return '<header class="pc-head compact"><div><span class="pc-kicker">TENANT OPERATIONS</span><h1>Restaurants.</h1><p>Tenant registry and configuration only. Operational records and personal data remain outside the normal Control Centre surface.</p></div><div class="pc-actions"><button class="pc-btn" id="add-btn">+ ADD RESTAURANT</button><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></div></header>'+
+    '<section class="pc-panel"><div class="pc-panel-head"><div><span class="pc-kicker">TENANTS</span><h2>Restaurant registry</h2></div><span class="pc-count">'+state.businesses.length+' tenant'+(state.businesses.length===1?'':'s')+'</span></div><div class="pc-table-wrap"><table class="pc-table"><thead><tr><th>RESTAURANT</th><th>PACKAGE</th><th>WEBSITE</th><th>INTEGRATION</th><th>STATUS</th><th></th></tr></thead><tbody>'+(
+      state.businesses.length?state.businesses.map(row).join(''):'<tr><td colspan="6" class="pc-empty">No restaurants have been provisioned.</td></tr>'
+    )+'</tbody></table></div></section>';
 }
 function row(b){
-  const advanced=riderEnabled(b);detailRegister('restaurant',b.id,b);
-  return '<tr data-detail-type="restaurant" data-detail-id="'+esc(b.id)+'"><td><div class="pc-tenant-name"><span class="pc-logo-dot" style="background:'+esc(b.primary_color||'#c96b3b')+'"></span><div><strong>'+esc(b.name)+'</strong><small>'+esc(b.slug)+'</small></div></div></td><td><strong>'+esc(b.plan_name||b.plan_key||'STARTER')+'</strong></td><td><span class="pc-site">'+esc(b.website_url||'Not connected')+'</span></td><td><span class="pc-module '+(advanced?'on':'off')+'">'+(advanced?'ENABLED':'NOT INCLUDED')+'</span></td><td>'+Number(b.order_count||0)+'</td><td>'+money(b.revenue)+'</td><td><span class="pc-pill '+(b.status==='ACTIVE'?'active':'suspended')+'">'+esc(b.status)+'</span></td><td><button class="pc-mini pc-open" data-id="'+esc(b.id)+'">INSPECT</button></td></tr>';
+  return '<tr><td><div class="pc-tenant-name"><span class="pc-logo-dot" style="background:'+esc(b.primary_color||'#c96b3b')+'"></span><div><strong>'+esc(b.name)+'</strong><small>'+esc(b.slug)+'</small></div></div></td><td><strong>'+esc(b.plan_name||b.plan_key||'STARTER')+'</strong></td><td><span class="pc-site">'+esc(b.website_url||'Not connected')+'</span></td><td><span class="pc-module '+(b.integration_active?'on':'off')+'">'+(b.integration_active?'ACTIVE':'NOT CONFIGURED')+'</span></td><td><span class="pc-pill '+(b.status==='ACTIVE'?'active':'suspended')+'">'+esc(b.status)+'</span></td><td><button class="pc-mini pc-open" data-id="'+esc(b.id)+'">INSPECT</button></td></tr>';
 }
-function ordersSection(){
-  const filtered=state.orders;
-  return `<header class="pc-head compact"><div><span class="pc-kicker">PLATFORM ORDERS</span><h1>Orders.</h1><p>Read-only platform-wide order visibility. Order controls remain in the restaurant manager and order station workflows.</p></div><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></header>
-  <section class="pc-panel"><div class="pc-toolbar"><input id="order-filter" placeholder="Filter by order number or restaurant…"><span>${filtered.length} recent orders</span></div><div class="pc-table-wrap"><table class="pc-table" id="orders-table"><thead><tr><th>ORDER</th><th>RESTAURANT</th><th>STATUS</th><th>PAYMENT</th><th>DELIVERY</th><th>VALUE</th><th>CREATED</th></tr></thead><tbody>${orderRows(filtered)}</tbody></table></div></section>`;
-}
-function orderRows(rows){return rows.length?rows.map(o=>{detailRegister('order',o.id,o);return '<tr data-detail-type="order" data-detail-id="'+esc(o.id)+'"><td><strong>'+esc(o.order_number)+'</strong></td><td>'+esc(o.business_name)+'</td><td><span class="pc-status-text">'+esc(o.status||'—')+'</span></td><td>'+esc(o.payment_status||'—')+'</td><td>'+esc(o.delivery_status||'—')+'</td><td>'+money(o.total)+'</td><td>'+dt(o.created_at)+'</td></tr>'}).join(''):'<tr><td colspan="7" class="pc-empty">No orders found.</td></tr>';}
-function bindOrderFilter(){const input=document.getElementById('order-filter');if(!input)return;input.oninput=()=>{const q=input.value.trim().toLowerCase();const rows=state.orders.filter(o=>!q||String(o.order_number||'').toLowerCase().includes(q)||String(o.business_name||'').toLowerCase().includes(q));document.querySelector('#orders-table tbody').innerHTML=orderRows(rows);};}
 
-function deliverySection(){
-  state.riders.forEach(r=>detailRegister('rider',r.id,r));
-  return `<header class="pc-head compact"><div><span class="pc-kicker">DELIVERY OPERATIONS</span><h1>Riders & delivery.</h1><p>Monitor every restaurant's riders and active delivery state without opening a rider dashboard.</p></div><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></header>
-  <section class="pc-panel"><div class="pc-table-wrap"><table class="pc-table"><thead><tr><th>RIDER</th><th>RESTAURANT</th><th>STATUS</th><th>AVAILABILITY</th><th>ACTIVE ORDER</th><th>LAST PRESENCE</th></tr></thead><tbody>${state.riders.length?state.riders.map(r=>'<tr data-detail-type="rider" data-detail-id="'+esc(r.id)+'"><td><strong>'+esc(r.name)+'</strong><small class="pc-cell-sub">'+esc(r.phone||'')+'</small></td><td>'+esc(r.business_name)+'</td><td><span class="pc-pill '+(r.rider_status==='ACTIVE'?'active':'suspended')+'">'+esc(r.rider_status||'—')+'</span></td><td><span class="pc-module '+(r.online?'on':'off')+'">'+(r.online?'ONLINE':'OFFLINE')+'</span></td><td>'+esc(r.order_number||'—')+'</td><td>'+dt(r.presence_updated_at)+'</td></tr>').join(''):'<tr><td colspan="6" class="pc-empty">No riders registered.</td></tr>'}</tbody></table></div></section>`;
-}
-function healthSection(){
-  const h=state.health||{},tenants=h.tenants||[];
-  return `<header class="pc-head compact"><div><span class="pc-kicker">DIAGNOSTICS</span><h1>System health.</h1><p>Infrastructure readiness plus a tenant-by-tenant diagnostic view.</p></div><button class="pc-btn" id="health-refresh">RUN FULL CHECK</button></header>
-  <section class="pc-panel">${healthPanel().replace(/^<section[^>]*>|<\/section>$/g,'')}</section>
-  <section class="pc-panel"><div class="pc-panel-head"><div><span class="pc-kicker">TENANT DIAGNOSTICS</span><h2>Restaurant health matrix</h2></div></div><div class="pc-table-wrap"><table class="pc-table"><thead><tr><th>RESTAURANT</th><th>STATUS</th><th>PACKAGE</th><th>ISSUES</th><th></th></tr></thead><tbody>${tenants.map(t=>'<tr><td><strong>'+esc(t.name)+'</strong><small class="pc-cell-sub">'+esc(t.slug)+'</small></td><td><span class="pc-pill '+(t.status==='ACTIVE'?'active':'suspended')+'">'+esc(t.status)+'</span></td><td>'+esc(t.planKey||'—')+'</td><td>'+esc(t.issues?.join(' · ')||'NONE')+'</td><td><button class="pc-mini pc-open" data-id="'+esc(t.id)+'">INSPECT</button></td></tr>').join('')}</tbody></table></div></section>`;
+function disputesSection(){
+  return '<header class="pc-head compact"><div><span class="pc-kicker">CONTROLLED EVIDENCE</span><h1>Dispute access.</h1><p>No routine order or customer browser exists. A documented case is required before evidence can be accessed.</p></div><div class="pc-actions"><button class="pc-btn" id="new-dispute-btn">+ NEW DISPUTE CASE</button><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></div></header>'+
+    '<section class="pc-panel"><div class="pc-panel-head"><div><span class="pc-kicker">CASES</span><h2>Controlled evidence cases</h2></div><span class="pc-count">'+state.disputes.length+' case'+(state.disputes.length===1?'':'s')+'</span></div><div class="pc-table-wrap"><table class="pc-table"><thead><tr><th>CASE</th><th>RESTAURANT</th><th>PURPOSE</th><th>STATUS</th><th>CREATED</th><th></th></tr></thead><tbody>'+
+    (state.disputes.length?state.disputes.map(d=>'<tr><td><strong>'+esc(d.case_reference)+'</strong></td><td>'+esc(d.business_name)+'</td><td>'+esc(d.category)+'</td><td><span class="pc-pill '+(d.status==='CLOSED'?'suspended':'active')+'">'+esc(d.status)+'</span></td><td>'+dt(d.created_at)+'</td><td><button class="pc-mini pc-dispute-open" data-id="'+esc(d.id)+'">OPEN CASE</button></td></tr>').join(''):'<tr><td colspan="6" class="pc-empty">No cases. Routine tenant data remains isolated.</td></tr>')+
+    '</tbody></table></div></section>';
 }
 
 function issuesSection(){
-  return `<header class="pc-head compact"><div><span class="pc-kicker">OBSERVABILITY</span><h1>Issues & alerts.</h1><p>Frontend and platform errors are collected here by restaurant and dashboard source so you can identify where a failure occurred.</p></div><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></header>
-  <section class="pc-panel"><div class="pc-table-wrap"><table class="pc-table"><thead><tr><th>SEVERITY</th><th>DASHBOARD</th><th>RESTAURANT</th><th>ERROR</th><th>OCCURRENCES</th><th>LAST SEEN</th><th></th></tr></thead><tbody>${issueRows(state.incidents,true)}</tbody></table></div></section>`;
+  return '<header class="pc-head compact"><div><span class="pc-kicker">PLATFORM INCIDENTS</span><h1>Issues & alerts.</h1><p>System and security incidents only. Tenant order/customer records are not used as a monitoring feed.</p></div><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></header><section class="pc-panel"><div class="pc-list">'+issueRows(state.incidents)+'</div></section>';
 }
-function issueRows(rows,table=false){
-  if(!rows.length)return table?'<tr><td colspan="7" class="pc-empty">No open issues. The platform is clear.</td></tr>':'<div class="pc-empty-card">No open issues.</div>';
-  if(table)return rows.map(i=>{detailRegister('incident',i.id,i);return '<tr data-detail-type="incident" data-detail-id="'+esc(i.id)+'"><td><span class="pc-severity '+incidentClass(i.severity)+'">'+esc(i.severity)+'</span></td><td>'+esc(i.dashboard||i.source||'UNKNOWN')+'</td><td>'+esc(i.business_name||'Platform')+'</td><td class="pc-issue-message">'+esc(i.message)+'</td><td>'+Number(i.occurrences||1)+'</td><td>'+dt(i.last_seen_at)+'</td><td><button class="pc-mini pc-resolve" data-id="'+esc(i.id)+'">RESOLVE</button></td></tr>'}).join('');
-  return rows.map(i=>{detailRegister('incident',i.id,i);return '<div class="pc-issue-row" data-detail-type="incident" data-detail-id="'+esc(i.id)+'"><span class="pc-severity '+incidentClass(i.severity)+'">'+esc(i.severity)+'</span><div><strong>'+esc(i.message)+'</strong><small>'+esc(i.business_name||'Platform')+' · '+esc(i.dashboard||i.source||'UNKNOWN')+' · '+Number(i.occurrences||1)+' occurrence'+(Number(i.occurrences||1)===1?'':'s')+'</small></div></div>'}).join('');
-}
-function bindIncidentActions(){document.querySelectorAll('.pc-resolve').forEach(b=>b.onclick=async()=>{b.disabled=true;b.textContent='…';try{await api('/api/platform/incidents/'+encodeURIComponent(b.dataset.id)+'/resolve',{method:'POST',body:'{}'});await load();}catch(e){alert(e.message);b.disabled=false;b.textContent='RESOLVE';}});}
-
-function complianceSection(){
-  const processors=state.complianceProcessors||[],incidents=state.privacyIncidents||[];
-  return `<header class="pc-head compact"><div><span class="pc-kicker">DATA GOVERNANCE</span><h1>Compliance.</h1><p>Privacy requests, processor safeguards and suspected personal-data incidents are tracked here. This workflow does not replace legal review.</p></div><div class="pc-actions"><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></div></header>
-  <section class="pc-panel"><div class="pc-panel-head"><div><span class="pc-kicker">PROCESSOR REGISTER</span><h2>Third-party data services</h2></div></div><div class="pc-table-wrap"><table class="pc-table"><thead><tr><th>SERVICE</th><th>PURPOSE</th><th>DATA</th><th>AGREEMENT</th></tr></thead><tbody>${processors.length?processors.map(p=>'<tr><td><strong>'+esc(p.name)+'</strong></td><td>'+esc(p.purpose)+'</td><td>'+esc(p.data_categories)+'</td><td>'+esc(p.agreement_status)+'</td></tr>').join(''):'<tr><td colspan="4" class="pc-empty">Processor register unavailable.</td></tr>'}</tbody></table></div></section>
-  <section class="pc-panel"><div class="pc-panel-head"><div><span class="pc-kicker">PRIVACY INCIDENTS</span><h2>Breach response register</h2><p class="pc-panel-sub">Record, contain, assess and escalate suspected personal-data incidents. Statutory reporting decisions require the responsible controller and privacy/legal review.</p></div></div><div class="pc-table-wrap"><table class="pc-table"><thead><tr><th>SEVERITY</th><th>STATUS</th><th>RESTAURANT</th><th>DISCOVERED</th><th>DESCRIPTION</th></tr></thead><tbody>${incidents.length?incidents.map(i=>'<tr><td>'+esc(i.severity)+'</td><td>'+esc(i.status)+'</td><td>'+esc(i.business_name||'Platform')+'</td><td>'+dt(i.discovered_at)+'</td><td class="pc-issue-message">'+esc(i.description)+'</td></tr>').join(''):'<tr><td colspan="5" class="pc-empty">No privacy incidents recorded.</td></tr>'}</tbody></table></div></section>`;
+function issueRows(rows){
+  return rows.length?rows.map(i=>'<div class="pc-issue-row"><span class="pc-severity '+String(i.severity||'info').toLowerCase()+'">'+esc(i.severity||'INFO')+'</span><div><strong>'+esc(i.source||i.action||'SYSTEM')+'</strong><small class="pc-issue-message">'+esc(i.message||i.note||'Platform event')+'</small></div><small>'+dt(i.last_seen_at||i.created_at)+'</small></div>').join(''):'<div class="pc-empty-card">No open issues.</div>';
 }
 function activitySection(){
-  return `<header class="pc-head compact"><div><span class="pc-kicker">AUDIT TRAIL</span><h1>Activity log.</h1><p>A chronological record of platform-owner and system activity.</p></div><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></header>
-  <section class="pc-panel"><div class="pc-activity-list">${(state.audit||[]).length?(state.audit||[]).map(a=>'<article><span class="pc-activity-dot"></span><div><strong>'+esc(a.action)+'</strong><p>'+esc(a.note||'System event')+'</p></div><time>'+dt(a.created_at)+'</time></article>').join(''):'<div class="pc-empty-card">No activity recorded yet.</div>'}</div></section>`;
+  return '<header class="pc-head compact"><div><span class="pc-kicker">PLATFORM AUDIT</span><h1>Activity log.</h1><p>Administrative platform actions and access-control events.</p></div><button class="pc-btn secondary" id="refresh-btn">REFRESH</button></header><section class="pc-panel"><div class="pc-activity-list">'+(state.audit.length?state.audit.map(a=>'<article><span class="pc-activity-dot"></span><div><strong>'+esc(a.action)+'</strong><p>'+esc(a.note||'Platform action')+'</p></div><time>'+dt(a.created_at)+'</time></article>').join(''):'<div class="pc-empty-card">No activity.</div>')+'</div></section>';
 }
-
 function updatesSection(){
   const s=state.system||{};
-  return `<header class="pc-head compact"><div><span class="pc-kicker">PLATFORM OS</span><h1>System updates.</h1><p>The platform owner controls the system as a product. Releases can be versioned, audited and rolled forward without connecting restaurant dashboards to one another.</p></div></header>
-  <div class="pc-two-col"><section class="pc-panel"><span class="pc-kicker">CURRENT BUILD</span><h2>${esc(s.version||'Unknown')}</h2><div class="pc-update-grid"><div><span>API</span><strong>ONLINE</strong></div><div><span>NODE</span><strong>${esc(s.node||'—')}</strong></div><div><span>DATABASE</span><strong>CONNECTED</strong></div><div><span>CHANGE CONTROL</span><strong>GIT + RENDER</strong></div></div></section>
-  <section class="pc-panel"><span class="pc-kicker">CAPABILITIES</span><h2>Platform services</h2><div class="pc-cap-list">${Object.entries(s.capabilities||{}).map(([k,v])=>'<div><span>'+esc(k.replace(/([A-Z])/g,' $1').toUpperCase())+'</span><strong class="'+(v?'ok':'warn')+'">'+(v?'READY':'NOT CONFIGURED')+'</strong></div>').join('')}</div></section></div>
-  <section class="pc-panel pc-update-note"><span class="pc-kicker">UPDATE ARCHITECTURE</span><h2>Ready for future OS releases</h2><p>Future platform releases can be introduced as versioned backend/frontend changes, recorded in the audit trail and surfaced here. Restaurant dashboards remain independent; the Control Centre is the owner-level operations layer.</p><div class="pc-release-flow"><span>CODE</span><b>→</b><span>BUILD</span><b>→</b><span>DEPLOY</span><b>→</b><span>HEALTH CHECK</span><b>→</b><span>RELEASE</span></div></section>`;
+  return '<header class="pc-head compact"><div><span class="pc-kicker">SYSTEM</span><h1>System updates.</h1><p>Platform runtime and integration readiness without tenant operational metrics.</p></div></header><section class="pc-panel"><div class="pc-update-grid"><div><span>VERSION</span><strong>'+esc(s.version||'—')+'</strong></div><div><span>ENVIRONMENT</span><strong>'+esc(s.apiEnvironment||'—')+'</strong></div><div><span>DATABASE</span><strong>CONNECTED</strong></div><div><span>OPEN INCIDENTS</span><strong>'+esc(s.counts?.open_incidents||0)+'</strong></div></div></section>';
 }
+function healthSection(){return overviewSection().replace(/^[\\s\\S]*?(?=<section class="pc-panel pc-health">)/,'').replace(/<div class="pc-two-col">[\\s\\S]*$/,'');}
 
-function recentOrders(rows){
-  return rows.length?'<div class="pc-list">'+rows.map(o=>{detailRegister('order',o.id,o);return '<div class="pc-list-row" data-detail-type="order" data-detail-id="'+esc(o.id)+'"><div><strong>'+esc(o.order_number)+'</strong><small>'+esc(o.business_name)+' · '+esc(o.status||'—')+'</small></div><strong>'+money(o.total)+'</strong></div>'}).join('')+'</div>':'<div class="pc-empty-card">No orders yet.</div>';
-}
 function createPanel(){
-  const d=state.createDraft||{};
-  return `<div class="pc-modal-backdrop" id="create-backdrop"><section class="pc-modal pc-create-modal"><button class="pc-modal-close" id="close-create">×</button><div class="pc-modal-head"><div><span class="pc-kicker">NEW TENANT</span><h2>Provision restaurant</h2><p>Create the tenant and its core platform services.</p></div></div><form id="create-form" class="pc-form"><label>Restaurant name<input id="new-name" required placeholder="Restaurant name" value="${esc(d.name||'')}"></label><label>Homepage URL<input id="new-website" type="url" placeholder="https://restaurant.com" value="${esc(d.website||'')}"></label><label>Pickup address<input id="new-address" required placeholder="Restaurant address" value="${esc(d.address||'')}"></label><label>Package<select id="new-plan">${state.packages.map((p,i)=>'<option value="'+esc(p.key)+'" '+((d.plan&&d.plan===p.key)||(!d.plan&&i===0)?'selected':'')+'>'+esc(p.name)+' — '+esc(p.description||'')+'</option>').join('')}</select></label><label>Restaurant domain<input id="new-domain" placeholder="orders.restaurant.com" value="${esc(d.domain||'')}"></label><label>Primary colour<input id="new-color" value="${esc(d.color||'#c96b3b')}"></label><div class="pc-form-note"><strong>Isolation rule:</strong> provisioning creates tenant infrastructure. Dashboards remain independently accessed.</div><div class="pc-form-actions"><button type="button" class="pc-btn secondary" id="cancel-create">CANCEL</button><button class="pc-btn">PROVISION RESTAURANT</button></div></form></section></div>`;
+  const options=state.packages.map(p=>'<option value="'+esc(p.key)+'">'+esc(p.name||p.key)+'</option>').join('');
+  return '<div class="pc-modal-backdrop"><section class="pc-modal pc-create-modal"><button class="pc-modal-close" id="create-close">×</button><div class="pc-modal-head"><div><span class="pc-kicker">TENANT PROVISIONING</span><h2>Add restaurant.</h2><p>Only tenant configuration is collected here.</p></div></div><div class="pc-form"><label>RESTAURANT NAME<input id="new-name" required></label><label>SLUG<input id="new-slug" required></label><label>PICKUP ADDRESS<input id="new-address" required></label><label>WEBSITE URL<input id="new-website"></label><label>PACKAGE<select id="new-plan">'+options+'</select></label><label>CUSTOM DOMAIN<input id="new-domain"></label><div class="pc-form-actions"><button class="pc-btn secondary" id="create-close-2">CANCEL</button><button class="pc-btn" id="create-save">CREATE RESTAURANT</button></div></div></section></div>';
 }
 function bindCreate(){
-  const closeCreate=()=>{state.showCreate=false;state.createDraft={name:'',website:'',address:'',plan:'',domain:'',color:'#c96b3b'};render();};
-  document.getElementById('close-create')?.addEventListener('click',closeCreate);
-  document.getElementById('cancel-create')?.addEventListener('click',closeCreate);
-  const form=document.getElementById('create-form');
-  form?.addEventListener('input',e=>{
-    const map={name:'name',website:'website',address:'address',domain:'domain',color:'color'};
-    if(map[e.target.id])state.createDraft[map[e.target.id]]=e.target.value;
-  });
-  form?.addEventListener('change',e=>{if(e.target.id==='new-plan')state.createDraft.plan=e.target.value;});
-  form?.addEventListener('submit',createTenant);
-  document.getElementById('pc-drawer-close')?.addEventListener('click',()=>{state.menu=false;render();});
-  document.getElementById('pc-drawer-backdrop')?.addEventListener('click',e=>{if(e.target.id==='pc-drawer-backdrop'){state.menu=false;render();}});
-  document.getElementById('logout-btn')?.addEventListener('click',logout);
+  document.getElementById('create-close')?.addEventListener('click',()=>{state.showCreate=false;render();});
+  document.getElementById('create-close-2')?.addEventListener('click',()=>{state.showCreate=false;render();});
+  document.getElementById('create-save')?.addEventListener('click',createTenant);
 }
-async function createTenant(e){
-  e.preventDefault();const button=e.submitter;button.disabled=true;button.textContent='PROVISIONING…';
+async function createTenant(){
+  const button=document.getElementById('create-save');button.disabled=true;button.textContent='CREATING…';
   try{
-    await api('/api/platform/businesses',{method:'POST',body:JSON.stringify({
-      name:document.getElementById('new-name').value.trim(),
-      websiteUrl:document.getElementById('new-website').value.trim(),
-      slug:document.getElementById('new-name').value.trim(),
-      address:document.getElementById('new-address').value.trim(),
-      planKey:document.getElementById('new-plan').value,
-      domain:document.getElementById('new-domain').value.trim(),
-      primaryColor:document.getElementById('new-color').value.trim()
-    })});
-    state.showCreate=false;
-    state.createDraft={name:'',website:'',address:'',plan:'',domain:'',color:'#c96b3b'};
-    await load();
-  }catch(error){button.disabled=false;button.textContent='PROVISION RESTAURANT';alert(error.message);}
+    await api('/api/platform/businesses',{method:'POST',body:JSON.stringify({name:document.getElementById('new-name').value.trim(),slug:document.getElementById('new-slug').value.trim(),address:document.getElementById('new-address').value.trim(),websiteUrl:document.getElementById('new-website').value.trim(),planKey:document.getElementById('new-plan').value,domain:document.getElementById('new-domain').value.trim()})});
+    state.showCreate=false;await load();
+  }catch(e){button.disabled=false;button.textContent='CREATE RESTAURANT';alert(e.message);}
 }
-
-function tenantPanel(b){
-  return '<div class="pc-modal-backdrop" id="tenant-backdrop"><section class="pc-modal pc-tenant-modal"><button class="pc-modal-close" id="tenant-close">×</button><div class="pc-modal-head"><div><span class="pc-kicker">TENANT INSPECTOR</span><h2>'+esc(b.name)+'</h2><p>'+esc(b.slug)+' · '+esc(b.plan_name||b.plan_key||'STARTER')+'</p></div><span class="pc-pill '+(b.status==='ACTIVE'?'active':'suspended')+'">'+esc(b.status)+'</span></div>'+tenantInspectorContent()+'<div class="pc-section"><span class="pc-kicker">CONTROL</span><div class="pc-two"><label>PACKAGE<select id="edit-plan">'+state.packages.map(p=>'<option value="'+esc(p.key)+'" '+(p.key===b.plan_key?'selected':'')+'>'+esc(p.name)+'</option>').join('')+'</select></label><label>STATUS<select id="edit-status"><option value="ACTIVE" '+(b.status==='ACTIVE'?'selected':'')+'>ACTIVE</option><option value="SUSPENDED" '+(b.status==='SUSPENDED'?'selected':'')+'>SUSPENDED</option></select></label></div><div class="pc-inline-actions"><button class="pc-btn" id="save-tenant">SAVE TENANT SETTINGS</button></div></div></section></div>';
-}
-function tenantInspectorContent(){
-  if(!state.selectedInspect)return '<div class="pc-loading">Loading tenant system data…</div>';
-  const x=state.selectedInspect,c=x.counts||{},h=x.health||{};
-  return '<div class="pc-tenant-overview"><div><span>STATUS</span><strong>'+esc(x.restaurant.status)+'</strong></div><div><span>CUSTOMERS</span><strong>'+Number(c.customers||0)+'</strong></div><div><span>ORDERS</span><strong>'+Number(c.orders||0)+'</strong></div><div><span>RIDERS</span><strong>'+Number(c.riders||0)+'</strong></div><div><span>ACTIVE TRIPS</span><strong>'+Number(c.active_trips||0)+'</strong></div><div><span>STATIONS</span><strong>'+Number(c.active_stations||0)+'</strong></div></div><div class="pc-section"><span class="pc-kicker">SERVICE HEALTH</span><div class="pc-service-health">'+(h.ok?'<strong class="pc-health-ok">ALL CORE SERVICES READY</strong>':'<strong class="pc-health-warn">'+esc(h.issues?.join(' · ')||'ATTENTION NEEDED')+'</strong>')+'</div></div><div class="pc-section"><span class="pc-kicker">RECENT TENANT ORDERS</span><div class="pc-table-wrap"><table class="pc-table"><thead><tr><th>ORDER</th><th>STATUS</th><th>PAYMENT</th><th>VALUE</th><th>CREATED</th></tr></thead><tbody>'+((x.orders||[]).length?x.orders.map(o=>'<tr><td>'+esc(o.order_number)+'</td><td>'+esc(o.status)+'</td><td>'+esc(o.payment_status)+'</td><td>'+money(o.total)+'</td><td>'+dt(o.created_at)+'</td></tr>').join(''):'<tr><td colspan="5" class="pc-empty">No orders yet.</td></tr>')+'</tbody></table></div></div><div class="pc-section"><span class="pc-kicker">TENANT ACTIVITY</span><div class="pc-list">'+((x.audit||[]).length?x.audit.map(a=>'<div class="pc-list-row"><div><strong>'+esc(a.action)+'</strong><small>'+esc(a.note||'System event')+'</small></div><small>'+dt(a.created_at)+'</small></div>').join(''):'<div class="pc-empty-card">No tenant activity yet.</div>')+'</div></div>';
-}
-async function bindRows(){
+function bindRows(){
   document.querySelectorAll('.pc-open').forEach(btn=>btn.onclick=async()=>{
     state.selected=state.businesses.find(b=>String(b.id)===String(btn.dataset.id))||null;state.selectedInspect=null;render();
     try{state.selectedInspect=await api('/api/platform/businesses/'+encodeURIComponent(btn.dataset.id)+'/inspect');render();}catch(e){alert(e.message);}
   });
+  document.querySelectorAll('.pc-dispute-open').forEach(btn=>btn.onclick=async()=>{
+    try{state.selectedCase=await api('/api/control/disputes/'+encodeURIComponent(btn.dataset.id));render();}catch(e){alert(e.message);}
+  });
+}
+function bindDisputes(){
+  document.querySelectorAll('[data-section="disputes"]').forEach(b=>b.onclick=()=>{state.section='disputes';state.menu=false;render();});
+  document.getElementById('new-dispute-btn')?.addEventListener('click',()=>{state.selectedCase={newCase:true};render();});
+  document.getElementById('dispute-cancel')?.addEventListener('click',()=>{state.selectedCase=null;render();});
+  document.getElementById('dispute-create')?.addEventListener('click',createDispute);
+  document.querySelectorAll('[data-evidence-scope]').forEach(btn=>btn.addEventListener('click',()=>grantEvidence(btn.dataset.evidenceScope)));
+  document.getElementById('dispute-close')?.addEventListener('click',closeDispute);
+}
+async function createDispute(){
+  const button=document.getElementById('dispute-create');button.disabled=true;button.textContent='CREATING…';
+  try{
+    const data=await api('/api/control/disputes',{method:'POST',body:JSON.stringify({businessId:document.getElementById('dispute-business').value,orderNumber:document.getElementById('dispute-order').value.trim(),category:document.getElementById('dispute-category').value,reason:document.getElementById('dispute-reason').value.trim()})});
+    state.selectedCase=await api('/api/control/disputes/'+encodeURIComponent(data.case.id));
+    state.disputes=await api('/api/control/disputes?status=ALL');render();
+  }catch(e){button.disabled=false;button.textContent='CREATE CASE';alert(e.message);}
+}
+async function grantEvidence(scope){
+  if(!state.selectedCase?.case?.id)return;
+  try{
+    await api('/api/control/disputes/'+encodeURIComponent(state.selectedCase.case.id)+'/access',{method:'POST',body:JSON.stringify({scope:scope,minutes:15})});
+    const evidence=await api('/api/control/disputes/'+encodeURIComponent(state.selectedCase.case.id)+'/evidence?scope='+encodeURIComponent(scope));
+    const detail=await api('/api/control/disputes/'+encodeURIComponent(state.selectedCase.case.id));
+    state.selectedCase={...detail,evidence:evidence};render();
+  }catch(e){alert(e.message);}
+}
+async function closeDispute(){
+  if(!state.selectedCase?.case?.id)return;
+  try{await api('/api/control/disputes/'+encodeURIComponent(state.selectedCase.case.id)+'/close',{method:'POST'});state.selectedCase=null;await load();}catch(e){alert(e.message);}
+}
+function disputePanel(){
+  const d=state.selectedCase;
+  if(d.newCase){
+    const options=state.businesses.map(b=>'<option value="'+esc(b.id)+'">'+esc(b.name)+'</option>').join('');
+    return '<div class="pc-modal-backdrop"><section class="pc-modal pc-create-modal"><button class="pc-modal-close" id="dispute-cancel">×</button><div class="pc-modal-head"><div><span class="pc-kicker">BREAK-GLASS CASE</span><h2>Create dispute case.</h2><p>Use a specific restaurant and order reference. This does not display order contents or customer data.</p></div></div><div class="pc-form"><label>RESTAURANT<select id="dispute-business">'+options+'</select></label><label>ORDER REFERENCE<input id="dispute-order" placeholder="e.g. ORD-1042" autocomplete="off"></label><label>CATEGORY<select id="dispute-category"><option value="DELIVERY_DISPUTE">DELIVERY DISPUTE</option><option value="REFUND_DISPUTE">REFUND DISPUTE</option><option value="SECURITY_INCIDENT">SECURITY INCIDENT</option><option value="LEGAL_REQUEST">LEGAL REQUEST</option><option value="OTHER">OTHER</option></select></label><label>REASON<textarea id="dispute-reason" rows="5" placeholder="Why is this evidence required?"></textarea></label><div class="pc-form-note">Access is not automatic. Evidence is purpose-bound, maximum 30 minutes, and every grant/view is audited.</div><div class="pc-form-actions"><button class="pc-btn secondary" id="dispute-cancel-2">CANCEL</button><button class="pc-btn" id="dispute-create">CREATE CASE</button></div></div></section></div>';
+  }
+  const c=d.case||{},e=d.evidence;
+  return '<div class="pc-modal-backdrop"><section class="pc-modal pc-tenant-modal"><button class="pc-modal-close" id="dispute-cancel">×</button><div class="pc-modal-head"><div><span class="pc-kicker">CASE '+esc(c.caseReference)+'</span><h2>Controlled investigation.</h2><p>'+esc(c.businessName)+' · '+esc(c.category)+'</p></div><button class="pc-btn secondary" id="dispute-close">CLOSE CASE</button></div><div class="pc-section"><div class="pc-tenant-overview"><div><span>STATUS</span><strong>'+esc(c.status)+'</strong></div><div><span>PURPOSE</span><strong>'+esc(c.category)+'</strong></div><div><span>ORDER DATA</span><strong class="pc-health-ok">ISOLATED</strong></div><div><span>CUSTOMER DATA</span><strong class="pc-health-ok">ISOLATED</strong></div><div><span>DIRECT DB</span><strong class="pc-health-ok">BLOCKED</strong></div><div><span>ACCESS</span><strong class="pc-health-ok">AUDITED</strong></div></div></div><div class="pc-section"><span class="pc-kicker">REASON</span><p class="pc-panel-sub">'+esc(c.reason)+'</p></div><div class="pc-section"><span class="pc-kicker">REQUEST EVIDENCE</span><div class="pc-actions pc-evidence-actions"><button class="pc-btn" data-evidence-scope="ORDER_TIMELINE">ORDER TIMELINE</button><button class="pc-btn" data-evidence-scope="DELIVERY_EVIDENCE">DELIVERY EVIDENCE</button><button class="pc-btn secondary" data-evidence-scope="REFUND_EVIDENCE">REFUND STATUS</button><button class="pc-btn secondary" data-evidence-scope="LOCATION_DETAIL">EXACT LOCATION</button><button class="pc-btn secondary" data-evidence-scope="CUSTOMER_CONTACT">CUSTOMER CONTACT</button></div><div class="pc-form-note">Exact location and customer contact require PLATFORM_OWNER authorization. All restricted views expire automatically.</div></div>'+(e?'<div class="pc-section"><span class="pc-kicker">RESTRICTED EVIDENCE — '+esc(e.scope)+'</span><pre class="pc-evidence">'+esc(JSON.stringify(e,null,2))+'</pre></div>':'')+'</section></div>';
 }
 function bindTenant(){
   document.getElementById('tenant-close')?.addEventListener('click',()=>{state.selected=null;state.selectedInspect=null;render();});
   document.getElementById('tenant-backdrop')?.addEventListener('click',e=>{if(e.target.id==='tenant-backdrop'){state.selected=null;state.selectedInspect=null;render();}});
-  document.getElementById('save-tenant')?.addEventListener('click',saveTenant);
 }
-async function saveTenant(){
-  const b=state.selected;if(!b)return;const button=document.getElementById('save-tenant');button.disabled=true;button.textContent='SAVING…';
-  try{await api('/api/platform/businesses/'+encodeURIComponent(b.id),{method:'PATCH',body:JSON.stringify({planKey:document.getElementById('edit-plan').value,status:document.getElementById('edit-status').value})});state.selected=null;state.selectedInspect=null;await load();}
-  catch(e){button.disabled=false;button.textContent='SAVE TENANT SETTINGS';alert(e.message);}
+function tenantPanel(b){
+  const x=state.selectedInspect;
+  return '<div class="pc-modal-backdrop" id="tenant-backdrop"><section class="pc-modal pc-tenant-modal"><button class="pc-modal-close" id="tenant-close">×</button><div class="pc-modal-head"><div><span class="pc-kicker">TENANT CONFIGURATION</span><h2>'+esc(b.name)+'</h2><p>Configuration and service health only. No order/customer records are loaded.</p></div></div>'+(!x?'<div class="pc-loading">Loading safe tenant configuration…</div>':'<div class="pc-section"><div class="pc-tenant-overview"><div><span>STATUS</span><strong>'+esc(x.restaurant.status)+'</strong></div><div><span>PACKAGE</span><strong>'+esc(x.restaurant.plan_name||x.restaurant.plan_key)+'</strong></div><div><span>BRANCH</span><strong>'+(String(x.health?.issues||[]).includes('MISSING_BRANCH')?'MISSING':'READY')+'</strong></div><div><span>MANAGER</span><strong>'+(String(x.health?.issues||[]).includes('MISSING_MANAGER')?'MISSING':'READY')+'</strong></div><div><span>INTEGRATION</span><strong>'+(String(x.health?.issues||[]).includes('NO_ACTIVE_INTEGRATION')?'NOT READY':'READY')+'</strong></div><div><span>DATA ACCESS</span><strong class="pc-health-ok">ISOLATED</strong></div></div></div>')+'</section></div>';
 }
-async function logout(){try{await api('/api/platform/logout',{method:'POST'});}catch{}localStorage.removeItem('platform_admin_token');login('You have been signed out.');}
+function bindIncidentActions(){
+  document.getElementById('logout-btn')?.addEventListener('click',logout);
+}
+async function logout(){try{await api('/api/platform/logout',{method:'POST'});}catch{}if(window.PlatformSession)PlatformSession.clearLegacyToken('platform');else localStorage.removeItem('platform_admin_token');login('You have been signed out.');}
 
 load();
 })();

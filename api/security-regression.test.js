@@ -199,12 +199,13 @@ test('Security hardening: external API quotas and alert thresholds are enforced 
   has(server, "provider:'AFRICASTALKING'");
 });
 
-test('Security hardening: frontend CSP is deployed and dynamic promotion content is escaped', () => {
+test('Security hardening: frontend CSP remains strict and frame protection is header-based', () => {
   const index = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
   has(index, 'Content-Security-Policy');
-  has(index, "frame-ancestors 'none'");
+  assert.doesNotMatch(index, /<meta[^>]+Content-Security-Policy[^>]+frame-ancestors/i);
   has(index, "object-src 'none'");
+  has(server, 'X-Frame-Options');
   has(app, 'escapeMenuHtml(p.name||\'Offer\')');
   has(app, 'escapeMenuHtml(p.banner_text');
 });

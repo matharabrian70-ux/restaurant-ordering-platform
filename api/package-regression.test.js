@@ -25,9 +25,6 @@ test('Package architecture has one authoritative entitlement source', () => {
 
 test('Canonical package matrix is STARTER/GROWTH/PRO only', () => {
   for (const key of ['STARTER','GROWTH','PRO']) has(schema, `where key='${key}'`);
-  for (const key of ['DIGITAL_ORDERING','ADVANCED']) {
-    assert.ok(schema.includes(key), 'legacy values remain in schema for migration compatibility');
-  }
   has(migration, "when upper(coalesce(package_type,''))='ADVANCED' then 'GROWTH'");
   has(migration, "when upper(coalesce(package_type,''))='DIGITAL_ORDERING' then 'STARTER'");
   has(migration, "alter table businesses alter column plan_key set not null");

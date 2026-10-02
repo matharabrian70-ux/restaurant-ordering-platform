@@ -1,5 +1,5 @@
 function escapeOrderHtml(value){return String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-const ORDER_API_BASE = 'https://restaurant-ordering-api-ow3p.onrender.com';
+const ORDER_API_BASE = window.PLATFORM_API_ORIGIN || 'https://restaurant-ordering-api-ow3p.onrender.com';
 const REMOTE_STATUSES = ['NEW','ACCEPTED','OUT_FOR_DELIVERY','DELIVERED','CANCELLED'];
 const REMOTE_LABELS = { NEW:'Order received', ACCEPTED:'Accepted & preparing', OUT_FOR_DELIVERY:'On its way', DELIVERED:'Delivered', CANCELLED:'Order cancelled' };
 let customerLiveMap=null,customerLiveMarker=null,customerLiveDestinationMarker=null,customerLiveMapOrderId=null;

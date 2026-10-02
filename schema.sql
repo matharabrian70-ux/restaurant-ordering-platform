@@ -722,9 +722,11 @@ create index if not exists platform_audit_business_idx on platform_audit_events(
 create index if not exists platform_audit_admin_idx on platform_audit_events(admin_id,created_at desc);
 create index if not exists platform_audit_action_idx on platform_audit_events(action,created_at desc);
 
-update platform_packages set features=features || '{"digitalOrdering":true,"tenantIsolation":true,"websiteIntegration":true,"auditTrail":true}'::jsonb,updated_at=now() where key='STARTER';
-update platform_packages set features=features || '{"digitalOrdering":true,"advancedDelivery":true,"branchRouting":true,"riderModule":true,"riderTracking":true,"smsNotifications":true,"advancedAnalytics":true,"customDomain":true,"apiIntegrations":true,"auditTrail":true,"tenantIsolation":true,"websiteIntegration":true}'::jsonb,updated_at=now() where key='GROWTH';
-update platform_packages set features=features || '{"digitalOrdering":true,"advancedDelivery":true,"branchRouting":true,"riderModule":true,"riderTracking":true,"smsNotifications":true,"advancedAnalytics":true,"customDomain":true,"apiIntegrations":true,"auditTrail":true,"tenantIsolation":true,"websiteIntegration":true,"multiBranch":true,"prioritySupport":true,"automation":true}'::jsonb,updated_at=now() where key='PRO';
+-- Canonical package entitlement matrix. businesses.plan_key is authoritative;
+-- platform_packages.features is the only source of feature capabilities.
+update platform_packages set features='{"ordering":true,"digitalOrdering":true,"tenantIsolation":true,"websiteIntegration":true,"auditTrail":true}'::jsonb,updated_at=now() where key='STARTER';
+update platform_packages set features='{"ordering":true,"digitalOrdering":true,"advancedDelivery":true,"branchRouting":true,"riderModule":true,"riderTracking":true,"sms":true,"advancedAnalytics":true,"customDomain":true,"apiIntegrations":true,"auditTrail":true,"tenantIsolation":true,"websiteIntegration":true}'::jsonb,updated_at=now() where key='GROWTH';
+update platform_packages set features='{"ordering":true,"digitalOrdering":true,"advancedDelivery":true,"branchRouting":true,"riderModule":true,"riderTracking":true,"sms":true,"advancedAnalytics":true,"customDomain":true,"apiIntegrations":true,"auditTrail":true,"tenantIsolation":true,"websiteIntegration":true,"multiBranch":true,"prioritySupport":true,"automation":true}'::jsonb,updated_at=now() where key='PRO';
 
 
 -- Shared security throttling state. Sensitive API limits are stored in PostgreSQL

@@ -31,7 +31,6 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: process
 const PAYSTACK_API = 'https://api.paystack.co';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://matharabrian70-ux.github.io/restaurant-ordering-platform';
 // Phase 2 security controls are intentionally backend-only; dashboard structure is unchanged.
-const RIDER_MODULE_ENABLED = String(process.env.RIDER_MODULE_ENABLED || 'true').toLowerCase() === 'true';
 
 function parsePositiveInt(value, fallback, min, max) {
   const n = Number.parseInt(String(value ?? ''), 10);
@@ -313,173 +312,196 @@ app.use('/api', (req, res, next) => {
 });
 app.use('/api', apiRateLimit);
 app.use(express.json({ limit: '2mb', verify: (req, _res, buf) => { req.rawBody = Buffer.from(buf); } }));
+// Package entitlements are enforced centrally after JSON parsing and before route handlers.
+// Frontend visibility is advisory only; the database-backed plan feature map is authoritative.
+app.use('/api', enforcePackageCapabilities);
+
 
 // Optional advanced module flag. The core ordering system remains usable when disabled.
 app.get('/api/features', async (req, res) => {
-  const businessId = String(req.query.businessId || '');
-  if (RIDER_MODULE_ENABLED) return res.json({ riderModule: true });
-  if (!businessId) return res.json({ riderModule: false });
+  const businessId = String(req.query.businessId || '').trim();
+  if (!businessId) return res.json({ riderModule: false, features: {} });
   try {
-    const business = await pool.query(
-      'select plan_key from businesses where id=$1 limit 1',
+    const result = await pool.query(
+      `select b.plan_key, p.features
+         from businesses b
+         left join platform_packages p on p.key=b.plan_key
+        where b.id=$1
+        limit 1`,
       [businessId]
     );
-    if (!business.rowCount) return res.json({ riderModule: false });
-
-    const planKey = String(business.rows[0].plan_key || '').toUpperCase();
-    const planAllowsRiders = planKey === 'GROWTH' || planKey === 'PRO';
-
-    let businessFeatureEnabled = false;
-    try {
-      const feature = await pool.query(
-        'select rider_module_enabled from business_features where business_id=$1',
-        [businessId]
-      );
-      businessFeatureEnabled = Boolean(feature.rowCount && feature.rows[0].rider_module_enabled);
-    } catch {}
-
-    let packageFeatureEnabled = false;
-    try {
-      const packageFeature = await pool.query(`
-        select coalesce((p.features->>'riderModule')::boolean, false) as rider_module_enabled
-        from businesses b
-        left join platform_packages p on p.key=b.plan_key
-        where b.id=$1
-        limit 1
-      `, [businessId]);
-      packageFeatureEnabled = Boolean(
-        packageFeature.rowCount && packageFeature.rows[0].rider_module_enabled
-      );
-    } catch {}
-
-    return res.json({
-      riderModule: Boolean(planAllowsRiders || businessFeatureEnabled || packageFeatureEnabled)
-    });
+    if (!result.rowCount || !result.rows[0].features) return res.json({ riderModule: false, features: {} });
+    const features = result.rows[0].features || {};
+    return res.json({ riderModule: Boolean(features.riderModule), planKey: result.rows[0].plan_key, features });
   } catch {
-    return res.json({ riderModule: false });
+    return res.json({ riderModule: false, features: {} });
   }
 });
-async function requireRiderModule(req, res, next) {
-  if (RIDER_MODULE_ENABLED) return next();
-  let businessId = String(req.query.businessId || req.body?.businessId || '');
-  try {
-    // Manager actions are always scoped from the authenticated manager session.
-    // This prevents approval/suspend/reactivate from depending on a fragile
-    // frontend businessId value.
-    const manager = await getManagerFromSession(req);
-    if (manager?.business_id) {
-      businessId = String(manager.business_id);
-    }
+async function getTenantFeatureState(businessId, feature) {
+  const id = String(businessId || '').trim();
+  const key = String(feature || '').trim();
+  if (!id || !key) return { allowed: false, reason: 'MISSING_TENANT' };
+  const result = await pool.query(
+    `select b.plan_key, p.key as package_key, p.active, coalesce((p.features->>$2)::boolean,false) as enabled
+       from businesses b
+       left join platform_packages p on p.key=b.plan_key
+      where b.id=$1
+      limit 1`,
+    [id, key]
+  );
+  if (!result.rowCount) return { allowed: false, reason: 'BUSINESS_NOT_FOUND' };
+  const row = result.rows[0];
+  return {
+    allowed: Boolean(row.active && row.enabled),
+    planKey: row.plan_key,
+    packageKey: row.package_key,
+    feature: key
+  };
+}
 
-    // Authenticated rider requests often do not carry a businessId.
-    // Resolve the tenant directly from the rider session before checking the module.
-    if (!businessId) {
-      const raw = String(req.headers.authorization || '');
-      const token = raw.startsWith('Bearer ') ? raw.slice(7).trim() : '';
-      if (token) {
-        const riderSession = await pool.query(
-          `select r.business_id
-             from rider_sessions s
-             join riders r on r.id=s.rider_id
-            where s.token_hash=$1
-              and s.expires_at>now()
-              and r.active=true
-            limit 1`,
-          [hashSessionToken(token)]
-        );
-        businessId = riderSession.rows[0]?.business_id ? String(riderSession.rows[0].business_id) : '';
-      }
-    }
+async function requireFeature(feature, businessId) {
+  const state = await getTenantFeatureState(businessId, feature);
+  if (!state.allowed) {
+    const error = new Error(`Feature "${feature}" is not included in this restaurant's package`);
+    error.code = 'FEATURE_NOT_INCLUDED';
+    error.status = state.reason === 'BUSINESS_NOT_FOUND' ? 404 : 403;
+    error.feature = feature;
+    error.planKey = state.planKey || null;
+    throw error;
+  }
+  return state;
+}
 
-    // Resolve the tenant from the rider/order when the request does not carry businessId.
-    if (!businessId && req.params?.id) {
-      const rider = await pool.query('select business_id from riders where id=$1', [req.params.id]);
-      businessId = rider.rows[0]?.business_id ? String(rider.rows[0].business_id) : '';
-    }
-    if (!businessId && req.params?.id) {
-      const order = await pool.query('select business_id from orders where id=$1', [req.params.id]);
-      businessId = order.rows[0]?.business_id ? String(order.rows[0].business_id) : '';
-    }
-    if (!businessId && req.params?.token) {
-      const invite = await pool.query(
-        'select business_id from rider_invites where token_hash=$1 limit 1',
-        [hashSessionToken(String(req.params.token))]
-      );
-      businessId = invite.rows[0]?.business_id ? String(invite.rows[0].business_id) : '';
-    }
-    if (!businessId) {
-      return res.status(404).json({ error: 'Rider module is not enabled for this business' });
-    }
+function capabilityForRequest(req) {
+  const path = String(req.path || '');
+  const method = String(req.method || 'GET').toUpperCase();
+  const capabilities = [];
 
-    // An already authenticated active rider is an explicit tenant-level
-    // entitlement. This prevents package-feature metadata drift from locking
-    // an existing rider out immediately after successful authentication.
-    if (req.path !== '/login' && req.path !== '/rider-invites/:token' && req.headers.authorization) {
-      const rawToken = String(req.headers.authorization || '');
-      const bearer = rawToken.startsWith('Bearer ') ? rawToken.slice(7).trim() : '';
-      if (bearer) {
-        const authenticatedRider = await pool.query(
-          `select r.id
-             from rider_sessions s
-             join riders r on r.id=s.rider_id
-            where s.token_hash=$1
-              and s.expires_at>now()
-              and r.active=true
-              and r.rider_status='ACTIVE'
-              and r.business_id=$2
-            limit 1`,
-          [hashSessionToken(bearer), businessId]
-        );
-        if (authenticatedRider.rowCount) return next();
-      }
-    }
+  if (/^\/riders(?:\/|$)/.test(path) || /^\/rider-invites(?:\/|$)/.test(path) || /^\/admin\/riders(?:\/|$)/.test(path)) {
+    capabilities.push('riderModule');
+  }
+  if (/^\/riders\/(?:[^/]+\/)?(?:presence|events|dashboard)/.test(path) ||
+      /^\/riders\/[^/]+\/deliveries\/[^/]+\/(?:location|route)/.test(path) ||
+      /^\/orders\/[^/]+\/live-location$/.test(path)) {
+    capabilities.push('riderTracking');
+  }
+  if (/^\/orders\/[^/]+\/(?:assign-rider|cancel-rider-assignment|reassign-rider)$/.test(path)) {
+    capabilities.push('advancedDelivery','riderModule');
+  }
+  if (/^\/delivery\/(?:quote|quote-v2|zones\/quote)/.test(path)) {
+    capabilities.push('advancedDelivery');
+  }
+  if (/^\/businesses\/[^/]+\/delivery-pricing$/.test(path)) {
+    capabilities.push('advancedDelivery');
+  }
+  if (/^\/businesses\/[^/]+\/branches/.test(path)) {
+    capabilities.push(method === 'GET' ? 'branchRouting' : 'multiBranch');
+  }
+  if (/^\/manager\/intelligence(?:\/|$)/.test(path)) {
+    capabilities.push('advancedAnalytics');
+    if (/^\/manager\/intelligence\/(?:branches|benchmarks)(?:\/|$)/.test(path)) capabilities.push('multiBranch');
+  }
+  if (/^\/manager\/sms(?:-|\/|$)/.test(path)) {
+    capabilities.push('sms');
+  }
+  if (/^\/manager\/(?:aggregator-integrations|aggregator-orders|delivery-zones)/.test(path) ||
+      /^\/aggregator\//.test(path)) {
+    capabilities.push(/^\/manager\/delivery-zones/.test(path) ? 'advancedDelivery' : 'apiIntegrations');
+  }
+  if (/^\/manager\/branding$/.test(path) || /^\/control\/businesses\/[^/]+\/branding\/import$/.test(path)) {
+    capabilities.push('websiteIntegration');
+  }
+  if (/^\/platform\/businesses\/[^/]+\/integration/.test(path) ||
+      /^\/public\/integrations\//.test(path)) {
+    capabilities.push('apiIntegrations');
+  }
+  if (/^\/platform\/businesses\/[^/]+$/.test(path) && method === 'PATCH' && req.body?.domain !== undefined) {
+    capabilities.push('customDomain');
+  }
+  return [...new Set(capabilities)];
+}
 
-    // The package plan is the authoritative platform-level entitlement.
-    // Keep the explicit business feature flag as an override, but do not make
-    // rider approval depend on the platform_packages row existing in production.
-    const business = await pool.query(
-      'select plan_key from businesses where id=$1 limit 1',
-      [businessId]
+async function resolveFeatureTenant(req) {
+  const path = String(req.path || '');
+  const platformMatch = path.match(/^\/platform\/businesses\/([^/]+)/);
+  if (platformMatch) return platformMatch[1];
+  const controlMatch = path.match(/^\/control\/businesses\/([^/]+)/);
+  if (controlMatch) return controlMatch[1];
+  const businessMatch = path.match(/^\/businesses\/([^/]+)/);
+  if (businessMatch) return businessMatch[1];
+  if (req.body?.businessId) return String(req.body.businessId);
+  if (req.query?.businessId) return String(req.query.businessId);
+
+  const riderInviteMatch = path.match(/^\/rider-invites\/([^/]+)/);
+  if (riderInviteMatch) {
+    const invite = await pool.query(
+      'select business_id from rider_invites where token_hash=$1 limit 1',
+      [hashSessionToken(String(riderInviteMatch[1]))]
     );
-    if (!business.rowCount) {
-      return res.status(404).json({ error: 'Business not found' });
-    }
+    if (invite.rows[0]?.business_id) return String(invite.rows[0].business_id);
+  }
 
-    const planKey = String(business.rows[0].plan_key || '').toUpperCase();
-    const planAllowsRiders = planKey === 'GROWTH' || planKey === 'PRO';
+  const orderMatch = path.match(/^\/orders\/([^/]+)/);
+  if (orderMatch) {
+    const order = await pool.query('select business_id from orders where id=$1 limit 1',[orderMatch[1]]);
+    if (order.rows[0]?.business_id) return String(order.rows[0].business_id);
+  }
 
-    let businessFeatureEnabled = false;
-    try {
-      const feature = await pool.query(
-        'select rider_module_enabled from business_features where business_id=$1',
-        [businessId]
+  const manager = await getManagerFromSession(req);
+  if (manager?.business_id) return String(manager.business_id);
+
+  const rider = await getRiderFromSession(req);
+  if (rider?.business_id) return String(rider.business_id);
+
+  const station = await getStationFromSession(req);
+  if (station?.business_id) return String(station.business_id);
+
+  if (/^\/public\/integrations\//.test(path)) {
+    const token = String(req.params?.token || '').trim();
+    if (token) {
+      const integration = await pool.query(
+        'select business_id from business_integrations where public_token_hash=$1 and status=\'ACTIVE\' limit 1',
+        [hashSessionToken(token)]
       );
-      businessFeatureEnabled = Boolean(feature.rowCount && feature.rows[0].rider_module_enabled);
-    } catch {}
-
-    let packageFeatureEnabled = false;
-    try {
-      const packageFeature = await pool.query(`
-        select coalesce((p.features->>'riderModule')::boolean, false) as rider_module_enabled
-        from businesses b
-        left join platform_packages p on p.key=b.plan_key
-        where b.id=$1
-        limit 1
-      `, [businessId]);
-      packageFeatureEnabled = Boolean(
-        packageFeature.rowCount && packageFeature.rows[0].rider_module_enabled
-      );
-    } catch {}
-
-    if (!businessFeatureEnabled && !packageFeatureEnabled && !planAllowsRiders) {
-      return res.status(404).json({ error: 'Rider module is not enabled for this business' });
+      return integration.rows[0]?.business_id ? String(integration.rows[0].business_id) : '';
     }
+  }
+  return '';
+}
 
-    next();
-  } catch {
-    res.status(500).json({ error: 'Unable to check rider module status' });
+async function enforcePackageCapabilities(req, res, next) {
+  const capabilities = capabilityForRequest(req);
+  if (!capabilities.length) return next();
+  try {
+    const businessId = await resolveFeatureTenant(req);
+    if (!businessId) return res.status(400).json({ error: 'businessId is required for this package-protected feature' });
+    for (const feature of capabilities) await requireFeature(feature, businessId);
+    return next();
+  } catch (error) {
+    if (error.code === 'FEATURE_NOT_INCLUDED') {
+      return res.status(error.status || 403).json({
+        error: error.message,
+        code: error.code,
+        feature: error.feature,
+        planKey: error.planKey
+      });
+    }
+    return res.status(500).json({ error: 'Unable to verify package capability' });
   }
 }
+
+async function requireRiderModule(req, res, next) {
+  const businessId = await resolveFeatureTenant(req);
+  if (!businessId) return res.status(400).json({ error: 'businessId is required for rider operations' });
+  try {
+    await requireFeature('riderModule', businessId);
+    next();
+  } catch (error) {
+    if (error.code === 'FEATURE_NOT_INCLUDED') return res.status(error.status || 403).json({ error: error.message, code: error.code, feature: error.feature, planKey: error.planKey });
+    res.status(500).json({ error: 'Unable to verify rider package capability' });
+  }
+}
+
 app.use('/api/riders', (req,res,next)=>{
   // Login must reach the credential check itself. The login handler validates
   // the business, rider status and password before issuing a session.
@@ -778,10 +800,15 @@ async function ensurePhaseASchema(){
       created_at timestamptz not null default now()
     );
     create index if not exists outbox_events_pending_idx on outbox_events(status,available_at,created_at);
-    alter table payments drop constraint if exists payments_amount_nonnegative;
-    alter table payments add constraint payments_amount_nonnegative check (amount >= 0) not valid;
-    alter table refunds drop constraint if exists refunds_amount_nonnegative;
-    alter table refunds add constraint refunds_amount_nonnegative check (amount > 0) not valid;
+    do $
+    begin
+      if not exists(select 1 from pg_constraint where conname='payments_amount_nonnegative') then
+        alter table payments add constraint payments_amount_nonnegative check (amount >= 0) not valid;
+      end if;
+      if not exists(select 1 from pg_constraint where conname='refunds_amount_nonnegative') then
+        alter table refunds add constraint refunds_amount_nonnegative check (amount > 0) not valid;
+      end if;
+    end $;
   `);
 }
 
@@ -837,6 +864,31 @@ async function ensurePhase1SecuritySchema() {
     create unique index if not exists refunds_idempotency_key_idx
       on refunds(idempotency_key)
       where idempotency_key is not null;
+  `);
+}
+
+async function ensurePackageArchitectureSchema() {
+  await pool.query(`
+    alter table businesses add column if not exists plan_key text;
+    update businesses
+       set plan_key = case
+         when upper(coalesce(package_type,''))='ADVANCED' then 'GROWTH'
+         else coalesce(nullif(upper(plan_key),''),'STARTER')
+       end
+     where plan_key is null or trim(plan_key)='';
+    alter table businesses alter column plan_key set default 'STARTER';
+    alter table businesses alter column plan_key set not null;
+
+    insert into platform_packages(key,name,description,monthly_price_kes,features)
+    values
+      ('STARTER','Starter','Core online ordering',0,'{}'::jsonb),
+      ('GROWTH','Growth','Ordering plus delivery operations',3500,'{}'::jsonb),
+      ('PRO','Pro','Full restaurant operations platform',7500,'{}'::jsonb)
+    on conflict(key) do nothing;
+
+    update platform_packages set features='{"ordering":true,"digitalOrdering":true,"tenantIsolation":true,"websiteIntegration":true,"auditTrail":true}'::jsonb,updated_at=now() where key='STARTER';
+    update platform_packages set features='{"ordering":true,"digitalOrdering":true,"advancedDelivery":true,"branchRouting":true,"riderModule":true,"riderTracking":true,"sms":true,"advancedAnalytics":true,"customDomain":true,"apiIntegrations":true,"auditTrail":true,"tenantIsolation":true,"websiteIntegration":true}'::jsonb,updated_at=now() where key='GROWTH';
+    update platform_packages set features='{"ordering":true,"digitalOrdering":true,"advancedDelivery":true,"branchRouting":true,"riderModule":true,"riderTracking":true,"sms":true,"advancedAnalytics":true,"customDomain":true,"apiIntegrations":true,"auditTrail":true,"tenantIsolation":true,"websiteIntegration":true,"multiBranch":true,"prioritySupport":true,"automation":true}'::jsonb,updated_at=now() where key='PRO';
   `);
 }
 
@@ -3608,7 +3660,10 @@ app.patch('/api/platform/businesses/:id',requirePlatformAdmin,requirePlatformRol
     const sets=[],vals=[];
     const add=(col,val)=>{sets.push(col+'=$'+(vals.length+1));vals.push(val)};
     if(req.body.name!==undefined){const v=String(req.body.name||'').trim();if(v)add('name',v);}
-    if(req.body.domain!==undefined)add('domain',String(req.body.domain||'').trim()||null);
+    if(req.body.domain!==undefined){
+      await requireFeature('customDomain',req.params.id);
+      add('domain',String(req.body.domain||'').trim()||null);
+    }
     if(req.body.websiteUrl!==undefined)add('website_url',String(req.body.websiteUrl||'').trim()||null);
     if(req.body.logoUrl!==undefined)add('logo_url',String(req.body.logoUrl||'').trim()||null);
     if(req.body.primaryColor!==undefined)add('primary_color',String(req.body.primaryColor||'').trim()||null);
@@ -3647,7 +3702,7 @@ app.post('/api/control/logout',requireControl,async(req,res)=>{
 });
 app.get('/api/control/businesses',requireControl,async(req,res)=>{
   try{
-    const r=await pool.query(`select b.id,b.name,b.slug,b.package_type,b.mpesa_phone,b.paystack_subaccount_code,b.created_at,
+    const r=await pool.query(`select b.id,b.name,b.slug,b.plan_key,b.mpesa_phone,b.paystack_subaccount_code,b.created_at,
       coalesce(c.customer_connected,false) as customer_connected,coalesce(c.rider_connected,false) as rider_connected,
       c.website_url,c.customer_dashboard_url,c.manager_dashboard_url,c.rider_dashboard_url,
       rb.logo_url,rb.primary_color,rb.secondary_color,rb.accent_color,rb.font_family,rb.imported_at,
@@ -3673,18 +3728,22 @@ async function saveBusinessConnection(businessId,{websiteUrl,customerConnected,r
     values($1,$2,$3,$4,$5,$6,$7,now())
     on conflict(business_id) do update set website_url=excluded.website_url,customer_dashboard_url=excluded.customer_dashboard_url,manager_dashboard_url=excluded.manager_dashboard_url,rider_dashboard_url=excluded.rider_dashboard_url,customer_connected=excluded.customer_connected,rider_connected=excluded.rider_connected,updated_at=now()`,
     [businessId,web,customerUrl,managerUrl,riderUrl,customer,rider]);
-  await pool.query(`insert into business_features(business_id,rider_module_enabled) values($1,$2) on conflict(business_id) do update set rider_module_enabled=$2,updated_at=now()`,[businessId,rider]);
+  const entitlement=await pool.query(`select coalesce((p.features->>'riderModule')::boolean,false) as rider_module_enabled
+      from businesses b left join platform_packages p on p.key=b.plan_key where b.id=$1 limit 1`,[businessId]);
+  const riderEntitled=Boolean(entitlement.rowCount && entitlement.rows[0].rider_module_enabled);
+  await pool.query(`insert into business_features(business_id,rider_module_enabled) values($1,$2) on conflict(business_id) do update set rider_module_enabled=$2,updated_at=now()`,[businessId,riderEntitled]);
   return {websiteUrl:web,customerDashboardUrl:customerUrl,managerDashboardUrl:managerUrl,riderDashboardUrl:riderUrl,customerConnected:customer,riderConnected:rider};
 }
 app.post('/api/control/businesses',requireControl,requireControlRole('PLATFORM_OWNER'),async(req,res)=>{
   const client=await pool.connect();
   try{
     const name=String(req.body.name||'').trim(),slug=String(req.body.slug||'').trim().toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-+|-+$/g,'');
-    const packageType=String(req.body.packageType||'DIGITAL_ORDERING').toUpperCase();
+    const planKey=String(req.body.planKey||req.body.packageType||'STARTER').toUpperCase();
     if(!name||!slug)return res.status(400).json({error:'Restaurant name and slug are required'});
-    if(!['DIGITAL_ORDERING','ADVANCED'].includes(packageType))return res.status(400).json({error:'Invalid package'});
+    const pkg=await client.query('select key,features from platform_packages where key=$1 and active=true',[planKey]);
+    if(!pkg.rowCount)return res.status(400).json({error:'Unknown or inactive package'});
     await client.query('begin');
-    const r=await client.query('insert into businesses(id,name,slug,package_type,mpesa_phone,paystack_subaccount_code) values(gen_random_uuid(),$1,$2,$3,$4,$5) returning *',[name,slug,packageType,String(req.body.mpesaPhone||'').trim()||null,String(req.body.paystackSubaccountCode||'').trim()||null]);
+    const r=await client.query('insert into businesses(id,name,slug,plan_key,mpesa_phone,paystack_subaccount_code) values(gen_random_uuid(),$1,$2,$3,$4,$5) returning *',[name,slug,planKey,String(req.body.mpesaPhone||'').trim()||null,String(req.body.paystackSubaccountCode||'').trim()||null]);
     const business=r.rows[0];
     await client.query('insert into delivery_pricing_rules(business_id) values($1) on conflict(business_id) do nothing',[business.id]);
     await client.query('insert into business_features(business_id,rider_module_enabled) values($1,$2) on conflict(business_id) do update set rider_module_enabled=$2,updated_at=now()',[business.id,Boolean(req.body.riderConnected)]);
@@ -3697,9 +3756,11 @@ app.post('/api/control/businesses',requireControl,requireControlRole('PLATFORM_O
 app.patch('/api/control/businesses/:id',requireControl,requireControlRole('PLATFORM_OWNER'),async(req,res)=>{
   try{
     const id=String(req.params.id),name=String(req.body.name||'').trim(),slug=String(req.body.slug||'').trim().toLowerCase().replace(/[^a-z0-9-]+/g,'-').replace(/^-+|-+$/g,'');
-    const packageType=String(req.body.packageType||'DIGITAL_ORDERING').toUpperCase();
-    if(!name||!slug||!['DIGITAL_ORDERING','ADVANCED'].includes(packageType))return res.status(400).json({error:'Invalid restaurant configuration'});
-    const r=await pool.query('update businesses set name=$1,slug=$2,package_type=$3,mpesa_phone=$4,paystack_subaccount_code=$5 where id=$6 returning *',[name,slug,packageType,String(req.body.mpesaPhone||'').trim()||null,String(req.body.paystackSubaccountCode||'').trim()||null,id]);
+    const planKey=String(req.body.planKey||req.body.packageType||'STARTER').toUpperCase();
+    if(!name||!slug)return res.status(400).json({error:'Invalid restaurant configuration'});
+    const pkg=await pool.query('select key,features from platform_packages where key=$1 and active=true',[planKey]);
+    if(!pkg.rowCount)return res.status(400).json({error:'Unknown or inactive package'});
+    const r=await pool.query('update businesses set name=$1,slug=$2,plan_key=$3,mpesa_phone=$4,paystack_subaccount_code=$5,updated_at=now() where id=$6 returning *',[name,slug,planKey,String(req.body.mpesaPhone||'').trim()||null,String(req.body.paystackSubaccountCode||'').trim()||null,id]);
     if(!r.rowCount)return res.status(404).json({error:'Restaurant not found'});
     const connection=await saveBusinessConnection(id,req.body);
     res.json({business:{...r.rows[0],...connection},connection});
@@ -3709,7 +3770,7 @@ app.get('/api/control/businesses/:id/status',requireControl,async(req,res)=>{
   try{
     const id=String(req.params.id);
     const [b,f,branches,connections,manager,riders]=await Promise.all([
-      pool.query('select id,name,slug,package_type,mpesa_phone,paystack_subaccount_code from businesses where id=$1',[id]),
+      pool.query('select id,name,slug,plan_key,mpesa_phone,paystack_subaccount_code from businesses where id=$1',[id]),
       pool.query('select rider_module_enabled from business_features where business_id=$1',[id]),
       pool.query('select count(*)::int as count from business_branches where business_id=$1 and active=true',[id]),
       pool.query('select * from business_connections where business_id=$1',[id]),
@@ -3901,6 +3962,7 @@ async function cleanupSecurityArtifacts(){
 }
 async function startServer(){
   await ensurePhaseASchema();
+  await ensurePackageArchitectureSchema();
   await ensurePhaseBSchema();
   await ensurePhaseFSchema();
   await ensurePhaseGSchema();

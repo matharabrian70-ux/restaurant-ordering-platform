@@ -199,12 +199,13 @@ test('Security hardening: external API quotas and alert thresholds are enforced 
   has(server, "provider:'AFRICASTALKING'");
 });
 
-test('Security hardening: frontend CSP is deployed and dynamic promotion content is escaped', () => {
+test('Security hardening: frontend CSP remains strict and frame protection is header-based', () => {
   const index = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
   const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
   has(index, 'Content-Security-Policy');
-  has(index, "frame-ancestors 'none'");
+  assert.doesNotMatch(index, /<meta[^>]+Content-Security-Policy[^>]+frame-ancestors/i);
   has(index, "object-src 'none'");
+  has(server, 'X-Frame-Options');
   has(app, 'escapeMenuHtml(p.name||\'Offer\')');
   has(app, 'escapeMenuHtml(p.banner_text');
 });
@@ -241,4 +242,19 @@ test('Commercial launch gate: tenant health requires a real privacy contact', ()
   has(server,'MISSING_PRIVACY_CONTACT');
   has(server,'has_privacy_contact');
   has(server,'business_privacy_settings');
+});
+
+test('Package architecture regression: no unsupported legacy CSP frame-ancestors meta remains', () => {
+  const htmlFiles = fs.readdirSync(root).filter(name => name.endsWith('.html'));
+  for (const file of htmlFiles) {
+    const html = fs.readFileSync(path.join(root, file), 'utf8');
+    assert.doesNotMatch(html, /<meta[^>]+Content-Security-Policy[^>]+frame-ancestors/i, file + ' still contains meta frame-ancestors');
+  }
+});
+
+test('Customer menu has a visible API failure fallback instead of a blank state', () => {
+  const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+  has(app, 'Menu temporarily unavailable');
+  has(app, 'renderSignatureMenu(PRODUCTS)');
+  has(app, "if(!response.ok)throw new Error('Menu API unavailable')");
 });

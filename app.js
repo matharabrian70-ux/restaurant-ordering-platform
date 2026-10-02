@@ -111,13 +111,22 @@ function setStatus(id,status){const orders=read('doe_orders',[]);const o=orders.
 document.addEventListener('click',e=>{const b=e.target.closest('[data-order-product]');if(b){e.preventDefault();location.href='product.html?id='+encodeURIComponent(b.dataset.orderProduct)}});
 async function loadLiveRestaurantMenu(){
 try{
-const response=await fetch((window.PLATFORM_API_ORIGIN || 'https://restaurant-ordering-api-ow3p.onrender.com')+'/api/menu/public?businessId='+encodeURIComponent(window.TENANT_BUSINESS_ID || (typeof BUSINESS_ID!=='undefined'?BUSINESS_ID:'11111111-1111-4111-8111-111111111111')));
-if(!response.ok)return;const data=await response.json();
+const response=await fetch((window.PLATFORM_API_ORIGIN || 'https://restaurant-ordering-api-ow3p.onrender.com')+'/api/menu/public?businessId='+encodeURIComponent(window.TENANT_BUSINESS_ID || (typeof BUSINESS_ID!=='undefined'?BUSINESS_ID:'11111111-1111-4111-8111-111111111111')), { headers: { Accept: 'application/json' } });
+if(!response.ok)throw new Error('Menu API unavailable');
+const data=await response.json();
 const products=(data.products||[]).map(p=>({id:p.id,name:p.name,category:p.category_name||p.category||'Menu',price:Number(p.price||0),image:p.image_url||'',desc:p.description||'',options:Array.isArray(p.options)?p.options:[]}));
 if(products.length){renderSignatureMenu(products);}
 const strip=document.getElementById('promotions-strip');if(strip){const promos=data.promotions||[];strip.innerHTML=promos.length?'<div class="promo-heading"><p class="eyebrow">RESTAURANT OFFERS</p><h2>Today\'s specials.</h2></div><div class="promo-list">'+promos.slice(0,6).map(p=>'<article><span>'+escapeMenuHtml(String(p.type||'OFFER').replaceAll('_',' '))+'</span><h3>'+escapeMenuHtml(p.name||'Offer')+'</h3><p>'+escapeMenuHtml(p.banner_text||'Limited-time restaurant promotion')+'</p></article>').join('')+'</div>':'<div class="promo-heading"><p class="eyebrow">SAVANNA BITES</p><h2>Fresh from the kitchen.</h2></div>';}
 const offer=(data.promotions||[])[0],hero=document.querySelector('.hero-card small');if(offer&&hero){hero.textContent=offer.banner_text||offer.name;const strong=hero.parentElement?.querySelector('strong');if(strong)strong.textContent=offer.name}
-}catch{}
+}catch(error){
+  // Never leave the customer with an unexplained blank menu when the API is down.
+  // The local/demo catalog remains visible and the customer gets a clear status message.
+  renderSignatureMenu(PRODUCTS);
+  const strip=document.getElementById('promotions-strip');
+  if(strip){
+    strip.innerHTML='<div class="promo-heading"><p class="eyebrow">ORDERING STATUS</p><h2>Menu temporarily unavailable.</h2><p>Please try again. The restaurant menu will refresh automatically when the service is available.</p></div>';
+  }
+}
 }
 updateCount();renderMenu();renderProduct();renderCart();renderCheckout();renderOrder();renderDashboard();
 loadLiveRestaurantMenu();

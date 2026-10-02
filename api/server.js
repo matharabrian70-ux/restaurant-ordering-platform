@@ -3443,6 +3443,8 @@ app.get('/api/platform/health',requirePlatformAdmin,async(req,res)=>{
         exists(select 1 from business_connections bc where bc.business_id=b.id) as has_connection,
         exists(select 1 from business_integrations bi where bi.business_id=b.id and bi.status='ACTIVE') as has_integration,
         exists(select 1 from business_privacy_settings ps where ps.business_id=b.id and nullif(trim(ps.privacy_contact_email),'') is not null) as has_privacy_contact,
+        coalesce((select ps.odpc_controller_status from business_privacy_settings ps where ps.business_id=b.id limit 1),'NOT_REVIEWED') as odpc_controller_status,
+        coalesce((select ps.odpc_processor_status from business_privacy_settings ps where ps.business_id=b.id limit 1),'NOT_REVIEWED') as odpc_processor_status,
         coalesce((p.features->>'riderModule')::boolean,false) as package_rider,
         coalesce(bf.rider_module_enabled,false) as feature_rider
         from businesses b left join platform_packages p on p.key=b.plan_key left join business_features bf on bf.business_id=b.id order by b.created_at desc`),
@@ -3462,6 +3464,8 @@ app.get('/api/platform/health',requirePlatformAdmin,async(req,res)=>{
       if(!t.has_connection)issues.push('MISSING_CONNECTION');
       if(!t.has_integration)issues.push('NO_ACTIVE_INTEGRATION');
       if(!t.has_privacy_contact)issues.push('MISSING_PRIVACY_CONTACT');
+      if(!['REGISTERED','NOT_REQUIRED'].includes(String(t.odpc_controller_status||'').toUpperCase()))issues.push('ODPC_CONTROLLER_NOT_CONFIRMED');
+      if(!['REGISTERED','NOT_REQUIRED'].includes(String(t.odpc_processor_status||'').toUpperCase()))issues.push('ODPC_PROCESSOR_NOT_CONFIRMED');
       if(t.package_rider&&!t.feature_rider)issues.push('RIDER_FEATURE_MISMATCH');
       if(t.status!=='ACTIVE')issues.push('TENANT_SUSPENDED');
       return {id:t.id,name:t.name,slug:t.slug,status:t.status,planKey:t.plan_key,issues,ok:issues.length===0};
@@ -3484,6 +3488,8 @@ app.get('/api/platform/businesses/:id/health',requirePlatformAdmin,async(req,res
       exists(select 1 from business_connections bc where bc.business_id=b.id) as has_connection,
       exists(select 1 from business_integrations bi where bi.business_id=b.id and bi.status='ACTIVE') as has_integration,
       exists(select 1 from business_privacy_settings ps where ps.business_id=b.id and nullif(trim(ps.privacy_contact_email),'') is not null) as has_privacy_contact,
+      coalesce((select ps.odpc_controller_status from business_privacy_settings ps where ps.business_id=b.id limit 1),'NOT_REVIEWED') as odpc_controller_status,
+      coalesce((select ps.odpc_processor_status from business_privacy_settings ps where ps.business_id=b.id limit 1),'NOT_REVIEWED') as odpc_processor_status,
       coalesce((p.features->>'riderModule')::boolean,false) as package_rider,
       coalesce(bf.rider_module_enabled,false) as feature_rider
       from businesses b left join platform_packages p on p.key=b.plan_key left join business_features bf on bf.business_id=b.id where b.id=$1 limit 1`,[req.params.id]);
@@ -3495,6 +3501,8 @@ app.get('/api/platform/businesses/:id/health',requirePlatformAdmin,async(req,res
     if(!t.has_connection)issues.push('MISSING_CONNECTION');
     if(!t.has_integration)issues.push('NO_ACTIVE_INTEGRATION');
     if(!t.has_privacy_contact)issues.push('MISSING_PRIVACY_CONTACT');
+    if(!['REGISTERED','NOT_REQUIRED'].includes(String(t.odpc_controller_status||'').toUpperCase()))issues.push('ODPC_CONTROLLER_NOT_CONFIRMED');
+    if(!['REGISTERED','NOT_REQUIRED'].includes(String(t.odpc_processor_status||'').toUpperCase()))issues.push('ODPC_PROCESSOR_NOT_CONFIRMED');
     if(t.package_rider&&!t.feature_rider)issues.push('RIDER_FEATURE_MISMATCH');
     res.json({ok:issues.length===0,restaurant:{id:t.id,name:t.name,slug:t.slug,status:t.status,planKey:t.plan_key},issues,checkedAt:new Date().toISOString()});
   }catch(e){res.status(500).json({error:e.message||'Tenant health check failed'});}

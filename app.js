@@ -18,42 +18,68 @@ function removeItem(index){const c=getCart();c.splice(index,1);saveCart(c);rende
 function changeQty(index,delta){const c=getCart();c[index].qty=Math.max(1,c[index].qty+delta);saveCart(c);renderCart()}
 const MENU_PRODUCTS = new Map();
 function escapeMenuHtml(value){return String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}
-function renderSignatureMenu(products){
-  const grid=document.getElementById('menu-grid');
-  if(!grid)return;
-  MENU_PRODUCTS.clear();
-  products.forEach(p=>MENU_PRODUCTS.set(String(p.id),p));
-  grid.innerHTML=products.map(p=>{
-    const id=escapeMenuHtml(p.id);
-    const name=escapeMenuHtml(p.name);
-    const category=escapeMenuHtml(p.category||'Menu');
-    const desc=escapeMenuHtml(p.desc||'');
-    const image=escapeMenuHtml(p.image||'');
-    const featured=p.featured?'<span class="signature-badge signature-featured"><span class="signature-star">★</span> FEATURED</span>':'';
-    return `<article class="signature-menu-card">
-      <div class="signature-menu-photo">
-        <img src="${image}" alt="${name}" loading="lazy">
-        <div class="signature-menu-wash"></div>
-        <div class="signature-menu-copy">
-          <p class="signature-category">${category}</p>
-          <h3>${name}</h3>
-          <p class="signature-description">${desc}</p>
-          <div class="signature-meta">
-            <strong class="signature-price">${money(p.price)}</strong>
-            <div class="signature-badges">
-              <span class="signature-badge signature-available"><span class="signature-dot"></span> AVAILABLE</span>
-              ${featured}
-            </div>
-          </div>
-        </div>
-      </div>
-      <div class="signature-menu-actions">
-        <button type="button" class="signature-add-btn" data-menu-add="${id}"><span class="signature-cart-icon">🛒</span> ${Array.isArray(p.options)&&p.options.length?'CHOOSE OPTIONS':'ADD TO CART'}</button>
-      </div>
-    </article>`;
-  }).join('');
+let MENU_CATEGORY_STATE={categories:[],activeId:'all'};
+let menuScrollHandler=null;
+function menuCategorySlug(value,index=0){return 'menu-category-'+String(value||'category-'+index).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')+'-'+index;}
+function normalizeMenuCategories(products,categories){
+  const source=Array.isArray(categories)?categories:[];
+  const ordered=[...source].sort((a,b)=>Number(a.sort_order??a.sortOrder??0)-Number(b.sort_order??b.sortOrder??0)||String(a.name||'').localeCompare(String(b.name||'')));
+  const result=[],seen=new Set();
+  ordered.forEach(c=>{const id=String(c.id);if(!seen.has(id)){seen.add(id);result.push({id,name:String(c.name||'Menu')});}});
+  products.forEach(p=>{const name=String(p.category||'Menu').trim()||'Menu';const pid=p.category_id?String(p.category_id):'';const exists=pid&&result.some(c=>c.id===pid);const byName=result.find(c=>c.name.toLowerCase()===name.toLowerCase());if(!exists&&!byName)result.push({id:pid||'name:'+name.toLowerCase(),name});});
+  return result;
 }
-function renderMenu(){renderSignatureMenu(PRODUCTS)}
+function setActiveMenuCategory(id){
+  MENU_CATEGORY_STATE.activeId=id||'all';
+  document.querySelectorAll('[data-menu-category-nav]').forEach(b=>{const active=b.dataset.menuCategoryNav===MENU_CATEGORY_STATE.activeId;b.classList.toggle('active',active);b.setAttribute('aria-current',active?'true':'false');if(active)b.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});});
+}
+function syncMenuCategoryFromScroll(){
+  const grid=document.getElementById('menu-grid'),bar=document.getElementById('menu-category-bar');
+  if(!grid||!bar)return;
+  const sections=[...grid.querySelectorAll('[data-menu-category-section]')];
+  if(!sections.length){setActiveMenuCategory('all');return;}
+  const gridTop=grid.getBoundingClientRect().top+window.scrollY;
+  if(window.scrollY<gridTop-160){setActiveMenuCategory('all');return;}
+  const threshold=bar.getBoundingClientRect().bottom+34;
+  let current=sections[0].dataset.menuCategorySection;
+  sections.forEach(section=>{if(section.getBoundingClientRect().top<=threshold)current=section.dataset.menuCategorySection;});
+  setActiveMenuCategory(current);
+}
+function bindMenuCategoryNavigation(){
+  if(menuScrollHandler)window.removeEventListener('scroll',menuScrollHandler);
+  menuScrollHandler=()=>{if(!window.__menuCategoryTick){window.__menuCategoryTick=requestAnimationFrame(()=>{window.__menuCategoryTick=0;syncMenuCategoryFromScroll();});}};
+  window.addEventListener('scroll',menuScrollHandler,{passive:true});
+  window.addEventListener('resize',syncMenuCategoryFromScroll,{passive:true});
+  document.querySelectorAll('[data-menu-category-nav]').forEach(button=>button.addEventListener('click',()=>{
+    const id=button.dataset.menuCategoryNav;
+    if(id==='all'){document.getElementById('menu-grid')?.scrollIntoView({behavior:'smooth',block:'start'});setActiveMenuCategory('all');return;}
+    const section=[...document.querySelectorAll('[data-menu-category-section]')].find(x=>x.dataset.menuCategorySection===id);
+    if(section){section.scrollIntoView({behavior:'smooth',block:'start'});setActiveMenuCategory(id);}
+  }));
+  syncMenuCategoryFromScroll();
+}
+function renderSignatureMenu(products,categories=[]){
+  const grid=document.getElementById('menu-grid');if(!grid)return;
+  MENU_PRODUCTS.clear();products.forEach(p=>MENU_PRODUCTS.set(String(p.id),p));
+  const categoryList=normalizeMenuCategories(products,categories);
+  MENU_CATEGORY_STATE.categories=categoryList;
+  const grouped=categoryList.map((category,index)=>({category,index,products:products.filter(p=>{
+    const pid=p.category_id?String(p.category_id):'',name=String(p.category||'Menu').trim().toLowerCase();
+    return (pid&&pid===category.id)||(!pid&&name===category.name.toLowerCase())||(category.id.startsWith('name:')&&name===category.name.toLowerCase());
+  })})).filter(x=>x.products.length);
+  const nav=document.getElementById('menu-category-nav');
+  if(nav)nav.innerHTML='<button type="button" class="menu-category-pill active" data-menu-category-nav="all" aria-current="true">All</button>'+grouped.map(x=>'<button type="button" class="menu-category-pill" data-menu-category-nav="'+escapeMenuHtml(x.category.id)+'" aria-current="false">'+escapeMenuHtml(x.category.name)+'</button>').join('');
+  grid.innerHTML=grouped.map(x=>{
+    const sectionId=menuCategorySlug(x.category.id,x.index);
+    return '<section class="menu-category-section" id="'+sectionId+'" data-menu-category-section="'+escapeMenuHtml(x.category.id)+'"><div class="menu-category-heading"><span class="eyebrow">MENU CATEGORY</span><h2>'+escapeMenuHtml(x.category.name)+'</h2></div><div class="menu-category-products">'+x.products.map(p=>{
+      const id=escapeMenuHtml(p.id),name=escapeMenuHtml(p.name),category=escapeMenuHtml(p.category||x.category.name),desc=escapeMenuHtml(p.desc||''),image=escapeMenuHtml(p.image||'');
+      const featured=p.featured?'<span class="signature-badge signature-featured"><span class="signature-star">★</span> FEATURED</span>':'';
+      return '<article class="signature-menu-card"><div class="signature-menu-photo"><img src="'+image+'" alt="'+name+'" loading="lazy"><div class="signature-menu-wash"></div><div class="signature-menu-copy"><p class="signature-category">'+category+'</p><h3>'+name+'</h3><p class="signature-description">'+desc+'</p><div class="signature-meta"><strong class="signature-price">'+money(p.price)+'</strong><div class="signature-badges"><span class="signature-badge signature-available"><span class="signature-dot"></span> AVAILABLE</span>'+featured+'</div></div></div></div><div class="signature-menu-actions"><button type="button" class="signature-add-btn" data-menu-add="'+id+'"><span class="signature-cart-icon">🛒</span> '+(Array.isArray(p.options)&&p.options.length?'CHOOSE OPTIONS':'ADD TO CART')+'</button></div></article>';
+    }).join('')+'</div></section>';
+  }).join('')||'<div class="empty-state">No menu items are available right now.</div>';
+  bindMenuCategoryNavigation();
+}
+function renderMenu(){renderSignatureMenu(PRODUCTS,[])}
 function addMenuProduct(id){
   const p=MENU_PRODUCTS.get(String(id));
   if(!p)return;
@@ -114,8 +140,8 @@ try{
 const response=await fetch((window.PLATFORM_API_ORIGIN || 'https://restaurant-ordering-api-ow3p.onrender.com')+'/api/menu/public?businessId='+encodeURIComponent(window.TENANT_BUSINESS_ID || (typeof BUSINESS_ID!=='undefined'?BUSINESS_ID:'11111111-1111-4111-8111-111111111111')), { headers: { Accept: 'application/json' } });
 if(!response.ok)throw new Error('Menu API unavailable');
 const data=await response.json();
-const products=(data.products||[]).map(p=>({id:p.id,name:p.name,category:p.category_name||p.category||'Menu',price:Number(p.price||0),image:p.image_url||'',desc:p.description||'',options:Array.isArray(p.options)?p.options:[]}));
-if(products.length){renderSignatureMenu(products);}
+const products=(data.products||[]).map(p=>({id:p.id,name:p.name,category:p.category_name||p.category||'Menu',category_id:p.category_id||null,price:Number(p.price||0),image:p.image_url||'',desc:p.description||'',options:Array.isArray(p.options)?p.options:[],featured:Boolean(p.featured)}));
+if(products.length){renderSignatureMenu(products,data.categories||[]);}
 const strip=document.getElementById('promotions-strip');if(strip){const promos=data.promotions||[];strip.innerHTML=promos.length?'<div class="promo-heading"><p class="eyebrow">RESTAURANT OFFERS</p><h2>Today\'s specials.</h2></div><div class="promo-list">'+promos.slice(0,6).map(p=>'<article><span>'+escapeMenuHtml(String(p.type||'OFFER').replaceAll('_',' '))+'</span><h3>'+escapeMenuHtml(p.name||'Offer')+'</h3><p>'+escapeMenuHtml(p.banner_text||'Limited-time restaurant promotion')+'</p></article>').join('')+'</div>':'<div class="promo-heading"><p class="eyebrow">SAVANNA BITES</p><h2>Fresh from the kitchen.</h2></div>';}
 const offer=(data.promotions||[])[0],hero=document.querySelector('.hero-card small');if(offer&&hero){hero.textContent=offer.banner_text||offer.name;const strong=hero.parentElement?.querySelector('strong');if(strong)strong.textContent=offer.name}
 }catch(error){

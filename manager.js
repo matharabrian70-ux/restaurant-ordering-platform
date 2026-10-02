@@ -451,11 +451,54 @@ function variableSummary(p){
   const total=options.reduce((n,g)=>n+(Array.isArray(g.choices)?g.choices.length:0),0);
   return '<span class="menu-variable-count">'+options.length+' variable'+(options.length===1?'':'s')+' · '+total+' choices</span>';
 }
-function menu(){
-  const m=D.menu;
-  newMenuVariables=[];
-  return '<div class="manager-grid two"><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">MENU STRUCTURE</span><h2>Categories</h2></div></div><form class="inline-form" onsubmit="category(event)"><input id="cat" required placeholder="Breakfast"><button class="btn">ADD CATEGORY</button></form><div class="category-list">'+m.categories.map(c=>'<div><b>'+esc(c.name)+'</b><span>'+esc(c.active?'ACTIVE':'HIDDEN')+'</span></div>').join('')+'</div></section><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">ADD ITEM</span><h2>New menu item</h2><p>Upload a photo or paste an image URL.</p></div></div><form onsubmit="addItem(event)"><div class="form-grid"><label>Name<input id="mn" required></label><label>Price (KES)<input id="mp" type="number" min="0" required></label></div><label>Description<textarea id="md"></textarea></label><div class="form-grid"><label>Category<select id="mc">'+m.categories.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('')+'</select></label><label>Photo<input id="mf" type="file" accept="image/*" data-change="pickPhoto(event)"></label></div><input id="mu" placeholder="Or paste an image URL"><div id="preview" class="photo-preview"></div><label class="check"><input id="mfeat" type="checkbox"> Featured item</label><div class="menu-variable-builder"><div class="menu-variable-builder-head"><div><span class="eyebrow">FOOD VARIABLES</span><h3>Customer choices</h3><p class="muted">Add sizes, portions, sides, spice levels, add-ons or any other choice. Set a price adjustment for each choice.</p></div><button type="button" class="btn btn-small" data-menu-variable-add="new">+ ADD VARIABLE</button></div><div id="new-variable-groups"></div></div><button class="btn wide">PUBLISH MENU ITEM</button></form></section></div><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">LIVE MENU</span><h2>'+m.products.length+' items</h2></div></div><div class="menu-admin-grid">'+(m.products.map(itemCard).join('')||'<div class="empty-state">No menu items yet.</div>')+'</div></section>';
+function menuCategoryItems(category){
+  return (D.menu?.products||[]).filter(p=>String(p.category_id||'')===String(category.id)||(p.category_id==null&&String(p.category_name||p.category||'').toLowerCase()===String(category.name||'').toLowerCase())).length;
 }
+function selectMenuCategory(id){
+  const select=document.getElementById('mc');
+  if(select){select.value=id;}
+  document.getElementById('menu-new-item-panel')?.scrollIntoView({behavior:'smooth',block:'start'});
+  setTimeout(()=>document.getElementById('mn')?.focus(),300);
+}
+async function reorderMenuCategories(orderedIds){
+  const button=document.querySelector('[data-menu-reorder-save]');
+  if(button){button.disabled=true;button.textContent='SAVING…';}
+  try{await api('/api/menu/categories/reorder',{method:'POST',body:JSON.stringify({businessId:B,categoryIds:orderedIds})});T='menu';await load();}
+  catch(e){alert(e.message||'Unable to reorder categories');if(button){button.disabled=false;button.textContent='SAVE CATEGORY ORDER';}}
+}
+async function moveMenuCategory(id,direction){
+  const cats=[...(D.menu?.categories||[])].sort((a,b)=>Number(a.sort_order)-Number(b.sort_order)||String(a.name).localeCompare(String(b.name)));
+  const index=cats.findIndex(c=>String(c.id)===String(id));if(index<0)return;
+  const next=index+(direction==='up'?-1:1);if(next<0||next>=cats.length)return;
+  [cats[index],cats[next]]=[cats[next],cats[index]];
+  await reorderMenuCategories(cats.map(c=>c.id));
+}
+function bindMenuCategoryDrag(){
+  const list=document.getElementById('menu-category-admin-list');if(!list)return;
+  let draggedId=null;
+  list.querySelectorAll('[data-menu-category-row]').forEach(row=>{
+    row.addEventListener('dragstart',e=>{draggedId=row.dataset.menuCategoryRow;row.classList.add('dragging');e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',draggedId);});
+    row.addEventListener('dragend',()=>{draggedId=null;row.classList.remove('dragging');list.querySelectorAll('[data-menu-category-row]').forEach(x=>x.classList.remove('drag-over'));});
+    row.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='move';if(row.dataset.menuCategoryRow!==draggedId)row.classList.add('drag-over');});
+    row.addEventListener('dragleave',()=>row.classList.remove('drag-over'));
+    row.addEventListener('drop',async e=>{
+      e.preventDefault();row.classList.remove('drag-over');
+      const from=draggedId||e.dataTransfer.getData('text/plain'),to=row.dataset.menuCategoryRow;
+      if(!from||from===to)return;
+      const ids=[...(D.menu?.categories||[])].sort((a,b)=>Number(a.sort_order)-Number(b.sort_order)||String(a.name).localeCompare(String(b.name))).map(c=>c.id);
+      const fromIndex=ids.indexOf(from),toIndex=ids.indexOf(to);if(fromIndex<0||toIndex<0)return;
+      ids.splice(fromIndex,1);ids.splice(toIndex,0,from);await reorderMenuCategories(ids);
+    });
+  });
+}
+function menu(){
+  const m=D.menu||{categories:[],products:[]};newMenuVariables=[];
+  const cats=[...(m.categories||[])].sort((a,b)=>Number(a.sort_order)-Number(b.sort_order)||String(a.name).localeCompare(String(b.name)));
+  const categoryRows=cats.map((c,i)=>'<article class="menu-category-admin-row" draggable="true" data-menu-category-row="'+esc(c.id)+'"><div class="menu-category-admin-grip" aria-hidden="true">⠿</div><div class="menu-category-admin-index">'+(i+1)+'</div><button type="button" class="menu-category-admin-main" data-action="selectMenuCategory(\''+c.id+'\')"><strong>'+esc(c.name)+'</strong><span>'+menuCategoryItems(c)+' '+(menuCategoryItems(c)===1?'dish':'dishes')+' · '+esc(c.active?'VISIBLE':'HIDDEN')+'</span></button><div class="menu-category-admin-actions"><button type="button" class="btn btn-small secondary" data-action="selectMenuCategory(\''+c.id+'\')">ADD DISH</button><button type="button" class="menu-category-order-btn" data-action="moveMenuCategory(\''+c.id+'\',\'up\')" aria-label="Move '+esc(c.name)+' up" '+(i===0?'disabled':'')+'>↑</button><button type="button" class="menu-category-order-btn" data-action="moveMenuCategory(\''+c.id+'\',\'down\')" aria-label="Move '+esc(c.name)+' down" '+(i===cats.length-1?'disabled':'')+'>↓</button></div></article>').join('');
+  const categoryOptions=cats.map(c=>'<option value="'+esc(c.id)+'">'+esc(c.name)+'</option>').join('');
+  return '<div class="manager-grid two"><section class="manager-panel menu-category-manager-panel"><div class="panel-title"><div><span class="eyebrow">MENU STRUCTURE</span><h2>Categories</h2><p>Arrange categories in the exact top-to-bottom order you want customers to see from left to right in the menu.</p></div><span class="mode-badge">'+cats.length+' CATEGOR'+(cats.length===1?'Y':'IES')+'</span></div><form class="inline-form" onsubmit="category(event)"><input id="cat" required placeholder="Breakfast"><button class="btn">ADD CATEGORY</button></form><div class="menu-category-order-help"><span>☷</span><span>Drag a category to reposition it, or use the arrows. The saved order controls the customer menu and the All view.</span></div><div id="menu-category-admin-list" class="menu-category-admin-list">'+(categoryRows||'<div class="empty-state">Create your first category above.</div>')+'</div><button type="button" class="btn wide secondary" data-menu-reorder-save style="display:none">SAVE CATEGORY ORDER</button></section><section id="menu-new-item-panel" class="manager-panel"><div class="panel-title"><div><span class="eyebrow">ADD ITEM</span><h2>New menu item</h2><p>Choose a category or press <strong>ADD DISH</strong> on a category to add the next dish directly to it.</p></div></div><form onsubmit="addItem(event)"><div class="form-grid"><label>Name<input id="mn" required></label><label>Price (KES)<input id="mp" type="number" min="0" required></label></div><label>Description<textarea id="md"></textarea></label><div class="form-grid"><label>Category<select id="mc">'+categoryOptions+'</select></label><label>Photo<input id="mf" type="file" accept="image/*" data-change="pickPhoto(event)"></label></div><input id="mu" placeholder="Or paste an image URL"><div id="preview" class="photo-preview"></div><label class="check"><input id="mfeat" type="checkbox"> Featured item</label><div class="menu-variable-builder"><div class="menu-variable-builder-head"><div><span class="eyebrow">FOOD VARIABLES</span><h3>Customer choices</h3><p class="muted">Add sizes, portions, sides, spice levels, add-ons or any other choice. Set a price adjustment for each choice.</p></div><button type="button" class="btn btn-small" data-menu-variable-add="new">+ ADD VARIABLE</button></div><div id="new-variable-groups"></div></div><button class="btn wide">PUBLISH MENU ITEM</button></form></section></div><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">LIVE MENU</span><h2>'+m.products.length+' items</h2></div></div><div class="menu-admin-grid">'+(m.products.map(itemCard).join('')||'<div class="empty-state">No menu items yet.</div>')+'</div></section>';
+}
+  bindMenuCategoryDrag();
 function itemCard(p){
   return '<article class="menu-admin-card"><div class="menu-admin-image">'+(p.image_url?'<img src="'+esc(p.image_url)+'" alt="">':'<span>NO PHOTO</span>')+'</div><div class="menu-admin-body"><span class="eyebrow">'+esc(p.category_name||p.category||'UNCATEGORIZED')+'</span><h3>'+esc(p.name)+'</h3><p>'+esc(p.description||'No description')+'</p><div class="menu-admin-bottom"><strong>'+money(p.price)+'</strong><span class="status-chip '+(p.active?'active':'inactive')+'">'+(p.active?'AVAILABLE':'HIDDEN')+'</span>'+(p.featured?'<span class="feature-chip">FEATURED</span>':'')+'</div><div class="menu-variable-summary">'+variableSummary(p)+'</div><div class="button-row"><button class="btn btn-small" data-action="toggleItem(\''+p.id+'\','+(!p.active)+')">'+(p.active?'HIDE':'PUBLISH')+'</button><button class="btn btn-small secondary" data-action="feature(\''+p.id+'\','+(!p.featured)+')">'+(p.featured?'REMOVE FEATURED':'MAKE FEATURED')+'</button><button class="btn btn-small secondary" data-action="openVariableEditor(\''+p.id+'\')">EDIT VARIABLES</button></div></div></article>';
 }

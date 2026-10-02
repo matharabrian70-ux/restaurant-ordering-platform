@@ -13,6 +13,10 @@ create table if not exists business_privacy_settings (
   retention_customer_days integer not null default 730 check (retention_customer_days between 30 and 3650),
   retention_order_days integer not null default 2555 check (retention_order_days between 365 and 3650),
   live_gps_retention_hours integer not null default 24 check (live_gps_retention_hours between 1 and 168),
+  odpc_controller_status text not null default 'NOT_REVIEWED',
+  odpc_processor_status text not null default 'NOT_REVIEWED',
+  odpc_controller_certificate text,
+  odpc_processor_certificate text,
   cross_border_transfer_notice text,
   updated_at timestamptz not null default now(),
   created_at timestamptz not null default now()
@@ -94,6 +98,10 @@ alter table orders add column if not exists privacy_notice_version text;
 alter table orders add column if not exists terms_version text;
 alter table orders add column if not exists legal_accepted_at timestamptz;
 alter table orders add column if not exists marketing_opt_in boolean not null default false;
+alter table business_privacy_settings add column if not exists odpc_controller_status text not null default 'NOT_REVIEWED';
+alter table business_privacy_settings add column if not exists odpc_processor_status text not null default 'NOT_REVIEWED';
+alter table business_privacy_settings add column if not exists odpc_controller_certificate text;
+alter table business_privacy_settings add column if not exists odpc_processor_certificate text;
 
 insert into compliance_processors(id,name,purpose,data_categories,jurisdictions,transfer_safeguard)
 select gen_random_uuid(),'Paystack','Payment processing and payment status confirmation','Customer name, email, phone, order/payment identifiers','Potential cross-border processing','Verify current contractual transfer safeguards before launch'

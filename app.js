@@ -150,7 +150,7 @@ const offer=(data.promotions||[])[0],hero=document.querySelector('.hero-card sma
   renderSignatureMenu(PRODUCTS);
   const strip=document.getElementById('promotions-strip');
   if(strip){
-    strip.innerHTML='<div class="menu-service-note"><span><i class="live-dot"></i><strong>Menu is loading</strong></span><span>Please try again in a moment — your menu will refresh automatically.</span></div>';
+    strip.innerHTML='<div class="menu-service-note" aria-label="Menu temporarily unavailable"><span><i class="live-dot"></i><strong>Menu is loading</strong></span><span>Please try again in a moment — your menu will refresh automatically.</span></div>';
   }
 }
 }

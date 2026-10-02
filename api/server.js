@@ -411,8 +411,7 @@ function capabilityForRequest(req) {
   if (/^\/manager\/branding$/.test(path) || /^\/control\/businesses\/[^/]+\/branding\/import$/.test(path)) {
     capabilities.push('websiteIntegration');
   }
-  if (/^\/platform\/businesses\/[^/]+\/integration/.test(path) ||
-      /^\/public\/integrations\//.test(path)) {
+  if (/^\/platform\/businesses\/[^/]+\/integration/.test(path)) {
     capabilities.push('apiIntegrations');
   }
   if (/^\/platform\/businesses\/[^/]+$/.test(path) && method === 'PATCH' && req.body?.domain !== undefined) {
@@ -3881,6 +3880,7 @@ app.get('/api/public/integrations/:token.js',(req,res)=>{
         where bi.public_token_hash=$1 and bi.status='ACTIVE' and b.status='ACTIVE'`,[hashSessionToken(token)]);
       if(!r.rowCount)return res.status(404).type('application/javascript').send('/* Integration not found or revoked. */');
       const b=r.rows[0];
+      await requireFeature('apiIntegrations',b.id);
       const menuUrl=integrationCustomerUrl(b.id);
       const jsCode=`(function(){
   var menuUrl=${JSON.stringify(menuUrl)};

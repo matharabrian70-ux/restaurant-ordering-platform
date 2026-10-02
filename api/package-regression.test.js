@@ -68,3 +68,8 @@ test('Feature enforcement is tenant-bound for public and authenticated flows', (
   has(server, 'getRiderFromSession(req)');
   has(server, 'getStationFromSession(req)');
 });
+
+test('Public integration entitlement is checked after the signed token resolves its tenant', () => {
+  has(server, "app.get('/api/public/integrations/:token.js'");
+  has(server, "await requireFeature('apiIntegrations',b.id)");
+});

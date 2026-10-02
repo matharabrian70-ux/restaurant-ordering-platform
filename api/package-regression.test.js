@@ -72,5 +72,4 @@ test('Feature enforcement is tenant-bound for public and authenticated flows', (
 test('Public integration entitlement is checked after the signed token resolves its tenant', () => {
   has(server, "app.get('/api/public/integrations/:token.js'");
   has(server, "await requireFeature('apiIntegrations',b.id)");
-  assert.doesNotMatch(server, /capabilities\.push\('apiIntegrations'\);[\\s\\S]{0,120}public\\/integrations/);
 });

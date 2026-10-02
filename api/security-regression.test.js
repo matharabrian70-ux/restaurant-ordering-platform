@@ -218,3 +218,9 @@ test('Compliance foundation: launch documents and customer consent UI exist', ()
     assert.ok(fs.existsSync(path.join(root,file)), 'missing compliance document: '+file);
   }
 });
+
+test('Commercial launch gate: tenant health requires a real privacy contact', () => {
+  has(server,'MISSING_PRIVACY_CONTACT');
+  has(server,'has_privacy_contact');
+  has(server,'business_privacy_settings');
+});

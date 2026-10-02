@@ -54,3 +54,14 @@ test('control centre frontend does not request normal order or rider feeds',()=>
   assert.match(control,/ORDER_TIMELINE/);
   assert.match(control,/CUSTOMER_CONTACT/);
 });
+
+test('normal privacy incident listing excludes incident narrative and affected-data fields',()=>{
+  const compliance=fs.readFileSync('api/compliance.js','utf8');
+  const route=compliance.slice(compliance.indexOf("app.get('/api/platform/compliance/incidents'"),compliance.indexOf("app.patch('/api/platform/compliance/incidents/:id'"));
+  assert.doesNotMatch(route,/select i\.\*,b\.name as business_name/);
+  assert.match(route,/i\.severity/);
+  assert.match(route,/i\.status/);
+  assert.doesNotMatch(route,/i\.description/);
+  assert.doesNotMatch(route,/i\.affected_data/);
+  assert.doesNotMatch(route,/i\.containment_actions/);
+});

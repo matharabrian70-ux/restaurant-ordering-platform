@@ -9,15 +9,15 @@ const sent=new Map();
 let telemetryTokenPromise=null;
 function authContext(){
   if(dashboard==='CONTROL_CENTRE'){
-    const token=localStorage.getItem('platform_admin_token')||'';
+    const token=window.PlatformSession?PlatformSession.getLegacyToken('platform'):localStorage.getItem('platform_admin_token')||'';
     return token?{token,scope:'PLATFORM'}:null;
   }
   if(dashboard==='MANAGER'){
-    const token=sessionStorage.getItem('savanna_manager_session')||'';
+    const token=window.PlatformSession?PlatformSession.getLegacyToken('manager'):sessionStorage.getItem('savanna_manager_session')||'';
     return token?{token,scope:'MANAGER'}:null;
   }
   if(dashboard==='RIDER'){
-    const token=localStorage.getItem('rider_session_token')||'';
+    const token=window.PlatformSession?PlatformSession.getLegacyToken('rider'):localStorage.getItem('rider_session_token')||'';
     return token?{token,scope:'RIDER'}:null;
   }
   if(dashboard==='ORDER_STATION'){

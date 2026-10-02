@@ -138,7 +138,7 @@
     try {
       const businessId = encodeURIComponent(requested);
       const response = await fetch(
-        '' + (window.PLATFORM_API_ORIGIN || 'https://restaurant-ordering-api-ow3p.onrender.com') + '/api/menu/public?businessId=' + businessId,
+        (window.PLATFORM_API_ORIGIN || 'https://restaurant-ordering-api-ow3p.onrender.com') + '/api/menu/public?businessId=' + businessId,
         { headers: { Accept: 'application/json' } }
       );
 

@@ -2163,12 +2163,12 @@ app.post('/api/orders',
     }
 
     await client.query(`
-      insert into privacy_consents(id,business_id,customer_id,subject_phone,subject_email,consent_type,version,granted,source,ip_hash,user_agent)
-      values(gen_random_uuid(),$1,$2,$3,$4,'TERMS',$5,true,'WEB_CHECKOUT',$6,$7),
-            (gen_random_uuid(),$1,$2,$3,$4,'PRIVACY_NOTICE',$8,true,'WEB_CHECKOUT',$6,$7)
-    `,[businessId,customerResult.rows[0].id,String(customer.phone).trim(),String(customer.email).trim(),LEGAL_VERSIONS.terms,crypto.createHash('sha256').update(String(req.ip||req.socket?.remoteAddress||'')).digest('hex'),String(req.headers['user-agent']||'').slice(0,500),LEGAL_VERSIONS.privacy]);
+      insert into privacy_consents(id,business_id,customer_id,order_id,subject_phone,subject_email,consent_type,version,granted,source,ip_hash,user_agent)
+      values(gen_random_uuid(),$1,$2,$3,$4,$5,'TERMS',$6,true,'WEB_CHECKOUT',$7,$8),
+            (gen_random_uuid(),$1,$2,$3,$4,$5,'PRIVACY_NOTICE',$9,true,'WEB_CHECKOUT',$7,$8)
+    `,[businessId,customerResult.rows[0].id,orderId,String(customer.phone).trim(),String(customer.email).trim(),LEGAL_VERSIONS.terms,crypto.createHash('sha256').update(String(req.ip||req.socket?.remoteAddress||'')).digest('hex'),String(req.headers['user-agent']||'').slice(0,500),LEGAL_VERSIONS.privacy]);
     if(marketingOptIn){
-      await client.query(`insert into privacy_consents(id,business_id,customer_id,subject_phone,subject_email,consent_type,version,granted,source,ip_hash,user_agent) values(gen_random_uuid(),$1,$2,$3,$4,'MARKETING_SMS',$5,true,'WEB_CHECKOUT',$6,$7)`,[businessId,customerResult.rows[0].id,String(customer.phone).trim(),String(customer.email).trim(),LEGAL_VERSIONS.privacy,crypto.createHash('sha256').update(String(req.ip||req.socket?.remoteAddress||'')).digest('hex'),String(req.headers['user-agent']||'').slice(0,500)]);
+      await client.query(`insert into privacy_consents(id,business_id,customer_id,order_id,subject_phone,subject_email,consent_type,version,granted,source,ip_hash,user_agent) values(gen_random_uuid(),$1,$2,$3,$4,$5,'MARKETING_SMS',$6,true,'WEB_CHECKOUT',$7,$8)`,[businessId,customerResult.rows[0].id,orderId,String(customer.phone).trim(),String(customer.email).trim(),LEGAL_VERSIONS.privacy,crypto.createHash('sha256').update(String(req.ip||req.socket?.remoteAddress||'')).digest('hex'),String(req.headers['user-agent']||'').slice(0,500)]);
     }
     const orderNumber='SB-'+Date.now().toString().slice(-8)+'-'+orderId.slice(0,4).toUpperCase();
     const pickupAddress=deliveryData?.pickup_address||null;

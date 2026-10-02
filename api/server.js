@@ -3330,7 +3330,7 @@ app.get('/api/platform/system',requirePlatformAdmin,async(req,res)=>{
   try{
     const [audit,counts]=await Promise.all([
       pool.query("select action,note,created_at from platform_audit_events order by created_at desc limit 20"),
-      pool.query("(select count(*) from businesses)::int as restaurants, (select count(*) from platform_incidents where status='OPEN')::int as open_incidents, (select count(*) from business_integrations where status='ACTIVE')::int as active_integrations")
+      pool.query("select (select count(*)::int from businesses) as restaurants, (select count(*)::int from platform_incidents where status='OPEN') as open_incidents, (select count(*)::int from business_integrations where status='ACTIVE') as active_integrations")
     ]);
     res.json({
       version:String(process.env.PLATFORM_VERSION||'2026.09.28-phase6'),

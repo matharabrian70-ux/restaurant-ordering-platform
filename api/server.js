@@ -3085,12 +3085,7 @@ async function getPlatformAdmin(req) {
 }
 
 async function issuePlatformAdminSession(adminId) {
-  const token=crypto.randomBytes(32).toString('hex');
-  await pool.query(
-    "insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))",
-    [adminId,hashSessionToken(token),SESSION_TTLS.controlHours]
-  );
-  return token;
+  return createAuthSession('platform',adminId);
 }
 async function authenticatePlatformAdmin(email,password) {
   const normalizedEmail=String(email||'').trim().toLowerCase();

@@ -6,6 +6,12 @@ create table if not exists business_privacy_settings (
   business_id uuid primary key references businesses(id) on delete cascade,
   privacy_contact_email text,
   dpo_contact_email text,
+  controller_legal_name text,
+  controller_address text,
+  support_email text,
+  support_phone text,
+  complaints_email text,
+  contracting_party_notice text,
   privacy_notice_version text not null default '2026-10-01',
   terms_version text not null default '2026-10-01',
   cookie_policy_version text not null default '2026-10-01',
@@ -102,6 +108,12 @@ alter table business_privacy_settings add column if not exists odpc_controller_s
 alter table business_privacy_settings add column if not exists odpc_processor_status text not null default 'NOT_REVIEWED';
 alter table business_privacy_settings add column if not exists odpc_controller_certificate text;
 alter table business_privacy_settings add column if not exists odpc_processor_certificate text;
+alter table business_privacy_settings add column if not exists controller_legal_name text;
+alter table business_privacy_settings add column if not exists controller_address text;
+alter table business_privacy_settings add column if not exists support_email text;
+alter table business_privacy_settings add column if not exists support_phone text;
+alter table business_privacy_settings add column if not exists complaints_email text;
+alter table business_privacy_settings add column if not exists contracting_party_notice text;
 
 insert into compliance_processors(id,name,purpose,data_categories,jurisdictions,transfer_safeguard)
 select gen_random_uuid(),'Paystack','Payment processing and payment status confirmation','Customer name, email, phone, order/payment identifiers','Potential cross-border processing','Verify current contractual transfer safeguards before launch'

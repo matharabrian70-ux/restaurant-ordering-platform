@@ -3,9 +3,9 @@ const RIDER_BUSINESS_ID=BUSINESS_ID;
 let rider=null,lastTripId=null,pollTimer=null,riderEvents=null,riderLiveSyncBusy=false,availabilityActionVersion=0,riderDashboardInitialized=false,riderAudioContext=null,riderMap=null,riderMapTripId=null,riderMapWatchId=null,riderMapRouteLayer=null,riderMapRiderMarker=null,riderMapReady=false,lastActiveRenderKey='';
 let riderLocationSending=false,riderLocationLastPoint=null,riderLocationTripId=null,riderLocationLastSentAt=0,riderPresenceWatchId=null,riderPresenceLastSentAt=0;
 
-function riderHeaders(){const token=sessionStorage.getItem(RIDER_TOKEN_KEY);return token?{'Authorization':'Bearer '+token}:{};}
+function riderHeaders(){return window.PlatformSession?PlatformSession.authorizationHeader('rider'):(sessionStorage.getItem(RIDER_TOKEN_KEY)?{'Authorization':'Bearer '+sessionStorage.getItem(RIDER_TOKEN_KEY)}:{});}
 async function riderApi(path,options={}){return apiRequest(path,{...options,headers:{...riderHeaders(),...(options.headers||{})}});}
-function clearRiderSession(){sessionStorage.removeItem(RIDER_TOKEN_KEY);localStorage.removeItem(RIDER_TOKEN_KEY);rider=null;}
+function clearRiderSession(){if(window.PlatformSession)PlatformSession.clearLegacyToken('rider');else{sessionStorage.removeItem(RIDER_TOKEN_KEY);localStorage.removeItem(RIDER_TOKEN_KEY);}rider=null;}
 function esc(v){return String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
 function riderMoney(v){return 'KSh '+Number(v||0).toLocaleString();}
 async function loadLeaflet(){

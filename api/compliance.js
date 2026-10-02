@@ -1,14 +1,14 @@
 import crypto from 'node:crypto';
 
 export const LEGAL_VERSIONS = Object.freeze({
-  privacy: '2026-10-01',
-  terms: '2026-10-01',
-  cookies: '2026-10-01',
-  refunds: '2026-10-01',
-  delivery: '2026-10-01',
-  merchant: '2026-10-01',
-  dpa: '2026-10-01',
-  rider: '2026-10-01'
+  privacy: '2026-10-02-v1',
+  terms: '2026-10-02-v1',
+  cookies: '2026-10-02-v1',
+  refunds: '2026-10-02-v1',
+  delivery: '2026-10-02-v1',
+  merchant: '2026-10-02-v1',
+  dpa: '2026-10-02-v1',
+  rider: '2026-10-02-v1'
 });
 
 function clean(value, max = 500) {
@@ -31,9 +31,9 @@ export async function ensureComplianceSchema(pool) {
       support_phone text,
       complaints_email text,
       contracting_party_notice text,
-      privacy_notice_version text not null default '2026-10-01',
-      terms_version text not null default '2026-10-01',
-      cookie_policy_version text not null default '2026-10-01',
+      privacy_notice_version text not null default '2026-10-02-v1',
+      terms_version text not null default '2026-10-02-v1',
+      cookie_policy_version text not null default '2026-10-02-v1',
       marketing_enabled boolean not null default true,
       retention_customer_days integer not null default 730 check (retention_customer_days between 30 and 3650),
       retention_order_days integer not null default 2555 check (retention_order_days between 365 and 3650),

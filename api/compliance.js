@@ -25,6 +25,12 @@ export async function ensureComplianceSchema(pool) {
       business_id uuid primary key references businesses(id) on delete cascade,
       privacy_contact_email text,
       dpo_contact_email text,
+      controller_legal_name text,
+      controller_address text,
+      support_email text,
+      support_phone text,
+      complaints_email text,
+      contracting_party_notice text,
       privacy_notice_version text not null default '2026-10-01',
       terms_version text not null default '2026-10-01',
       cookie_policy_version text not null default '2026-10-01',
@@ -118,6 +124,12 @@ export async function ensureComplianceSchema(pool) {
     alter table business_privacy_settings add column if not exists odpc_processor_status text not null default 'NOT_REVIEWED';
     alter table business_privacy_settings add column if not exists odpc_controller_certificate text;
     alter table business_privacy_settings add column if not exists odpc_processor_certificate text;
+    alter table business_privacy_settings add column if not exists controller_legal_name text;
+    alter table business_privacy_settings add column if not exists controller_address text;
+    alter table business_privacy_settings add column if not exists support_email text;
+    alter table business_privacy_settings add column if not exists support_phone text;
+    alter table business_privacy_settings add column if not exists complaints_email text;
+    alter table business_privacy_settings add column if not exists contracting_party_notice text;
   `);
 
   await pool.query(`
@@ -180,7 +192,7 @@ export function registerComplianceRoutes(app, pool, deps) {
       const r = await pool.query(`
         select b.id,b.name,b.slug,
           s.privacy_contact_email as privacy_contact_email,
-          s.dpo_contact_email,s.privacy_notice_version,s.terms_version,s.cookie_policy_version,
+          s.dpo_contact_email,s.controller_legal_name,s.controller_address,s.support_email,s.support_phone,s.complaints_email,s.contracting_party_notice,s.privacy_notice_version,s.terms_version,s.cookie_policy_version,
           coalesce(s.marketing_enabled,true) as marketing_enabled
         from businesses b left join business_privacy_settings s on s.business_id=b.id
         where b.id=$1 and b.status='ACTIVE' limit 1
@@ -189,7 +201,7 @@ export function registerComplianceRoutes(app, pool, deps) {
       const x=r.rows[0];
       res.json({
         businessId:x.id,businessName:x.name,slug:x.slug,
-        privacyContact:x.privacy_contact_email,dpoContact:x.dpo_contact_email||null,
+        privacyContact:x.privacy_contact_email,dpoContact:x.dpo_contact_email||null,controllerLegalName:x.controller_legal_name||null,controllerAddress:x.controller_address||null,supportEmail:x.support_email||null,supportPhone:x.support_phone||null,complaintsEmail:x.complaints_email||null,contractingPartyNotice:x.contracting_party_notice||null,
         versions:{privacy:x.privacy_notice_version||LEGAL_VERSIONS.privacy,terms:x.terms_version||LEGAL_VERSIONS.terms,cookies:x.cookie_policy_version||LEGAL_VERSIONS.cookies},
         marketingEnabled:Boolean(x.marketing_enabled),
         legalUrls:{
@@ -247,8 +259,15 @@ export function registerComplianceRoutes(app, pool, deps) {
   app.put('/api/manager/privacy', requireManager, requireManagerRole('OWNER'), async(req,res) => {
     try {
       const privacyContact=clean(req.body?.privacyContact,160).toLowerCase();
+      const controllerLegalName=clean(req.body?.controllerLegalName,240)||null;
+      const controllerAddress=clean(req.body?.controllerAddress,500)||null;
+      const supportEmail=clean(req.body?.supportEmail,160).toLowerCase()||null;
+      const supportPhone=clean(req.body?.supportPhone,80)||null;
+      const complaintsEmail=clean(req.body?.complaintsEmail,160).toLowerCase()||null;
+      const contractingPartyNotice=clean(req.body?.contractingPartyNotice,1000)||null;
       const dpoContact=clean(req.body?.dpoContact,160).toLowerCase()||null;
       if(privacyContact && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(privacyContact))return res.status(400).json({error:'Privacy contact email is invalid'});
+      for (const email of [supportEmail,complaintsEmail]) if(email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({error:'Contact email is invalid'});
       if(dpoContact && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(dpoContact))return res.status(400).json({error:'DPO contact email is invalid'});
       const customerDays=Math.max(30,Math.min(3650,Number(req.body?.retentionCustomerDays||730)));
       const orderDays=Math.max(365,Math.min(3650,Number(req.body?.retentionOrderDays||2555)));
@@ -260,11 +279,11 @@ export function registerComplianceRoutes(app, pool, deps) {
       const controllerCertificate=clean(req.body?.odpcControllerCertificate,160)||null;
       const processorCertificate=clean(req.body?.odpcProcessorCertificate,160)||null;
       const r=await pool.query(`
-        insert into business_privacy_settings(business_id,privacy_contact_email,dpo_contact_email,marketing_enabled,retention_customer_days,retention_order_days,live_gps_retention_hours,odpc_controller_status,odpc_processor_status,odpc_controller_certificate,odpc_processor_certificate,updated_at)
-        values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now())
-        on conflict(business_id) do update set privacy_contact_email=excluded.privacy_contact_email,dpo_contact_email=excluded.dpo_contact_email,marketing_enabled=excluded.marketing_enabled,retention_customer_days=excluded.retention_customer_days,retention_order_days=excluded.retention_order_days,live_gps_retention_hours=excluded.live_gps_retention_hours,odpc_controller_status=excluded.odpc_controller_status,odpc_processor_status=excluded.odpc_processor_status,odpc_controller_certificate=excluded.odpc_controller_certificate,odpc_processor_certificate=excluded.odpc_processor_certificate,updated_at=now()
+        insert into business_privacy_settings(business_id,privacy_contact_email,dpo_contact_email,controller_legal_name,controller_address,support_email,support_phone,complaints_email,contracting_party_notice,marketing_enabled,retention_customer_days,retention_order_days,live_gps_retention_hours,odpc_controller_status,odpc_processor_status,odpc_controller_certificate,odpc_processor_certificate,updated_at)
+        values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,now())
+        on conflict(business_id) do update set privacy_contact_email=excluded.privacy_contact_email,dpo_contact_email=excluded.dpo_contact_email,controller_legal_name=excluded.controller_legal_name,controller_address=excluded.controller_address,support_email=excluded.support_email,support_phone=excluded.support_phone,complaints_email=excluded.complaints_email,contracting_party_notice=excluded.contracting_party_notice,marketing_enabled=excluded.marketing_enabled,retention_customer_days=excluded.retention_customer_days,retention_order_days=excluded.retention_order_days,live_gps_retention_hours=excluded.live_gps_retention_hours,odpc_controller_status=excluded.odpc_controller_status,odpc_processor_status=excluded.odpc_processor_status,odpc_controller_certificate=excluded.odpc_controller_certificate,odpc_processor_certificate=excluded.odpc_processor_certificate,updated_at=now()
         returning *
-      `,[req.manager.business_id,privacyContact||null,dpoContact,marketingEnabled,customerDays,orderDays,gpsHours,controllerStatus,processorStatus,controllerCertificate,processorCertificate]);
+      `,[req.manager.business_id,privacyContact||null,dpoContact,controllerLegalName,controllerAddress,supportEmail,supportPhone,complaintsEmail,contractingPartyNotice,marketingEnabled,customerDays,orderDays,gpsHours,controllerStatus,processorStatus,controllerCertificate,processorCertificate]);
       res.json(r.rows[0]);
     }catch(e){res.status(400).json({error:'Unable to save privacy settings'});}
   });
@@ -280,8 +299,10 @@ export function registerComplianceRoutes(app, pool, deps) {
       const allowed=['OPEN','VERIFYING','IN_PROGRESS','COMPLETED','REJECTED'];
       if(!allowed.includes(status))return res.status(400).json({error:'Invalid request status'});
       const note=clean(req.body?.responseNote,4000)||null;
+      const verificationNote=clean(req.body?.verificationNote,2000)||null;
+      if((status==='COMPLETED'||status==='REJECTED')&&!verificationNote)return res.status(400).json({error:'Verification note is required before closing a data rights request'});
       const r=await pool.query(`
-        update data_subject_requests set status=$1,response_note=coalesce($2,response_note),completed_at=case when $1 in ('COMPLETED','REJECTED') then now() else completed_at end,updated_at=now()
+        update data_subject_requests set status=$1,response_note=coalesce($2,response_note),verification_note=coalesce($3,verification_note),completed_at=case when $1 in ('COMPLETED','REJECTED') then now() else completed_at end,updated_at=now()
         where id=$2 and business_id=$3 returning *
       `,[status,note,req.params.id,req.manager.business_id]);
       if(!r.rowCount)return res.status(404).json({error:'Data rights request not found'});

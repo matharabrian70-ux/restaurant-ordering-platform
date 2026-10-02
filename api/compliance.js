@@ -359,7 +359,7 @@ export function registerComplianceRoutes(app, pool, deps) {
   });
 
   app.get('/api/platform/compliance/incidents', requirePlatformAdmin, async(req,res) => {
-    const r=await pool.query('select i.*,b.name as business_name from privacy_incidents i left join businesses b on b.id=i.business_id order by i.discovered_at desc limit 200');
+    const r=await pool.query("select i.id,i.business_id,b.name as business_name,i.severity,i.status,i.discovered_at,i.notified_odpc_at,i.data_subjects_notified_at from privacy_incidents i left join businesses b on b.id=i.business_id order by i.discovered_at desc limit 200");
     res.json(r.rows);
   });
 

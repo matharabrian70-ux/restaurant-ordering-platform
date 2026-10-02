@@ -190,3 +190,31 @@ test('Security hardening: frontend CSP is deployed and dynamic promotion content
   has(app, 'escapeMenuHtml(p.name||\'Offer\')');
   has(app, 'escapeMenuHtml(p.banner_text');
 });
+
+test('Compliance foundation: legal acceptance, consent and rights workflows are enforced', () => {
+  for (const value of ['ensureComplianceSchema','registerComplianceRoutes','privacy_consents','data_subject_requests','compliance_processors','privacy_incidents','LEGAL_VERSIONS']) has(server,value);
+  const orderBlock=section("app.post('/api/orders'",22000);
+  has(orderBlock,'termsAccepted');
+  has(orderBlock,'privacyNoticeAccepted');
+  has(orderBlock,'marketingOptIn');
+  has(orderBlock,'privacy_notice_version');
+  has(orderBlock,'legal_accepted_at');
+});
+
+test('Compliance foundation: privacy-by-design records are tenant scoped', () => {
+  for (const value of ['business_privacy_settings','where business_id=$1','/api/manager/privacy','/api/privacy/config','/api/privacy/requests']) has(server,value);
+  for (const value of ['privacy_contact_email','retention_customer_days','retention_order_days','live_gps_retention_hours']) has(schema,value);
+});
+
+test('Compliance foundation: launch documents and customer consent UI exist', () => {
+  const checkout=fs.readFileSync(path.join(root,'checkout-ui.js'),'utf8');
+  const apiClient=fs.readFileSync(path.join(root,'api-client.js'),'utf8');
+  const menu=fs.readFileSync(path.join(root,'menu.html'),'utf8');
+  has(checkout,'terms-accepted');
+  has(checkout,'marketing-opt-in');
+  has(apiClient,'legal: legal || {}');
+  has(menu,'compliance-ui.js');
+  for (const file of ['privacy.html','terms.html','cookie-policy.html','refund-policy.html','delivery-terms.html','data-rights.html','merchant-agreement.md','data-processing-agreement.md']) {
+    assert.ok(fs.existsSync(path.join(root,file)), 'missing compliance document: '+file);
+  }
+});

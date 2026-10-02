@@ -171,7 +171,7 @@ export function registerComplianceRoutes(app, pool, deps) {
       if (!businessId) return res.status(400).json({error:'businessId is required'});
       const r = await pool.query(`
         select b.id,b.name,b.slug,
-          coalesce(s.privacy_contact_email,'privacy@restaurant-ordering-platform.example') as privacy_contact_email,
+          s.privacy_contact_email as privacy_contact_email,
           s.dpo_contact_email,s.privacy_notice_version,s.terms_version,s.cookie_policy_version,
           coalesce(s.marketing_enabled,true) as marketing_enabled
         from businesses b left join business_privacy_settings s on s.business_id=b.id

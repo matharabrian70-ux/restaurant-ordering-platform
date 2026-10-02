@@ -32,6 +32,10 @@ export async function ensureComplianceSchema(pool) {
       retention_customer_days integer not null default 730 check (retention_customer_days between 30 and 3650),
       retention_order_days integer not null default 2555 check (retention_order_days between 365 and 3650),
       live_gps_retention_hours integer not null default 24 check (live_gps_retention_hours between 1 and 168),
+      odpc_controller_status text not null default 'NOT_REVIEWED',
+      odpc_processor_status text not null default 'NOT_REVIEWED',
+      odpc_controller_certificate text,
+      odpc_processor_certificate text,
       cross_border_transfer_notice text,
       updated_at timestamptz not null default now(),
       created_at timestamptz not null default now()
@@ -110,6 +114,10 @@ export async function ensureComplianceSchema(pool) {
     alter table orders add column if not exists terms_version text;
     alter table orders add column if not exists legal_accepted_at timestamptz;
     alter table orders add column if not exists marketing_opt_in boolean not null default false;
+    alter table business_privacy_settings add column if not exists odpc_controller_status text not null default 'NOT_REVIEWED';
+    alter table business_privacy_settings add column if not exists odpc_processor_status text not null default 'NOT_REVIEWED';
+    alter table business_privacy_settings add column if not exists odpc_controller_certificate text;
+    alter table business_privacy_settings add column if not exists odpc_processor_certificate text;
   `);
 
   await pool.query(`
@@ -246,12 +254,17 @@ export function registerComplianceRoutes(app, pool, deps) {
       const orderDays=Math.max(365,Math.min(3650,Number(req.body?.retentionOrderDays||2555)));
       const gpsHours=Math.max(1,Math.min(168,Number(req.body?.liveGpsRetentionHours||24)));
       const marketingEnabled=req.body?.marketingEnabled!==false;
+      const controllerStatus=clean(req.body?.odpcControllerStatus,40).toUpperCase()||'NOT_REVIEWED';
+      const processorStatus=clean(req.body?.odpcProcessorStatus,40).toUpperCase()||'NOT_REVIEWED';
+      if(!['NOT_REVIEWED','IN_PROGRESS','REGISTERED','NOT_REQUIRED'].includes(controllerStatus)||!['NOT_REVIEWED','IN_PROGRESS','REGISTERED','NOT_REQUIRED'].includes(processorStatus))return res.status(400).json({error:'Invalid ODPC registration status'});
+      const controllerCertificate=clean(req.body?.odpcControllerCertificate,160)||null;
+      const processorCertificate=clean(req.body?.odpcProcessorCertificate,160)||null;
       const r=await pool.query(`
-        insert into business_privacy_settings(business_id,privacy_contact_email,dpo_contact_email,marketing_enabled,retention_customer_days,retention_order_days,live_gps_retention_hours,updated_at)
-        values($1,$2,$3,$4,$5,$6,$7,now())
-        on conflict(business_id) do update set privacy_contact_email=excluded.privacy_contact_email,dpo_contact_email=excluded.dpo_contact_email,marketing_enabled=excluded.marketing_enabled,retention_customer_days=excluded.retention_customer_days,retention_order_days=excluded.retention_order_days,live_gps_retention_hours=excluded.live_gps_retention_hours,updated_at=now()
+        insert into business_privacy_settings(business_id,privacy_contact_email,dpo_contact_email,marketing_enabled,retention_customer_days,retention_order_days,live_gps_retention_hours,odpc_controller_status,odpc_processor_status,odpc_controller_certificate,odpc_processor_certificate,updated_at)
+        values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now())
+        on conflict(business_id) do update set privacy_contact_email=excluded.privacy_contact_email,dpo_contact_email=excluded.dpo_contact_email,marketing_enabled=excluded.marketing_enabled,retention_customer_days=excluded.retention_customer_days,retention_order_days=excluded.retention_order_days,live_gps_retention_hours=excluded.live_gps_retention_hours,odpc_controller_status=excluded.odpc_controller_status,odpc_processor_status=excluded.odpc_processor_status,odpc_controller_certificate=excluded.odpc_controller_certificate,odpc_processor_certificate=excluded.odpc_processor_certificate,updated_at=now()
         returning *
-      `,[req.manager.business_id,privacyContact||null,dpoContact,marketingEnabled,customerDays,orderDays,gpsHours]);
+      `,[req.manager.business_id,privacyContact||null,dpoContact,marketingEnabled,customerDays,orderDays,gpsHours,controllerStatus,processorStatus,controllerCertificate,processorCertificate]);
       res.json(r.rows[0]);
     }catch(e){res.status(400).json({error:'Unable to save privacy settings'});}
   });

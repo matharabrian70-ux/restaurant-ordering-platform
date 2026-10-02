@@ -44,9 +44,9 @@ test('Payment idempotency and webhook deduplication protections remain present',
 test('Refund boundaries are server-side and money is not trusted from the browser', () => {
   for (const value of [
     'refunds_idempotency_key_idx',
-    'refundAmount',
-    'paidAmount',
-    'remainingRefundable',
+    'requestedAmount',
+    'paid_amount',
+    'const remaining=Number(order.paid_amount)-Number(refundedResult.rows[0].total)',
     'amount > 0'
   ]) assert.ok((server + schema).includes(value), 'missing: ' + value);
 });

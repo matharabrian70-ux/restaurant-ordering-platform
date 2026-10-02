@@ -1,5 +1,52 @@
 <!doctype html>
 <html lang="en"><head>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; script-src 'self' https://accounts.google.com https://unpkg.com; script-src-attr 'none'; script-src-elem 'self' https://accounts.google.com https://unpkg.com; trusted-types default; require-trusted-types-for 'script'; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' https://restaurant-ordering-api-ow3p.onrender.com https://accounts.google.com https://*.googleapis.com https://*.google.com https://*.gstatic.com; frame-src https://accounts.google.com; worker-src 'self' blob:;"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Menu — Savanna Bites</title><link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="menu-signature.css"></head>
-<body data-page="menu"><header class="nav"><a class="brand" href="index.html" data-tenant-brand>Savanna Bites</a><nav><a href="menu.html">Menu</a><a href="dashboard.html">Restaurant</a><a class="cart-link" href="checkout.html">Cart <b id="cart-count">0</b></a></nav></header>
-<main class="page"><div class="page-title"><p class="eyebrow">SAVANNA BITES</p><h1>Choose your order.</h1><p>Every card below can be connected to a custom website with one product ID.</p></div><section id="promotions-strip" class="menu-promotions"></section><div id="menu-category-bar" class="menu-category-bar"><nav id="menu-category-nav" class="menu-category-nav" aria-label="Menu categories"><button type="button" class="menu-category-pill active" data-menu-category-nav="all" aria-current="true">All</button></nav></div><div id="menu-grid" class="menu-grid"></div></main><footer>Prototype v0.1 • Direct ordering engine</footer><script src="safe-actions.js"></script><script src="api-config.js"></script><script src="tenant-theme.js"></script><script src="app.js?v=menu-categories-1"></script><script src="platform-telemetry.js?v=1"></script><script src="compliance-ui.js"></script></body></html>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; script-src 'self' https://accounts.google.com https://unpkg.com; script-src-attr 'none'; script-src-elem 'self' https://accounts.google.com https://unpkg.com; trusted-types default; require-trusted-types-for 'script'; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' https://restaurant-ordering-api-ow3p.onrender.com https://accounts.google.com https://*.googleapis.com https://*.google.com https://*.gstatic.com; frame-src https://accounts.google.com; worker-src 'self' blob:;">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f5f3ed">
+  <title>Menu — Savanna Bites</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="menu-signature.css">
+</head>
+<body data-page="menu">
+<header class="nav">
+  <a class="brand" href="index.html" data-tenant-brand>Savanna Bites</a>
+  <nav aria-label="Customer navigation">
+    <a href="index.html">Home</a>
+    <a href="menu.html" aria-current="page">Menu</a>
+    <a class="cart-link" href="checkout.html">Cart <b id="cart-count">0</b></a>
+  </nav>
+</header>
+
+<main class="page">
+  <div class="page-title">
+    <p class="eyebrow">SAVANNA BITES • ORDER ONLINE</p>
+    <h1>What are you craving?</h1>
+    <p>Browse the menu, explore your favourites and add exactly what you want to your order.</p>
+    <div class="menu-page-meta" aria-label="Ordering highlights">
+      <span>Freshly prepared</span>
+      <span>Easy ordering</span>
+      <span>Secure checkout</span>
+    </div>
+  </div>
+
+  <section id="promotions-strip" class="menu-promotions"></section>
+
+  <div id="menu-category-bar" class="menu-category-bar">
+    <nav id="menu-category-nav" class="menu-category-nav" aria-label="Menu categories">
+      <button type="button" class="menu-category-pill active" data-menu-category-nav="all" aria-current="true">All</button>
+    </nav>
+  </div>
+
+  <div id="menu-grid" class="menu-grid"></div>
+</main>
+
+<footer>Savanna Bites · Fresh food, simple ordering</footer>
+
+<script src="safe-actions.js"></script>
+<script src="api-config.js"></script>
+<script src="tenant-theme.js"></script>
+<script src="app.js?v=menu-pro-2"></script>
+<script src="platform-telemetry.js?v=1"></script>
+<script src="compliance-ui.js"></script>
+</body></html>

@@ -114,10 +114,7 @@ export async function ensureComplianceSchema(pool) {
 
   await pool.query(`
     insert into business_privacy_settings(business_id,privacy_contact_email,dpo_contact_email)
-    select id,
-      coalesce(nullif(current_setting('app.privacy_contact_email',true),''),
-        'privacy@restaurant-ordering-platform.example'),
-      nullif(current_setting('app.dpo_contact_email',true),'')
+    select id,null,null
     from businesses
     on conflict (business_id) do nothing
   `);
@@ -224,7 +221,8 @@ export function registerComplianceRoutes(app, pool, deps) {
       if(!businessId||!allowed.includes(type)||(!email&&!phone))return res.status(400).json({error:'Business, request type and at least one contact detail are required'});
       const b=await pool.query('select id from businesses where id=$1 and status=\'ACTIVE\'',[businessId]);
       if(!b.rowCount)return res.status(404).json({error:'Restaurant not found'});
-      const dueDays=type==='ACCESS'?7:type==='RECTIFICATION'?14:type==='PORTABILITY'?30:14;\n      const dueAt=new Date(Date.now()+dueDays*24*60*60*1000);
+      const dueDays=type==='ACCESS'?7:type==='RECTIFICATION'?14:type==='PORTABILITY'?30:14;
+      const dueAt=new Date(Date.now()+dueDays*24*60*60*1000);
       const r=await pool.query(`
         insert into data_subject_requests(id,business_id,request_type,requester_name,requester_email,requester_phone,details,due_at)
         values(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7) returning id,created_at,due_at,status

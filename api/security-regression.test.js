@@ -242,3 +242,18 @@ test('Commercial launch gate: tenant health requires a real privacy contact', ()
   has(server,'has_privacy_contact');
   has(server,'business_privacy_settings');
 });
+
+test('Package architecture regression: no unsupported legacy CSP frame-ancestors meta remains', () => {
+  const htmlFiles = fs.readdirSync(root).filter(name => name.endsWith('.html'));
+  for (const file of htmlFiles) {
+    const html = fs.readFileSync(path.join(root, file), 'utf8');
+    assert.doesNotMatch(html, /<meta[^>]+Content-Security-Policy[^>]+frame-ancestors/i, file + ' still contains meta frame-ancestors');
+  }
+});
+
+test('Customer menu has a visible API failure fallback instead of a blank state', () => {
+  const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+  has(app, 'Menu temporarily unavailable');
+  has(app, 'renderSignatureMenu(PRODUCTS)');
+  has(app, "if(!response.ok)throw new Error('Menu API unavailable')");
+});

@@ -1,8 +1,8 @@
-# Direct Ordering Engine — Prototype
+# Direct Ordering Engine — Digital ordering platform
 
 A reusable ordering engine designed to plug into custom-designed business websites.
 
-## Prototype flow
+## Digital ordering platform flow
 
 Customer website → product/menu → product options → cart → checkout → simulated payment → order tracking.
 
@@ -44,3 +44,17 @@ The repository now contains a production-oriented ordering API, security hardeni
 Do not treat the repository alone as legal compliance or as a guarantee against claims, complaints or regulatory action. Use `COMMERCIAL_LAUNCH_COMPLIANCE.md` as the pre-launch gate.
 
 Payments in the current production architecture use Paystack when the required Render environment variables are configured.
+
+## Current architecture
+
+This repository now contains the reusable customer ordering flow, Manager Dashboard, Rider Dashboard, Platform Control Centre, tenant branding, package entitlements, delivery operations, payment reconciliation protections, compliance foundations, and security regression tests.
+
+### Package authority
+
+The commercial package system is **STARTER / GROWTH / PRO**. Runtime authorization is derived from `businesses.plan_key` and `platform_packages.features`. The legacy `package_type` field is migration-only and must not be used for authorization.
+
+See `docs/PACKAGE_ENTITLEMENTS.md` for the capability matrix and enforcement rules.
+
+### Production readiness
+
+Before commercial launch, run the migration/constraint validation and complete the end-to-end matrix in `docs/PRODUCTION_SMOKE_MATRIX.md`. The repository includes a production smoke harness at `api/production-smoke.mjs`.

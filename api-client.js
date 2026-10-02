@@ -30,7 +30,7 @@ function orderRequestFingerprint({ customer, phone, email, note, payment, items,
     deliveryAddress: String(deliveryAddress || '').trim()
   });
 }
-async function createRemoteOrder({ customer, phone, email, note, payment, items, subtotal, total, quoteId, deliveryAddress }) {
+async function createRemoteOrder({ customer, phone, email, note, payment, items, subtotal, total, quoteId, deliveryAddress, legal }) {
   const fingerprint=orderRequestFingerprint({customer,phone,email,note,payment,items,quoteId,deliveryAddress});
   let intent=null;
   try{ intent=JSON.parse(sessionStorage.getItem('savanna_order_intent')||'null'); }catch{}
@@ -50,7 +50,8 @@ async function createRemoteOrder({ customer, phone, email, note, payment, items,
       total,
       quoteId,
       deliveryNote: note,
-      deliveryAddress
+      deliveryAddress,
+      legal: legal || {}
     })
   });
 }

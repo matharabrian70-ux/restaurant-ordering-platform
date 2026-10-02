@@ -47,7 +47,7 @@
   position:sticky;
   top:0;
   z-index:30;
-  margin:26px calc(-1 * clamp(16px,4vw,56px)) 34px;
+  margin:26px calc(-1 * clamp(32px,8vw,96px)) 34px;
   padding:16px clamp(16px,4vw,56px);
   background:rgba(255,255,255,.94);
   border-top:1px solid rgba(23,32,25,.06);

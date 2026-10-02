@@ -137,6 +137,24 @@ export async function ensureComplianceSchema(pool) {
   }
 }
 
+export async function runComplianceRetentionSweep(pool) {
+  // Live GPS is operational data with a short, configurable lifetime.
+  await pool.query(`
+    delete from rider_live_locations l
+    using riders r, business_privacy_settings s
+    where l.rider_id=r.id
+      and s.business_id=r.business_id
+      and l.updated_at < now() - make_interval(hours => s.live_gps_retention_hours)
+  `);
+  // Old privacy-request records are minimized after completion. Customer/order/payment
+  // records are not destructively deleted here because their lawful retention may differ.
+  await pool.query(`
+    delete from data_subject_requests
+    where status in ('COMPLETED','REJECTED')
+      and updated_at < now() - interval '730 days'
+  `);
+}
+
 export function registerComplianceRoutes(app, pool, deps) {
   const {
     FRONTEND_URL,
@@ -206,7 +224,7 @@ export function registerComplianceRoutes(app, pool, deps) {
       if(!businessId||!allowed.includes(type)||(!email&&!phone))return res.status(400).json({error:'Business, request type and at least one contact detail are required'});
       const b=await pool.query('select id from businesses where id=$1 and status=\'ACTIVE\'',[businessId]);
       if(!b.rowCount)return res.status(404).json({error:'Restaurant not found'});
-      const dueAt=new Date(Date.now()+30*24*60*60*1000);
+      const dueDays=type==='ACCESS'?7:type==='RECTIFICATION'?14:type==='PORTABILITY'?30:14;\n      const dueAt=new Date(Date.now()+dueDays*24*60*60*1000);
       const r=await pool.query(`
         insert into data_subject_requests(id,business_id,request_type,requester_name,requester_email,requester_phone,details,due_at)
         values(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7) returning id,created_at,due_at,status

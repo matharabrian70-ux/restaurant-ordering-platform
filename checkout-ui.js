@@ -24,6 +24,7 @@ async function renderCheckoutUpgrade(){
         <div class="field"><label>Email</label><input id="email" type="email" required placeholder="you@example.com"></div>
         <div class="field"><label>Delivery location</label><input id="delivery-address" required placeholder="House, apartment, estate, street or landmark"><button class="btn secondary" type="button" id="location-button">USE MY LOCATION</button><small id="location-status" class="muted">For Digital Ordering, your location is used to estimate distance without live route pricing.</small></div>
         <div class="field"><label>Delivery note</label><input id="note" placeholder="Gate code, floor, directions…"></div>
+        <div class="legal-consent"><label><input id="terms-accepted" type="checkbox" required> I agree to the <a href="terms.html?businessId=${encodeURIComponent(BUSINESS_ID)}" target="_blank" rel="noopener">Terms</a> and acknowledge the <a href="privacy.html?businessId=${encodeURIComponent(BUSINESS_ID)}" target="_blank" rel="noopener">Privacy Notice</a>.</label><label><input id="marketing-opt-in" type="checkbox"> Send me optional restaurant offers and updates by SMS/email.</label></div>
         <div class="option-group payment"><h4>Payment method</h4><label><input type="radio" name="payment" value="M-Pesa" checked> M-Pesa</label><label><input type="radio" name="payment" value="Card"> Card</label><p class="muted">The delivery price is calculated from the route and current pricing inputs before payment.</p></div>
         <button class="btn wide" id="quote-button" type="button">CALCULATE DELIVERY FEE</button>
         <button class="btn wide" id="pay-button" type="submit" disabled>Continue to payment</button>
@@ -70,7 +71,8 @@ async function renderCheckoutUpgrade(){
         note:document.getElementById('note').value.trim(),
         deliveryAddress:document.getElementById('delivery-address').value.trim(),
         payment:document.querySelector('input[name=payment]:checked').value,
-        items:c,subtotal,total:subtotal+Number(quote.deliveryFee),quoteId:quote.quoteId
+        items:c,subtotal,total:subtotal+Number(quote.deliveryFee),quoteId:quote.quoteId,
+        legal:{termsAccepted:document.getElementById('terms-accepted').checked,privacyNoticeAccepted:document.getElementById('terms-accepted').checked,marketingOptIn:document.getElementById('marketing-opt-in').checked}
       });
       write('doe_last_order',order.id);
       setCustomerOrderToken(order.customerAccessToken);

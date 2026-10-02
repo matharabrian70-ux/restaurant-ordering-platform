@@ -1315,8 +1315,7 @@ app.post('/api/manager/login', authRateLimit, async (req,res)=>{
       if(!envCredentialsMatch) return res.status(401).json({error:'Invalid manager login'});
       await pool.query('update manager_users set password_hash=$1 where id=$2',[hashManagerPassword(password),manager.id]);
     }
-    const token=crypto.randomBytes(32).toString('hex');
-    await pool.query('insert into manager_sessions(id,manager_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))',[manager.id,hashSessionToken(token),SESSION_TTLS.managerHours]);
+    const token=await createAuthSession('manager',manager.id);
     await pool.query('update manager_users set last_login_at=now() where id=$1',[manager.id]);
     res.json({token,manager:{id:manager.id,businessId:manager.business_id,name:manager.name,email:manager.email,role:manager.role}});
   }catch(error){res.status(500).json({error:error.message||'Unable to sign in manager'});}
@@ -2429,8 +2428,7 @@ app.post('/api/riders/login', authRateLimit, requireRiderModule, async(req,res)=
     const normalized=normalizeKenyanPhone(phone);
     const result=await pool.query(`select r.*,a.password_hash from riders r join rider_auth a on a.rider_id=r.id where r.business_id=$1 and r.phone=$2 and r.active=true and r.rider_status='ACTIVE'`,[businessId,normalized]);
     if(!result.rowCount||!verifyPassword(password,result.rows[0].password_hash)) return res.status(401).json({error:'Invalid rider login'});
-    const token=crypto.randomBytes(32).toString('hex');
-    await pool.query('insert into rider_sessions(id,rider_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))',[result.rows[0].id,hashSessionToken(token),SESSION_TTLS.riderHours]);
+    const token=await createAuthSession('rider',result.rows[0].id);
     await pool.query('update rider_auth set last_login_at=now() where rider_id=$1',[result.rows[0].id]);
     await pool.query(`insert into rider_presence(rider_id,online) values($1,true) on conflict(rider_id) do update set online=true,updated_at=now()`,[result.rows[0].id]);
     await pool.query(`insert into business_connections(business_id,rider_connected,updated_at) values($1,true,now()) on conflict(business_id) do update set rider_connected=true,updated_at=now()`,[businessId]);

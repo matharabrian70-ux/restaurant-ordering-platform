@@ -142,7 +142,7 @@ if(!response.ok)throw new Error('Menu API unavailable');
 const data=await response.json();
 const products=(data.products||[]).map(p=>({id:p.id,name:p.name,category:p.category_name||p.category||'Menu',category_id:p.category_id||null,price:Number(p.price||0),image:p.image_url||'',desc:p.description||'',options:Array.isArray(p.options)?p.options:[],featured:Boolean(p.featured)}));
 if(products.length){renderSignatureMenu(products,data.categories||[]);}
-const strip=document.getElementById('promotions-strip');if(strip){const promos=data.promotions||[];strip.innerHTML=promos.length?'<div class="promo-heading"><p class="eyebrow">RESTAURANT OFFERS</p><h2>Today\'s specials.</h2></div><div class="promo-list">'+promos.slice(0,6).map(p=>'<article><span>'+escapeMenuHtml(String(p.type||'OFFER').replaceAll('_',' '))+'</span><h3>'+escapeMenuHtml(p.name||'Offer')+'</h3><p>'+escapeMenuHtml(p.banner_text||'Limited-time restaurant promotion')+'</p></article>').join('')+'</div>':'<div class="promo-heading"><p class="eyebrow">SAVANNA BITES</p><h2>Fresh from the kitchen.</h2></div>';}
+const strip=document.getElementById('promotions-strip');if(strip){const promos=data.promotions||[];strip.innerHTML=promos.length?'<div class="promo-heading"><p class="eyebrow">RESTAURANT OFFERS</p><h2>Today\'s specials.</h2></div><div class="promo-list">'+promos.slice(0,6).map(p=>'<article><span>'+escapeMenuHtml(String(p.type||'OFFER').replaceAll('_',' '))+'</span><h3>'+escapeMenuHtml(p.name||'Offer')+'</h3><p>'+escapeMenuHtml(p.banner_text||'Limited-time restaurant promotion')+'</p></article>').join('')+'</div>':'<div class="menu-service-note"><span><i class="live-dot"></i><strong>Made fresh to order</strong></span><span>Pick a category and start building your order.</span></div>';}
 const offer=(data.promotions||[])[0],hero=document.querySelector('.hero-card small');if(offer&&hero){hero.textContent=offer.banner_text||offer.name;const strong=hero.parentElement?.querySelector('strong');if(strong)strong.textContent=offer.name}
 }catch(error){
   // Never leave the customer with an unexplained blank menu when the API is down.
@@ -150,7 +150,7 @@ const offer=(data.promotions||[])[0],hero=document.querySelector('.hero-card sma
   renderSignatureMenu(PRODUCTS);
   const strip=document.getElementById('promotions-strip');
   if(strip){
-    strip.innerHTML='<div class="promo-heading"><p class="eyebrow">ORDERING STATUS</p><h2>Menu temporarily unavailable.</h2><p>Please try again. The restaurant menu will refresh automatically when the service is available.</p></div>';
+    strip.innerHTML='<div class="menu-service-note"><span><i class="live-dot"></i><strong>Menu is loading</strong></span><span>Please try again in a moment — your menu will refresh automatically.</span></div>';
   }
 }
 }

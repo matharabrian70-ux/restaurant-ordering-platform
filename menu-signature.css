@@ -42,6 +42,7 @@
   .signature-add-btn{min-height:52px}
 }
 /* Ordered category navigation — customer menu */
+.menu-grid{display:block}
 .menu-category-bar{
   position:sticky;
   top:0;

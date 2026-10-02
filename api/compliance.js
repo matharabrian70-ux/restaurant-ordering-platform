@@ -139,6 +139,8 @@ export async function ensureComplianceSchema(pool) {
     on conflict (business_id) do nothing
   `);
 
+  await pool.query(`update business_privacy_settings set privacy_notice_version=$1,terms_version=$1,cookie_policy_version=$1,updated_at=now() where privacy_notice_version<>$1 or terms_version<>$1 or cookie_policy_version<>$1`,[LEGAL_VERSIONS.privacy]);
+
   const seed = [
     ['Paystack','Payment processing and payment status confirmation','Customer name, email, phone, order/payment identifiers','Potential cross-border processing','Contractual safeguards; verify current transfer mechanism before launch'],
     ['Google Maps Platform','Address geocoding and route calculation where enabled','Delivery address and route coordinates','Potential cross-border processing','Contractual safeguards; verify current transfer mechanism before launch'],

@@ -14,6 +14,7 @@ import { registerBrandingEngine } from './branding-engine.js';
 import { registerReceiptEngine, ensureReceipt } from './receipt-engine.js';
 import { runSelfHealingSweep } from './self-healing.js';
 import { registerProductionObservability } from './production-observability.js';
+import { ensureComplianceSchema, registerComplianceRoutes, LEGAL_VERSIONS } from './compliance.js';
 
 const { Pool } = pg;
 const app = express();
@@ -1976,11 +1977,15 @@ app.post('/api/orders',
   async (req, res) => {
   const client=await pool.connect();
   try{
-    const {businessId,customer,items,paymentMethod,deliveryNote,quoteId,couponCode}=req.body;
+    const {businessId,customer,items,paymentMethod,deliveryNote,quoteId,couponCode,legal}=req.body;
     const normalizedPaymentMethod=paymentMethod==='M-Pesa'?'M-Pesa':paymentMethod==='Card'?'Card':null;
     const idempotencyKey=String(req.headers['idempotency-key']||req.body?.idempotencyKey||'').trim();
     if(!idempotencyKey||idempotencyKey.length<8||idempotencyKey.length>200)return res.status(400).json({error:'Idempotency-Key is required for order creation'});
     if(!businessId||!customer?.name||!customer?.phone||!customer?.email||!Array.isArray(items)||!items.length||!normalizedPaymentMethod) return res.status(400).json({error:'Missing order fields'});
+    const termsAccepted=legal?.termsAccepted===true;
+    const privacyNoticeAccepted=legal?.privacyNoticeAccepted===true;
+    const marketingOptIn=legal?.marketingOptIn===true;
+    if(!termsAccepted||!privacyNoticeAccepted)return res.status(400).json({error:'You must accept the Terms and acknowledge the Privacy Notice before placing an order'});
     if(items.length>50) return res.status(400).json({error:'Too many order items'});
 
     const requestFingerprint=hashOrderRequest({
@@ -2155,6 +2160,14 @@ app.post('/api/orders',
       if(used.rowCount) throw new Error('Coupon has already been used by this customer');
     }
 
+    await client.query(`
+      insert into privacy_consents(id,business_id,customer_id,subject_phone,subject_email,consent_type,version,granted,source,ip_hash,user_agent)
+      values(gen_random_uuid(),$1,$2,$3,$4,'TERMS',$5,true,'WEB_CHECKOUT',$6,$7),
+            (gen_random_uuid(),$1,$2,$3,$4,'PRIVACY_NOTICE',$8,true,'WEB_CHECKOUT',$6,$7)
+    `,[businessId,customerResult.rows[0].id,String(customer.phone).trim(),String(customer.email).trim(),LEGAL_VERSIONS.terms,crypto.createHash('sha256').update(String(req.ip||req.socket?.remoteAddress||'')).digest('hex'),String(req.headers['user-agent']||'').slice(0,500),LEGAL_VERSIONS.privacy]);
+    if(marketingOptIn){
+      await client.query(`insert into privacy_consents(id,business_id,customer_id,subject_phone,subject_email,consent_type,version,granted,source,ip_hash,user_agent) values(gen_random_uuid(),$1,$2,$3,$4,'MARKETING_SMS',$5,true,'WEB_CHECKOUT',$6,$7)`,[businessId,customerResult.rows[0].id,String(customer.phone).trim(),String(customer.email).trim(),LEGAL_VERSIONS.privacy,crypto.createHash('sha256').update(String(req.ip||req.socket?.remoteAddress||'')).digest('hex'),String(req.headers['user-agent']||'').slice(0,500)]);
+    }
     const orderId=crypto.randomUUID();
     const orderNumber='SB-'+Date.now().toString().slice(-8)+'-'+orderId.slice(0,4).toUpperCase();
     const pickupAddress=deliveryData?.pickup_address||null;
@@ -2182,6 +2195,7 @@ app.post('/api/orders',
         deliveryData?.duration_seconds||null,customerAccess.hash
       ]
     );
+    await client.query(`update orders set privacy_notice_version=$1,terms_version=$2,legal_accepted_at=now(),marketing_opt_in=$3 where id=$4`,[LEGAL_VERSIONS.privacy,LEGAL_VERSIONS.terms,marketingOptIn,orderId]);
 
     for(const item of trustedItems){
       await client.query(
@@ -3666,6 +3680,7 @@ registerCustomerGrowth(app,pool);
 registerAdvancedOperations(app,pool);
 registerIntelligence(app,pool);
 registerProductionObservability(app,pool,{requirePlatformAdmin,requirePlatformRole,recordSystemIncident});
+registerComplianceRoutes(app,pool,{FRONTEND_URL,requireManager,requireManagerRole,requirePlatformAdmin,requirePlatformRole,recordPlatformAudit,recordSystemIncident});
 
 
 function integrationTypeLabel(type){
@@ -3847,6 +3862,7 @@ async function startServer(){
   await ensureIntegrationSchema();
   await ensurePhase1SecuritySchema();
   await ensurePhase3SecuritySchema();
+  await ensureComplianceSchema(pool);
   await cleanupSecurityArtifacts();
   await runSelfHealingSweep(pool);
   await runIncidentSweep();

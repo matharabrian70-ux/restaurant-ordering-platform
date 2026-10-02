@@ -14,7 +14,7 @@ import { registerBrandingEngine } from './branding-engine.js';
 import { registerReceiptEngine, ensureReceipt } from './receipt-engine.js';
 import { runSelfHealingSweep } from './self-healing.js';
 import { registerProductionObservability } from './production-observability.js';
-import { ensureComplianceSchema, registerComplianceRoutes, LEGAL_VERSIONS } from './compliance.js';
+import { ensureComplianceSchema, registerComplianceRoutes, runComplianceRetentionSweep, LEGAL_VERSIONS } from './compliance.js';
 
 const { Pool } = pg;
 const app = express();
@@ -3863,12 +3863,14 @@ async function startServer(){
   await ensurePhase1SecuritySchema();
   await ensurePhase3SecuritySchema();
   await ensureComplianceSchema(pool);
+  await runComplianceRetentionSweep(pool);
   await cleanupSecurityArtifacts();
   await runSelfHealingSweep(pool);
   await runIncidentSweep();
   await runIntelligenceSweep(pool);
   setInterval(() => runIntelligenceSweep(pool), 6 * 60 * 60_000).unref?.();
   setInterval(cleanupSecurityArtifacts,30*60_000).unref?.();
+  setInterval(() => runComplianceRetentionSweep(pool).catch(error => console.error('Compliance retention warning:',error.message)),60*60_000).unref?.();
   // Phase M recovery is deliberately infrequent and bounded. It only reconciles
   // existing infrastructure state; it never changes payment/order outcomes.
   setInterval(() => runSelfHealingSweep(pool).catch(() => {}), 5*60_000).unref?.();

@@ -800,10 +800,15 @@ async function ensurePhaseASchema(){
       created_at timestamptz not null default now()
     );
     create index if not exists outbox_events_pending_idx on outbox_events(status,available_at,created_at);
-    alter table payments drop constraint if exists payments_amount_nonnegative;
-    alter table payments add constraint payments_amount_nonnegative check (amount >= 0) not valid;
-    alter table refunds drop constraint if exists refunds_amount_nonnegative;
-    alter table refunds add constraint refunds_amount_nonnegative check (amount > 0) not valid;
+    do $
+    begin
+      if not exists(select 1 from pg_constraint where conname='payments_amount_nonnegative') then
+        alter table payments add constraint payments_amount_nonnegative check (amount >= 0) not valid;
+      end if;
+      if not exists(select 1 from pg_constraint where conname='refunds_amount_nonnegative') then
+        alter table refunds add constraint refunds_amount_nonnegative check (amount > 0) not valid;
+      end if;
+    end $;
   `);
 }
 
@@ -859,6 +864,31 @@ async function ensurePhase1SecuritySchema() {
     create unique index if not exists refunds_idempotency_key_idx
       on refunds(idempotency_key)
       where idempotency_key is not null;
+  `);
+}
+
+async function ensurePackageArchitectureSchema() {
+  await pool.query(`
+    alter table businesses add column if not exists plan_key text;
+    update businesses
+       set plan_key = case
+         when upper(coalesce(package_type,''))='ADVANCED' then 'GROWTH'
+         else coalesce(nullif(upper(plan_key),''),'STARTER')
+       end
+     where plan_key is null or trim(plan_key)='';
+    alter table businesses alter column plan_key set default 'STARTER';
+    alter table businesses alter column plan_key set not null;
+
+    insert into platform_packages(key,name,description,monthly_price_kes,features)
+    values
+      ('STARTER','Starter','Core online ordering',0,'{}'::jsonb),
+      ('GROWTH','Growth','Ordering plus delivery operations',3500,'{}'::jsonb),
+      ('PRO','Pro','Full restaurant operations platform',7500,'{}'::jsonb)
+    on conflict(key) do nothing;
+
+    update platform_packages set features='{"ordering":true,"digitalOrdering":true,"tenantIsolation":true,"websiteIntegration":true,"auditTrail":true}'::jsonb,updated_at=now() where key='STARTER';
+    update platform_packages set features='{"ordering":true,"digitalOrdering":true,"advancedDelivery":true,"branchRouting":true,"riderModule":true,"riderTracking":true,"sms":true,"advancedAnalytics":true,"customDomain":true,"apiIntegrations":true,"auditTrail":true,"tenantIsolation":true,"websiteIntegration":true}'::jsonb,updated_at=now() where key='GROWTH';
+    update platform_packages set features='{"ordering":true,"digitalOrdering":true,"advancedDelivery":true,"branchRouting":true,"riderModule":true,"riderTracking":true,"sms":true,"advancedAnalytics":true,"customDomain":true,"apiIntegrations":true,"auditTrail":true,"tenantIsolation":true,"websiteIntegration":true,"multiBranch":true,"prioritySupport":true,"automation":true}'::jsonb,updated_at=now() where key='PRO';
   `);
 }
 
@@ -3932,6 +3962,7 @@ async function cleanupSecurityArtifacts(){
 }
 async function startServer(){
   await ensurePhaseASchema();
+  await ensurePackageArchitectureSchema();
   await ensurePhaseBSchema();
   await ensurePhaseFSchema();
   await ensurePhaseGSchema();

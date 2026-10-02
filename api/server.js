@@ -1548,7 +1548,7 @@ app.get('/api/manager/sms-log',requireManager,async(req,res)=>{
 
 app.get('/api/manager/me',requireManager,(req,res)=>res.json({id:req.manager.id,businessId:req.manager.business_id,name:req.manager.name,email:req.manager.email,role:req.manager.role}));
 app.post('/api/manager/logout',requireManager,async(req,res)=>{
-  try{const raw=String(req.headers.authorization||'');const token=raw.startsWith('Bearer ')?raw.slice(7).trim():'';if(token) await pool.query('delete from manager_sessions where token_hash=$1',[hashSessionToken(token)]);res.json({ok:true});}
+  try{await pool.query('delete from manager_sessions where id=$1',[req.manager.session_id]);res.json({ok:true});}
   catch(error){res.status(500).json({error:error.message||'Unable to log out'});}
 });
 

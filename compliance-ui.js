@@ -4,7 +4,7 @@
   const businessId=params.get('businessId')||'11111111-1111-4111-8111-111111111111';
   const links=[
     ['Privacy','privacy.html'],['Terms','terms.html'],['Cookies','cookie-policy.html'],
-    ['Data rights','data-rights.html'],['Refunds','refund-policy.html'],['Delivery terms','delivery-terms.html']
+    ['Data rights','data-rights.html'],['Refunds','refund-policy.html'],['Delivery terms','delivery-terms.html'],['Rider terms','rider-terms.md']
   ];
   function addFooter(){
     let footer=document.querySelector('footer');

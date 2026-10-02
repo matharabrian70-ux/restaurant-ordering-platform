@@ -2143,6 +2143,8 @@ app.post('/api/orders',
     const numericTotal=Math.round((foodSubtotal-couponDiscount+deliveryFee)*100)/100;
     if(numericTotal<0) throw new Error('Invalid order total');
 
+    const orderId=crypto.randomUUID();
+
     const customerResult=await client.query(
       `insert into customers(id,business_id,name,phone,email)
        values(gen_random_uuid(),$1,$2,$3,$4)
@@ -2168,7 +2170,6 @@ app.post('/api/orders',
     if(marketingOptIn){
       await client.query(`insert into privacy_consents(id,business_id,customer_id,subject_phone,subject_email,consent_type,version,granted,source,ip_hash,user_agent) values(gen_random_uuid(),$1,$2,$3,$4,'MARKETING_SMS',$5,true,'WEB_CHECKOUT',$6,$7)`,[businessId,customerResult.rows[0].id,String(customer.phone).trim(),String(customer.email).trim(),LEGAL_VERSIONS.privacy,crypto.createHash('sha256').update(String(req.ip||req.socket?.remoteAddress||'')).digest('hex'),String(req.headers['user-agent']||'').slice(0,500)]);
     }
-    const orderId=crypto.randomUUID();
     const orderNumber='SB-'+Date.now().toString().slice(-8)+'-'+orderId.slice(0,4).toUpperCase();
     const pickupAddress=deliveryData?.pickup_address||null;
     const deliveryAddress=deliveryData?.delivery_address||req.body.deliveryAddress?.trim()||deliveryNote?.trim()||null;

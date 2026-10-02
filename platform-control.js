@@ -1,7 +1,7 @@
 (function(){
 'use strict';
 
-const API='https://restaurant-ordering-api-ow3p.onrender.com';
+const API=window.PLATFORM_API_ORIGIN || 'https://restaurant-ordering-api-ow3p.onrender.com';
 const root=document.getElementById('platform-view');
 const state={
   me:null,overview:{},command:null,businesses:[],packages:[],health:null,orders:[],riders:[],incidents:[],complianceProcessors:[],privacyIncidents:[],system:null,
@@ -12,7 +12,7 @@ let refreshTimer=null;
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>new Intl.NumberFormat('en-KE',{style:'currency',currency:'KES',maximumFractionDigits:0}).format(Number(v||0));
 const dt=v=>v?new Date(v).toLocaleString('en-KE',{dateStyle:'medium',timeStyle:'short'}):'—';
-const token=()=>localStorage.getItem('platform_admin_token')||'';
+const token=()=>window.PlatformSession?PlatformSession.getLegacyToken('platform'):localStorage.getItem('platform_admin_token')||'';
 
 async function api(path,opt={}){
   const headers={'Content-Type':'application/json',...(opt.headers||{})};
@@ -54,7 +54,7 @@ async function loginSubmit(e){
   const button=e.submitter;button.disabled=true;button.textContent='SIGNING IN…';
   try{
     const data=await api('/api/platform/login',{method:'POST',body:JSON.stringify({email:document.getElementById('pa-email').value.trim(),password:document.getElementById('pa-password').value})});
-    localStorage.setItem('platform_admin_token',data.token);await load();
+    if(window.PlatformSession)PlatformSession.setLegacyToken('platform',data.token);else if(window.PlatformSession)PlatformSession.setLegacyToken('platform',data.token);else localStorage.setItem('platform_admin_token',data.token);await load();
   }catch(error){button.disabled=false;button.textContent='SIGN IN';login(error.message);}
 }
 function togglePlatformPassword(){
@@ -112,7 +112,7 @@ async function load(){
     if(!state.showCreate&&!state.selected)render();
     clearTimeout(refreshTimer);refreshTimer=setTimeout(load,30000);
   }catch(error){
-    state.loading=false;localStorage.removeItem('platform_admin_token');login(error.message);
+    state.loading=false;if(window.PlatformSession)PlatformSession.clearLegacyToken('platform');else localStorage.removeItem('platform_admin_token');login(error.message);
   }
 }
 

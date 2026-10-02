@@ -48,6 +48,22 @@ test('Phase 2: rate limiting covers expensive and authentication paths', () => {
   for (const value of ['authRateLimit','googleRateLimit','quoteRateLimit','smsTestRateLimit','stationPairRateLimit','orders:${clientIp','consumeSmsBudget','SMS_MAX_PER_RECIPIENT_PER_10_MIN','SMS_MAX_PER_BUSINESS_PER_10_MIN']) has(server, value);
 });
 
+test('Cookie migration foundation: API origin and shared session abstraction are centralized', () => {
+  const apiConfig = fs.readFileSync(path.join(root, 'api-config.js'), 'utf8');
+  const sessions = fs.readFileSync(path.join(root, 'session-auth.js'), 'utf8');
+  const apiClient = fs.readFileSync(path.join(root, 'api-client.js'), 'utf8');
+  const delivery = fs.readFileSync(path.join(root, 'delivery.js'), 'utf8');
+  const platform = fs.readFileSync(path.join(root, 'platform-control.js'), 'utf8');
+  has(apiConfig, 'PLATFORM_API_ORIGIN');
+  for (const value of ['manager','rider','platform','__Host-manager_session','__Host-rider_session','__Host-platform_session']) has(sessions, value);
+  has(apiClient, 'PlatformSession');
+  has(delivery, 'PlatformSession');
+  has(platform, 'PlatformSession');
+  for (const value of ['getPresentedSessionToken','createAuthSession','AUTH_SESSION_DEFINITIONS']) has(server, value);
+  assert.match(server, /source:\s*'cookie'/);
+  assert.match(server, /source:\s*'bearer'/);
+});
+
 test('Phase 2: session TTLs are bounded and configurable', () => {
   has(server, 'SESSION_TTLS');
   for (const value of ['managerHours','riderHours','stationHours','controlHours','MANAGER_SESSION_HOURS','RIDER_SESSION_HOURS','CONTROL_SESSION_HOURS']) has(server, value);

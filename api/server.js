@@ -86,6 +86,49 @@ const SESSION_TTLS = {
   controlHours: parsePositiveInt(process.env.CONTROL_SESSION_HOURS, 12, 1, 72),
 };
 
+// Shared authentication session abstraction. Bearer tokens remain the active transport
+// during the migration; cookie transport will use the same server-side session records.
+const AUTH_SESSION_DEFINITIONS = Object.freeze({
+  manager:  { table: 'manager_sessions', column: 'manager_id', cookie: '__Host-manager_session', ttlHours: () => SESSION_TTLS.managerHours },
+  rider:    { table: 'rider_sessions', column: 'rider_id', cookie: '__Host-rider_session', ttlHours: () => SESSION_TTLS.riderHours },
+  platform: { table: 'platform_admin_sessions', column: 'admin_id', cookie: '__Host-platform_session', ttlHours: () => SESSION_TTLS.controlHours }
+});
+function getAuthSessionDefinition(role) {
+  const definition = AUTH_SESSION_DEFINITIONS[String(role || '').toLowerCase()];
+  if (!definition) throw new Error('Unknown authentication session role');
+  return definition;
+}
+function getCookieValue(req, name) {
+  const header = String(req.headers.cookie || '');
+  if (!header || !name) return '';
+  for (const part of header.split(';')) {
+    const index = part.indexOf('=');
+    if (index < 0) continue;
+    const key = part.slice(0, index).trim();
+    if (key !== name) continue;
+    return decodeURIComponent(part.slice(index + 1).trim());
+  }
+  return '';
+}
+function getPresentedSessionToken(req, role) {
+  const definition = getAuthSessionDefinition(role);
+  const authorization = String(req.headers.authorization || '');
+  if (authorization.startsWith('Bearer ')) return { token: authorization.slice(7).trim(), source: 'bearer' };
+  const cookie = getCookieValue(req, definition.cookie);
+  return cookie ? { token: cookie, source: 'cookie' } : null;
+}
+async function createAuthSession(role, subjectId) {
+  const definition = getAuthSessionDefinition(role);
+  const token = crypto.randomBytes(32).toString('hex');
+  await pool.query(
+    `insert into ${definition.table}(id,${definition.column},token_hash,expires_at)
+     values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))`,
+    [subjectId, hashSessionToken(token), definition.ttlHours()]
+  );
+  return token;
+}
+
+
 const allowedCorsOrigins = new Set(
   [FRONTEND_URL, ...(String(process.env.CORS_ALLOWED_ORIGINS || '').split(',').map(v => v.trim()).filter(Boolean))]
     .map(v => { try { return new URL(v).origin; } catch { return ''; } })
@@ -1061,8 +1104,8 @@ function verifyManagerPassword(password, stored) {
   } catch { return false; }
 }
 async function getControlAdminFromSession(req){
-  const raw=String(req.headers.authorization||'');
-  const token=raw.startsWith('Bearer ')?raw.slice(7).trim():'';
+  const presented=getPresentedSessionToken(req,'platform');
+  const token=presented?.token||'';
   if(!token)return null;
   const r=await pool.query(`select a.*,s.id as session_id,s.expires_at from platform_admin_sessions s join platform_admin_users a on a.id=s.admin_id where s.token_hash=$1 and s.expires_at>now() and a.active=true`,[hashSessionToken(token)]);
   return r.rows[0]||null;
@@ -1078,8 +1121,8 @@ async function requireControl(req,res,next){
   }catch(e){res.status(500).json({error:'Unable to verify control session'});}
 }
 async function getManagerFromSession(req) {
-  const raw = String(req.headers.authorization || '');
-  const token = raw.startsWith('Bearer ') ? raw.slice(7).trim() : '';
+  const presented = getPresentedSessionToken(req, 'manager');
+  const token = presented?.token || '';
   if (!token) return null;
   const result = await pool.query(`select m.*,s.id as session_id,s.expires_at
     from manager_sessions s join manager_users m on m.id=s.manager_id
@@ -1158,8 +1201,8 @@ async function requireStation(req, res, next) {
 }
 
 async function getRiderFromSession(req) {
-  const raw = String(req.headers.authorization || '');
-  const token = raw.startsWith('Bearer ') ? raw.slice(7).trim() : '';
+  const presented = getPresentedSessionToken(req, 'rider');
+  const token = presented?.token || '';
   if (!token) return null;
   const result = await pool.query(`select r.*,s.id as session_id,s.expires_at from rider_sessions s join riders r on r.id=s.rider_id where s.token_hash=$1 and s.expires_at>now() and r.active=true and r.rider_status='ACTIVE'`, [hashSessionToken(token)]);
   return result.rows[0] || null;
@@ -1272,8 +1315,7 @@ app.post('/api/manager/login', authRateLimit, async (req,res)=>{
       if(!envCredentialsMatch) return res.status(401).json({error:'Invalid manager login'});
       await pool.query('update manager_users set password_hash=$1 where id=$2',[hashManagerPassword(password),manager.id]);
     }
-    const token=crypto.randomBytes(32).toString('hex');
-    await pool.query('insert into manager_sessions(id,manager_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))',[manager.id,hashSessionToken(token),SESSION_TTLS.managerHours]);
+    const token=await createAuthSession('manager',manager.id);
     await pool.query('update manager_users set last_login_at=now() where id=$1',[manager.id]);
     res.json({token,manager:{id:manager.id,businessId:manager.business_id,name:manager.name,email:manager.email,role:manager.role}});
   }catch(error){res.status(500).json({error:error.message||'Unable to sign in manager'});}
@@ -1506,7 +1548,7 @@ app.get('/api/manager/sms-log',requireManager,async(req,res)=>{
 
 app.get('/api/manager/me',requireManager,(req,res)=>res.json({id:req.manager.id,businessId:req.manager.business_id,name:req.manager.name,email:req.manager.email,role:req.manager.role}));
 app.post('/api/manager/logout',requireManager,async(req,res)=>{
-  try{const raw=String(req.headers.authorization||'');const token=raw.startsWith('Bearer ')?raw.slice(7).trim():'';if(token) await pool.query('delete from manager_sessions where token_hash=$1',[hashSessionToken(token)]);res.json({ok:true});}
+  try{await pool.query('delete from manager_sessions where id=$1',[req.manager.session_id]);res.json({ok:true});}
   catch(error){res.status(500).json({error:error.message||'Unable to log out'});}
 });
 
@@ -2386,8 +2428,7 @@ app.post('/api/riders/login', authRateLimit, requireRiderModule, async(req,res)=
     const normalized=normalizeKenyanPhone(phone);
     const result=await pool.query(`select r.*,a.password_hash from riders r join rider_auth a on a.rider_id=r.id where r.business_id=$1 and r.phone=$2 and r.active=true and r.rider_status='ACTIVE'`,[businessId,normalized]);
     if(!result.rowCount||!verifyPassword(password,result.rows[0].password_hash)) return res.status(401).json({error:'Invalid rider login'});
-    const token=crypto.randomBytes(32).toString('hex');
-    await pool.query('insert into rider_sessions(id,rider_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))',[result.rows[0].id,hashSessionToken(token),SESSION_TTLS.riderHours]);
+    const token=await createAuthSession('rider',result.rows[0].id);
     await pool.query('update rider_auth set last_login_at=now() where rider_id=$1',[result.rows[0].id]);
     await pool.query(`insert into rider_presence(rider_id,online) values($1,true) on conflict(rider_id) do update set online=true,updated_at=now()`,[result.rows[0].id]);
     await pool.query(`insert into business_connections(business_id,rider_connected,updated_at) values($1,true,now()) on conflict(business_id) do update set rider_connected=true,updated_at=now()`,[businessId]);
@@ -3044,12 +3085,7 @@ async function getPlatformAdmin(req) {
 }
 
 async function issuePlatformAdminSession(adminId) {
-  const token=crypto.randomBytes(32).toString('hex');
-  await pool.query(
-    "insert into platform_admin_sessions(id,admin_id,token_hash,expires_at) values(gen_random_uuid(),$1,$2,now()+make_interval(hours => $3))",
-    [adminId,hashSessionToken(token),SESSION_TTLS.controlHours]
-  );
-  return token;
+  return createAuthSession('platform',adminId);
 }
 async function authenticatePlatformAdmin(email,password) {
   const normalizedEmail=String(email||'').trim().toLowerCase();

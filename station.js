@@ -1,4 +1,4 @@
-const API = "https://restaurant-ordering-api-ow3p.onrender.com";
+const API = window.PLATFORM_API_ORIGIN || 'https://restaurant-ordering-api-ow3p.onrender.com';
 window.__cspSetState=(name,value)=>{if(name==='search')search=value;};
 const KEY = "savanna_station_session";
 let S = null;

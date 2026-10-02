@@ -1,5 +1,5 @@
 (() => {
-  const API='https://restaurant-ordering-api-ow3p.onrender.com';
+  const API=window.PLATFORM_API_ORIGIN || 'https://restaurant-ordering-api-ow3p.onrender.com';
   const params=new URLSearchParams(location.search);
   const businessId=params.get('businessId')||'11111111-1111-4111-8111-111111111111';
   const links=[

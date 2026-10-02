@@ -1,17 +1,17 @@
-const API_BASE_URL = 'https://restaurant-ordering-api-ow3p.onrender.com';
+const API_BASE_URL = window.PLATFORM_API_ORIGIN || 'https://restaurant-ordering-api-ow3p.onrender.com';
 const DEFAULT_BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
 const BUSINESS_ID = new URLSearchParams(location.search).get('businessId') || DEFAULT_BUSINESS_ID;
 const MANAGER_TOKEN_KEY = 'savanna_manager_session';
 const CUSTOMER_ORDER_TOKEN_KEY = 'savanna_customer_order_token';
-function getManagerToken(){ return sessionStorage.getItem(MANAGER_TOKEN_KEY) || ''; }
-function setManagerToken(token){ if(token) sessionStorage.setItem(MANAGER_TOKEN_KEY,token); else sessionStorage.removeItem(MANAGER_TOKEN_KEY); }
+function getManagerToken(){ return window.PlatformSession ? PlatformSession.getLegacyToken('manager') : sessionStorage.getItem(MANAGER_TOKEN_KEY) || ''; }
+function setManagerToken(token){ if(window.PlatformSession) PlatformSession.setLegacyToken('manager',token); else if(token) sessionStorage.setItem(MANAGER_TOKEN_KEY,token); else sessionStorage.removeItem(MANAGER_TOKEN_KEY); }
 function managerLogoutLocal(){ setManagerToken(''); }
 async function managerLogin(email,password){ const data=await apiRequest('/api/manager/login',{method:'POST',body:JSON.stringify({businessId:BUSINESS_ID,email,password})}); setManagerToken(data.token); return data; }
 
 async function apiRequest(path, options = {}) {
   const response = await fetch(API_BASE_URL + path, {
     ...options,
-    headers: { 'Content-Type': 'application/json', ...(getManagerToken()?{Authorization:'Bearer '+getManagerToken()}:{}), ...(options.headers || {}) }
+    headers: { 'Content-Type': 'application/json', ...(window.PlatformSession ? PlatformSession.authorizationHeader('manager') : (getManagerToken()?{Authorization:'Bearer '+getManagerToken()}:{})), ...(options.headers || {}) }
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `API request failed (${response.status})`);

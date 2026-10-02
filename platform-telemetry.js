@@ -1,6 +1,6 @@
 (function(){
 'use strict';
-const API='https://restaurant-ordering-api-ow3p.onrender.com';
+const API=window.PLATFORM_API_ORIGIN || 'https://restaurant-ordering-api-ow3p.onrender.com';
 const params=new URLSearchParams(location.search);
 const path=location.pathname.toLowerCase();
 const businessId=path.includes('platform-control')?null:(params.get('businessId')||'11111111-1111-4111-8111-111111111111');
@@ -9,15 +9,15 @@ const sent=new Map();
 let telemetryTokenPromise=null;
 function authContext(){
   if(dashboard==='CONTROL_CENTRE'){
-    const token=localStorage.getItem('platform_admin_token')||'';
+    const token=window.PlatformSession?PlatformSession.getLegacyToken('platform'):localStorage.getItem('platform_admin_token')||'';
     return token?{token,scope:'PLATFORM'}:null;
   }
   if(dashboard==='MANAGER'){
-    const token=sessionStorage.getItem('savanna_manager_session')||'';
+    const token=window.PlatformSession?PlatformSession.getLegacyToken('manager'):sessionStorage.getItem('savanna_manager_session')||'';
     return token?{token,scope:'MANAGER'}:null;
   }
   if(dashboard==='RIDER'){
-    const token=localStorage.getItem('rider_session_token')||'';
+    const token=window.PlatformSession?PlatformSession.getLegacyToken('rider'):localStorage.getItem('rider_session_token')||'';
     return token?{token,scope:'RIDER'}:null;
   }
   if(dashboard==='ORDER_STATION'){

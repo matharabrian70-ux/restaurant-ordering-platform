@@ -37,6 +37,10 @@ npm start
 
 Then open `http://localhost:3000`.
 
-## Prototype status
+## Commercial-launch status
 
-This is a learning/proof-of-concept build. Payments are simulated and no real customer/payment data should be used.
+The repository now contains a production-oriented ordering API, security hardening and a technical compliance foundation. Legal/compliance documents are launch drafts until the correct legal entity, restaurant-specific details, processor/transfer information and final counsel review are completed.
+
+Do not treat the repository alone as legal compliance or as a guarantee against claims, complaints or regulatory action. Use `COMMERCIAL_LAUNCH_COMPLIANCE.md` as the pre-launch gate.
+
+Payments in the current production architecture use Paystack when the required Render environment variables are configured.

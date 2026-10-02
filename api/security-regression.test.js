@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const server = fs.readFileSync(path.join(root, 'api', 'server.js'), 'utf8');
 const schema = fs.readFileSync(path.join(root, 'schema.sql'), 'utf8');
+const compliance = fs.readFileSync(path.join(root, 'api', 'compliance.js'), 'utf8');
+const complianceMigration = fs.readFileSync(path.join(root, 'api', 'migrations', '009_phase_q_compliance_foundation.sql'), 'utf8');
 
 function section(marker, span = 7000) {
   const index = server.indexOf(marker);
@@ -192,7 +194,7 @@ test('Security hardening: frontend CSP is deployed and dynamic promotion content
 });
 
 test('Compliance foundation: legal acceptance, consent and rights workflows are enforced', () => {
-  for (const value of ['ensureComplianceSchema','registerComplianceRoutes','privacy_consents','data_subject_requests','compliance_processors','privacy_incidents','LEGAL_VERSIONS']) has(server,value);
+  for (const value of ['ensureComplianceSchema','registerComplianceRoutes','privacy_consents','data_subject_requests','compliance_processors','privacy_incidents','LEGAL_VERSIONS']) has(server+compliance,value);
   const orderBlock=section("app.post('/api/orders'",22000);
   has(orderBlock,'termsAccepted');
   has(orderBlock,'privacyNoticeAccepted');
@@ -202,8 +204,8 @@ test('Compliance foundation: legal acceptance, consent and rights workflows are 
 });
 
 test('Compliance foundation: privacy-by-design records are tenant scoped', () => {
-  for (const value of ['business_privacy_settings','where business_id=$1','/api/manager/privacy','/api/privacy/config','/api/privacy/requests']) has(server,value);
-  for (const value of ['privacy_contact_email','retention_customer_days','retention_order_days','live_gps_retention_hours']) has(schema,value);
+  for (const value of ['business_privacy_settings','where business_id=$1','/api/manager/privacy','/api/privacy/config','/api/privacy/requests']) has(server+compliance,value);
+  for (const value of ['privacy_contact_email','retention_customer_days','retention_order_days','live_gps_retention_hours']) has(complianceMigration,value);
 });
 
 test('Compliance foundation: launch documents and customer consent UI exist', () => {
@@ -214,7 +216,7 @@ test('Compliance foundation: launch documents and customer consent UI exist', ()
   has(checkout,'marketing-opt-in');
   has(apiClient,'legal: legal || {}');
   has(menu,'compliance-ui.js');
-  for (const file of ['privacy.html','terms.html','cookie-policy.html','refund-policy.html','delivery-terms.html','data-rights.html','merchant-agreement.md','data-processing-agreement.md']) {
+  for (const file of ['privacy.html','terms.html','cookie-policy.html','refund-policy.html','delivery-terms.html','data-rights.html','merchant-agreement.md','data-processing-agreement.md','rider-terms.md','data-protection-policy.md','privacy-dpia.md','processor-register.md','COMMERCIAL_LAUNCH_COMPLIANCE.md']) {
     assert.ok(fs.existsSync(path.join(root,file)), 'missing compliance document: '+file);
   }
 });

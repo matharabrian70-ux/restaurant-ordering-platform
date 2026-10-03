@@ -398,9 +398,11 @@ function capabilityForRequest(req) {
     // Delivery pricing is available to every manager. The delivery engine
     // decides whether rules are editable or automatic.
   }
-  if (/^\/businesses\/[^/]+\/branches/.test(path)) {
-    capabilities.push(method === 'GET' ? 'branchRouting' : 'multiBranch');
+  if (/^\/businesses\/[^/]+\/branches/.test(path) && method !== 'GET') {
+    capabilities.push('multiBranch');
   }
+  // The single active restaurant branch is core data used by delivery zones.
+  // Branch creation/editing/deactivation remains package-gated.
   if (/^\/manager\/intelligence(?:\/|$)/.test(path)) {
     capabilities.push('advancedAnalytics');
     if (/^\/manager\/intelligence\/(?:branches|benchmarks)(?:\/|$)/.test(path)) capabilities.push('multiBranch');

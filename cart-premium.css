@@ -353,3 +353,10 @@ body[data-page="cart"]{background:#f7f5ef!important}
   .cart-special-content h1{font-size:49px!important}
   .cart-page-shell{margin:-18px auto 0!important;padding:0 4vw 55px!important}
 }
+
+
+/* Inline icons used by the reference cart */
+.clear-cart-btn,.remove-premium{display:inline-flex;align-items:center;justify-content:center;gap:6px}
+.clear-cart-btn svg{width:17px;height:17px}
+.remove-premium svg{width:16px;height:16px}
+.cart-assurances span svg{width:21px;height:21px;display:block}

@@ -142,7 +142,6 @@ async function quote(pool,{businessId,customerLat,customerLng,deliveryAddress,br
   const rules=await getRules(pool,businessId);
   const fuel=await getFuel(pool);
   let branches=await getBranches(pool,businessId);
-  if(branchId) branches=branches.filter(b=>String(b.id)===String(branchId));
   if(!branches.length) throw new Error('No active delivery branch is configured');
   const candidates=chooseCandidates(branches,lat,lng);
   if(!candidates.length) throw new Error('Your delivery location is outside the restaurant delivery area');

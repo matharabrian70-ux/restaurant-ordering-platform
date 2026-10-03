@@ -110,9 +110,10 @@ function render(){
     '<div class="pc-body"><aside class="pc-sidebar">'+navItems()+'<div class="pc-sidebar-foot"><span>SECURITY MODEL</span><strong>ISOLATED DATA</strong><small>Break-glass dispute access</small></div></aside><main class="pc-main"><div class="pc-mobile-section"><span class="pc-kicker">CONTROL CENTRE</span><strong>'+esc(currentSectionLabel())+'</strong></div>'+sectionContent()+'</main></div>'+
     (state.menu?menuDrawer():'')+(state.showCreate?createPanel():'')+(state.selected?tenantPanel(state.selected):'')+(state.selectedCase?disputePanel():'')+'</div>';
   document.getElementById('pc-menu-btn')?.addEventListener('click',()=>{state.menu=!state.menu;render();});
-  bindNav();document.getElementById('refresh-btn')?.addEventListener('click',load);document.getElementById('health-refresh')?.addEventListener('click',load);
+  bindNav();document.getElementById('refresh-btn')?.addEventListener('click',load);
+  document.getElementById('health-refresh')?.addEventListener('click',runHealthCheck);
   document.getElementById('add-btn')?.addEventListener('click',()=>{state.showCreate=true;render();document.getElementById('new-name')?.focus();});
-  bindCreate();bindRows();bindDisputes();bindIncidentActions();bindTenant();
+  bindCreate();bindRows();bindDisputes();bindIncidentActions();bindTenant();bindCompliance();
 }
 
 function navItems(){
@@ -133,6 +134,52 @@ function sectionContent(){
   return overviewSection();
 }
 
+async function runHealthCheck(){
+  const button=document.getElementById('health-refresh');
+  if(button){button.disabled=true;button.textContent='CHECKING…';}
+  try{
+    state.health=await api('/api/platform/health');
+    render();
+  }catch(error){
+    state.health={ok:false,checkedAt:new Date().toISOString(),environment:state.health?.environment||{},tenants:[],error:error.message};
+    render();
+    const box=document.querySelector('.pc-health');
+    if(box)box.insertAdjacentHTML('beforeend','<div class="pc-message pc-error">'+esc(error.message)+'</div>');
+  }
+}
+function complianceStatusClass(status){
+  const s=String(status||'').toUpperCase();
+  return ['SIGNED','NOT_APPLICABLE'].includes(s)?'ok':s==='UNDER_REVIEW'?'warn':'warn';
+}
+function complianceSection(){
+  const processors=state.complianceProcessors||[], incidents=state.privacyIncidents||[];
+  return '<header class="pc-head compact"><div><span class="pc-kicker">COMPLIANCE CONTROL</span><h1>Compliance.</h1><p>Platform compliance register, processor agreements and privacy incidents. Changes are audited and restricted to platform owners.</p></div><button class="pc-btn secondary" id="compliance-refresh">REFRESH</button></header>'+
+    '<section class="pc-panel"><div class="pc-panel-head"><div><span class="pc-kicker">PROCESSOR REGISTER</span><h2>Third-party processors</h2></div><span class="pc-count">'+processors.length+' registered</span></div>'+
+    '<div class="pc-table-wrap"><table class="pc-table"><thead><tr><th>PROCESSOR</th><th>PURPOSE</th><th>DATA</th><th>AGREEMENT</th><th></th></tr></thead><tbody>'+
+    (processors.length?processors.map(p=>'<tr><td><strong>'+esc(p.name)+'</strong><small>'+esc(p.jurisdictions||'Jurisdiction not recorded')+'</small></td><td>'+esc(p.purpose)+'</td><td>'+esc(p.data_categories)+'</td><td><select class="pc-compliance-status" data-processor-id="'+esc(p.id)+'"><option value="REVIEW_REQUIRED" '+(p.agreement_status==='REVIEW_REQUIRED'?'selected':'')+'>REVIEW REQUIRED</option><option value="UNDER_REVIEW" '+(p.agreement_status==='UNDER_REVIEW'?'selected':'')+'>UNDER REVIEW</option><option value="SIGNED" '+(p.agreement_status==='SIGNED'?'selected':'')+'>SIGNED</option><option value="NOT_APPLICABLE" '+(p.agreement_status==='NOT_APPLICABLE'?'selected':'')+'>NOT APPLICABLE</option></select></td><td><button class="pc-mini pc-processor-save" data-id="'+esc(p.id)+'">SAVE</button></td></tr>').join(''):'<tr><td colspan="5" class="pc-empty">No processors are registered.</td></tr>')+
+    '</tbody></table></div></section>'+
+    '<section class="pc-panel"><div class="pc-panel-head"><div><span class="pc-kicker">PRIVACY INCIDENTS</span><h2>Incident register</h2></div><span class="pc-count">'+incidents.length+' recorded</span></div>'+
+    '<div class="pc-list">'+(incidents.length?incidents.map(i=>'<div class="pc-list-row"><div><strong>'+esc(i.business_name||'Platform-wide')+' · '+esc(i.severity)+'</strong><small>'+esc(i.status)+' · discovered '+dt(i.discovered_at)+'</small></div><span class="pc-pill '+(i.status==='CLOSED'?'active':'suspended')+'">'+esc(i.status)+'</span></div>').join(''):'<div class="pc-empty-card">No privacy incidents recorded.</div>')+'</div></section>';
+}
+function bindCompliance(){
+  document.getElementById('compliance-refresh')?.addEventListener('click',async()=>{
+    const b=document.getElementById('compliance-refresh');if(b){b.disabled=true;b.textContent='LOADING…';}
+    try{
+      const [processors,incidents]=await Promise.all([api('/api/platform/compliance/processors'),api('/api/platform/compliance/incidents')]);
+      state.complianceProcessors=processors;state.privacyIncidents=incidents;render();
+    }catch(error){if(b){b.disabled=false;b.textContent='REFRESH';}alert(error.message);}
+  });
+  document.querySelectorAll('.pc-processor-save').forEach(button=>button.addEventListener('click',async()=>{
+    const id=button.dataset.id;
+    const select=document.querySelector('.pc-compliance-status[data-processor-id="'+CSS.escape(id)+'"]');
+    if(!select)return;
+    button.disabled=true;button.textContent='SAVING…';
+    try{
+      const updated=await api('/api/platform/compliance/processors/'+encodeURIComponent(id),{method:'PATCH',body:JSON.stringify({agreementStatus:select.value})});
+      state.complianceProcessors=state.complianceProcessors.map(p=>p.id===id?updated:p);render();
+    }catch(error){button.disabled=false;button.textContent='SAVE';alert(error.message);}
+  }));
+}
 function stat(label,value,note){return '<article class="pc-stat"><span>'+label+'</span><strong>'+esc(value)+'</strong><small>'+esc(note)+'</small></article>';}
 function overviewSection(){
   const o=state.overview||{},c=state.command||{};

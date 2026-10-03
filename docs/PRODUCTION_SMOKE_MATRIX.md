@@ -9,7 +9,7 @@ This is the final end-to-end checklist for deployment. Automated regression test
 - Open product
 - Choose options
 - Add to cart
-- Request delivery quote
+- Request delivery quote (Starter: restaurant delivery zone; Growth/Pro: connected Rider Dashboard automatic quote)
 - Checkout
 - M-Pesa/card payment
 - Payment confirmation
@@ -27,7 +27,8 @@ This is the final end-to-end checklist for deployment. Automated regression test
 - Change order status
 - Manage menu
 - Create promotion
-- Assign rider (Growth/Pro only)
+- Verify Starter delivery zones and restaurant-set fees
+- Assign rider (Growth/Pro only, and only when Rider Dashboard is connected)
 - Verify a Starter tenant receives HTTP 403 for rider operations
 - Verify analytics (Growth/Pro only)
 - Verify SMS controls (Growth/Pro only)
@@ -87,3 +88,12 @@ For a deployed API, run:
 `SMOKE_BASE_URL=https://your-api.example node api/production-smoke.mjs`
 
 The repository also contains a manual GitHub Actions production-smoke workflow so the same check can be run against the eventual custom API domain.
+
+
+## Package delivery separation
+
+- Starter Manager Dashboard contains no Dispatch or Riders navigation.
+- Starter managers can create, disable and price radius delivery zones.
+- Starter orders do not create rider earnings; delivery fees are restaurant-managed.
+- Connected Growth/Pro orders use automatic delivery pricing and rider earnings/payout workflow.
+- A Growth/Pro tenant with no active Rider Dashboard connection cannot assign riders or release delivery fees to a rider.

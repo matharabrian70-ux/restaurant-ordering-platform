@@ -2973,6 +2973,7 @@ app.post('/api/orders/:id/reassign-rider',requireRiderModule,requireManagerOrder
       return res.status(409).json({error:'This delivery can only be reassigned before the rider picks it up'});
     }
     const riderConnected=await getRiderConnectionState(order.business_id,client);
+    if(!riderConnected){await client.query('rollback');return res.status(409).json({error:'Rider Dashboard must be connected before reassigning a rider'});}
     await client.query("insert into delivery_events(id,trip_id,status,note) values(gen_random_uuid(),$1,'CANCELLED',$2)",[oldTrip.id,'Previous rider assignment replaced by manager']);
     await client.query("update rider_trips set completed_at=now(),confirmed_by='manager' where id=$1",[oldTrip.id]);
     const assignment=await createRiderTripAssignment(client,{businessId:order.business_id,orderId:order.id,riderId,riderConnected});
@@ -3131,8 +3132,9 @@ app.post('/api/station/orders/:id/assign-rider',requireStation,async(req,res)=>{
     const riderResult=await client.query(`select r.*,coalesce(p.online,false) as online,exists(select 1 from rider_trips t where t.rider_id=r.id and t.completed_at is null) as busy from riders r left join rider_presence p on p.rider_id=r.id where r.id=$1 and r.business_id=$2 and r.active=true for update of r`,[riderId,req.station.business_id]);
     if(!riderResult.rowCount){await client.query('rollback');return res.status(404).json({error:'Rider not found'});}
     const connectionResult=await client.query('select coalesce(rider_connected,false) as rider_connected from business_connections where business_id=$1',[req.station.business_id]);
-    const riderConnected=Boolean(connectionResult.rows[0]?.rider_connected);
-    if(riderConnected && (!riderResult.rows[0].online||riderResult.rows[0].busy)){
+    const riderConnected=await getRiderConnectionState(req.station.business_id,client);
+    if(!riderConnected){await client.query('rollback');return res.status(409).json({error:'Rider Dashboard must be connected before dispatching riders'});}
+    if(!riderResult.rows[0].online||riderResult.rows[0].busy){
       await client.query('rollback');return res.status(409).json({error:'Rider must be online and available'});
     }
     const existingTrip=await client.query(`select 1 from rider_trips where order_id=$1 and completed_at is null limit 1`,[order.id]);

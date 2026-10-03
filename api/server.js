@@ -3052,15 +3052,17 @@ app.post('/api/riders/:id/deliveries/:tripId/decline',requireRiderModule,require
 
 app.get('/api/stations',requireManager,async(req,res)=>{
   try{
-    const r=await pool.query('select id,business_id,name,device_type,mode,active,last_seen_at,created_at,updated_at from restaurant_order_stations where business_id=$1 order by active desc,last_seen_at desc',[req.manager.business_id]);
+    const r=await pool.query('select id,business_id,branch_id,name,device_type,mode,active,last_seen_at,created_at,updated_at from restaurant_order_stations where business_id=$1 order by active desc,last_seen_at desc',[req.manager.business_id]);
     res.json(r.rows);
   }catch(e){res.status(500).json({error:e.message||'Unable to load stations'});}
 });
 app.post('/api/stations',requireManager,requireManagerRole('OWNER'),async(req,res)=>{
   try{
-    const {name,deviceType,mode}=req.body;
+    const {name,deviceType,mode,branchId}=req.body;
     if(!name||!['PHONE','TABLET','PC','LAPTOP','TV','BOARD'].includes(deviceType)||!['OPERATIONS','KITCHEN','COUNTER','DISPLAY'].includes(mode)) return res.status(400).json({error:'Invalid station configuration'});
-    const r=await pool.query('insert into restaurant_order_stations(id,business_id,name,device_type,mode,active,last_seen_at,updated_at) values(gen_random_uuid(),$1,$2,$3,$4,true,now(),now()) returning *',[req.manager.business_id,String(name).trim(),deviceType,mode]);
+    const branch=await pool.query('select id from business_branches where id=$1 and business_id=$2 and active=true limit 1',[String(branchId||''),req.manager.business_id]);
+    if(!branch.rowCount)return res.status(400).json({error:'An active branch is required for every order-control station'});
+    const r=await pool.query('insert into restaurant_order_stations(id,business_id,branch_id,name,device_type,mode,active,last_seen_at,updated_at) values(gen_random_uuid(),$1,$2,$3,$4,$5,true,now(),now()) returning *',[req.manager.business_id,branch.rows[0].id,String(name).trim(),deviceType,mode]);
     res.status(201).json(r.rows[0]);
   }catch(e){res.status(400).json({error:e.message||'Unable to create station'});}
 });
@@ -3123,7 +3125,7 @@ app.get('/api/station/orders',requireStation,async(req,res)=>{
       coalesce((select r.name from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_name,
       coalesce((select r.vehicle_type from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_vehicle,
       coalesce((select r.number_plate from riders r join rider_trips t on t.rider_id=r.id where t.order_id=o.id order by t.assigned_at desc limit 1),'') as rider_plate
-      from orders o join customers c on c.id=o.customer_id where o.business_id=$1 order by o.created_at desc limit 200`,[req.station.business_id]);
+      from orders o join customers c on c.id=o.customer_id where o.business_id=$1 and o.branch_id=$2 order by o.created_at desc limit 200`,[req.station.business_id,req.station.branch_id]);
     res.json(result.rows);
   }catch(e){res.status(500).json({error:e.message||'Unable to load station orders'});}
 });
@@ -3143,7 +3145,7 @@ app.post('/api/station/orders/:id/status',requireStation,async(req,res)=>{
     if(!['OPERATIONS','COUNTER'].includes(req.station.mode)) return res.status(403).json({error:'This station mode cannot change order status'});
     const nextStatus=String(req.body.status||'').toUpperCase();
     if(nextStatus!=='ACCEPTED') return res.status(400).json({error:'Station can only accept a paid NEW order'});
-    const orderResult=await pool.query('select * from orders where id=$1 and business_id=$2 for update',[req.params.id,req.station.business_id]);
+    const orderResult=await pool.query('select * from orders where id=$1 and business_id=$2 and branch_id=$3 for update',[req.params.id,req.station.business_id,req.station.branch_id]);
     if(!orderResult.rowCount)return res.status(404).json({error:'Order not found'});
     const order=orderResult.rows[0];
     if(order.status!=='NEW'||order.payment_status!=='PAID')return res.status(409).json({error:'Only paid NEW orders can be accepted'});

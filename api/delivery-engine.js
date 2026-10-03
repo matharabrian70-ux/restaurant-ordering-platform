@@ -201,6 +201,14 @@ export function registerDeliveryEngine(app,pool,requireManager=(_req,_res,next)=
     try{
       const fields={name:'name',address:'address',latitude:'latitude',longitude:'longitude',googlePlaceId:'google_place_id',building:'building',floor:'floor',unit:'unit',street:'street',estate:'estate',landmark:'landmark',pickupInstructions:'pickup_instructions',active:'active',acceptingOrders:'accepting_orders',serviceRadiusKm:'service_radius_km'};
       const sets=[],vals=[]; for(const [k,col] of Object.entries(fields)){if(req.body[k]!==undefined){sets.push(`${col}=$${vals.length+2}`);vals.push(req.body[k]);}}
+      if(req.body.latitude!==undefined||req.body.longitude!==undefined){
+        const lat=Number(req.body.latitude),lng=Number(req.body.longitude);
+        if(!Number.isFinite(lat)||!Number.isFinite(lng)||lat<-90||lat>90||lng<-180||lng>180)return res.status(400).json({error:'Branch latitude and longitude must be valid coordinates'});
+      }
+      if(req.body.serviceRadiusKm!==undefined){
+        const radius=Number(req.body.serviceRadiusKm);
+        if(!Number.isFinite(radius)||radius<1||radius>30)return res.status(400).json({error:'Service radius must be between 1 and 30 km'});
+      }
       if(!sets.length)return res.status(400).json({error:'No branch changes supplied'});
       vals.unshift(req.params.branchId,req.params.id);
       const r=await pool.query(`update business_branches set ${sets.join(',')},updated_at=now() where id=$1 and business_id=$2 returning *`,vals);

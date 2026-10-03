@@ -33,3 +33,11 @@
 .signature-menu-actions .quantity-mini:first-child{margin-left:0}
 .signature-menu-actions .signature-add-btn{flex:0 0 178px}
 @media(max-width:700px){.signature-menu-actions .signature-add-btn{flex-basis:165px}.menu-category-products{grid-template-columns:1fr}.menu-special-copy{top:47%}}
+
+/* Scroll reliability: never let menu UI capture vertical page gestures. */
+html:has(body[data-page="menu"]),
+body[data-page="menu"]{overflow-x:hidden;overscroll-behavior-y:auto;}
+body[data-page="menu"]{touch-action:pan-y;}
+.menu-mock-page{touch-action:pan-y;}
+.menu-category-nav{touch-action:pan-x;overscroll-behavior-x:contain;}
+.menu-category-pill,.menu-hero-arrow,.menu-hero-order,.signature-add-btn,.quantity-mini{touch-action:manipulation;}

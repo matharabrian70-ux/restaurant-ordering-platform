@@ -30,8 +30,18 @@ function haversineKm(aLat,aLng,bLat,bLng){
 function envBool(v){ return String(v||'').toLowerCase()==='true'; }
 
 async function getFeature(pool,businessId){
-  const r=await pool.query('select rider_module_enabled from business_features where business_id=$1',[businessId]);
-  return Boolean(r.rows[0]?.rider_module_enabled);
+  const r=await pool.query(`
+    select (
+      coalesce((p.features->>'riderModule')::boolean,false)
+      and coalesce(bc.rider_connected,false)
+    ) as enabled
+    from businesses b
+    left join platform_packages p on p.key=b.plan_key
+    left join business_connections bc on bc.business_id=b.id
+    where b.id=$1
+    limit 1
+  `,[businessId]);
+  return Boolean(r.rows[0]?.enabled);
 }
 async function getRules(pool,businessId){
   const r=await pool.query('select * from delivery_pricing_rules where business_id=$1',[businessId]);
@@ -101,7 +111,25 @@ async function geocodeAddress(pool,address){
   await pool.query('insert into geocoding_cache(id,address_key,latitude,longitude,expires_at) values(gen_random_uuid(),$1,$2,$3,now()+interval \'30 days\') on conflict(address_key) do update set latitude=excluded.latitude,longitude=excluded.longitude,expires_at=excluded.expires_at',[normalized,loc.lat,loc.lng]);
   return {lat:num(loc.lat),lng:num(loc.lng),cached:false};
 }
-async function quote(pool,{businessId,customerLat,customerLng,deliveryAddress,branchId=null}){
+async function quote(pool,{businessId,customerLat,customerLng,deliveryAddress,branchId=null,orderAmount=0}){
+  const advanced=await getFeature(pool,businessId);
+  if(!advanced){
+    const lat=num(customerLat,NaN),lng=num(customerLng,NaN);
+    if(!Number.isFinite(lat)||!Number.isFinite(lng)) throw new Error('Device location is required to calculate this restaurant\'s delivery-zone fee. Tap USE MY LOCATION and try again.');
+    const zones=await pool.query('select * from delivery_zones where business_id=$1 and active=true order by priority desc,created_at desc',[businessId]);
+    const matches=zones.rows.filter(z=>z.zone_type==='RADIUS' && Number.isFinite(Number(z.center_latitude)) && Number.isFinite(Number(z.center_longitude)) && haversineKm(Number(z.center_latitude),Number(z.center_longitude),lat,lng)*1000<=Number(z.radius_meters));
+    if(!matches.length) throw new Error('Your delivery location is outside the restaurant\'s delivery zones');
+    const zone=matches[0];
+    if(Number(orderAmount||0)<Number(zone.minimum_order||0)) throw new Error('Order does not meet this delivery zone minimum order');
+    const branch=await pool.query('select id,name,address,latitude,longitude from business_branches where business_id=$1 and active=true and accepting_orders=true order by name limit 1',[businessId]);
+    const pickup=branch.rows[0]?.address || (await pool.query('select pickup_address from businesses where id=$1',[businessId])).rows[0]?.pickup_address || 'Restaurant';
+    const distanceMeters=branch.rows[0] && Number.isFinite(Number(branch.rows[0].latitude))&&Number.isFinite(Number(branch.rows[0].longitude))
+      ? Math.round(haversineKm(Number(branch.rows[0].latitude),Number(branch.rows[0].longitude),lat,lng)*1000) : 0;
+    const saved=await pool.query(`insert into delivery_quotes(id,business_id,branch_id,pickup_address,delivery_address,customer_lat,customer_lng,distance_meters,duration_seconds,fuel_price_kes,base_fee_kes,distance_fee_kes,time_fee_kes,demand_multiplier,delivery_fee_kes,rider_earning_kes,pricing_mode,status,expires_at)
+      values(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,0,0,0,0,1,$9,0,'ZONE','QUOTED',now()+interval '15 minutes') returning *`,
+      [businessId,branch.rows[0]?.id||null,pickup,deliveryAddress||null,lat,lng,distanceMeters,Number(zone.fee||0)]);
+    return {quoteId:saved.rows[0].id,expiresAt:saved.rows[0].expires_at,branchId:saved.rows[0].branch_id,branchName:branch.rows[0]?.name||null,pickupAddress:pickup,deliveryAddress,distanceMeters,durationSeconds:0,km:distanceMeters/1000,minutes:0,fuelPriceKes:null,deliveryFee:Number(zone.fee||0),riderEarning:0,pricingMode:'ZONE',zoneId:zone.id,zoneName:zone.name,currency:'KES'};
+  }
   let lat=num(customerLat,NaN), lng=num(customerLng,NaN);
   if(!Number.isFinite(lat)||!Number.isFinite(lng)){ const g=await geocodeAddress(pool,deliveryAddress); lat=g.lat; lng=g.lng; }
   const advanced=await getFeature(pool,businessId);
@@ -124,7 +152,7 @@ async function quote(pool,{businessId,customerLat,customerLng,deliveryAddress,br
   return {quoteId:saved.rows[0].id,expiresAt:saved.rows[0].expires_at,branchId:selected.id,branchName:selected.name,pickupAddress:selected.address,deliveryAddress,distanceMeters:selected.distanceMeters,durationSeconds:selected.durationSeconds,km,minutes,fuelPriceKes:fuel,deliveryFee:prices.deliveryFeeKes,riderEarning:prices.riderEarningKes,pricingMode:advanced?'AUTO':'MASTER',currency:'KES'};
 }
 
-export function registerDeliveryEngine(app,pool,requireManager=(_req,_res,next)=>next()){
+export function registerDeliveryEngine(app,pool,requireManager=(_req,_res,next)=>next(),quoteRateLimit=(_req,_res,next)=>next(),quoteBusinessRateLimit=(_req,_res,next)=>next()){
 
   app.get('/api/businesses/:id/branches',requireManager,async(req,res)=>{
     try{ const rows=await pool.query('select id,name,address,latitude,longitude,google_place_id,building,floor,unit,street,estate,landmark,pickup_instructions,active,accepting_orders from business_branches where business_id=$1 order by name',[req.params.id]); res.json(rows.rows); }
@@ -174,7 +202,7 @@ export function registerDeliveryEngine(app,pool,requireManager=(_req,_res,next)=
       res.json(r.rows[0]);
     }catch(e){res.status(500).json({error:e.message||'Unable to save pricing rules'});}
   });
-  app.post('/api/delivery/quote-v2',async(req,res)=>{
+  app.post('/api/delivery/quote-v2',quoteRateLimit,quoteBusinessRateLimit,async(req,res)=>{
     try{const q=await quote(pool,req.body);res.json(q);}
     catch(e){res.status(400).json({error:e.message||'Unable to calculate delivery quote'});}
   });

@@ -2440,6 +2440,9 @@ app.post('/api/payments/paystack/initialize', requireCustomerOrderBody, async (r
   const riderConnected=await getRiderConnectionState(order.business_id);
   const merchantFood=Math.max(0,Number(order.food_subtotal||0)-Number(order.coupon_discount||0));
   const merchantShareKes=merchantFood+(riderConnected?0:Number(order.delivery_fee||0));
+  if(merchantShareKes>0 && !String(order.paystack_subaccount_code||'').trim()){
+    return res.status(409).json({error:'This restaurant has not completed its Paystack settlement setup. The order cannot be charged until the restaurant payout account is configured.'});
+  }
   const split=order.paystack_subaccount_code && merchantShareKes>0
     ? {type:'flat',bearer_type:'account',subaccounts:[{subaccount:order.paystack_subaccount_code,share:Math.min(Math.round(Number(order.total)*100),Math.round(merchantShareKes*100))}]}
     : null;

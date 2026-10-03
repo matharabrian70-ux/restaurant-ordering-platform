@@ -314,7 +314,7 @@ function renderCart(){
       <div class="summary-row-premium"><span>Subtotal</span><strong>${money(subtotal)}</strong></div>
       ${promo?.code?'<div class="summary-row-premium promo-applied-row"><span>Promo · '+escapeMenuHtml(promo.code)+'</span><strong>− '+money(discount)+'</strong></div>':''}
       <div class="summary-total-premium"><span>Total</span><strong>${money(total)}</strong></div>
-      <a class="cart-checkout-btn" href="checkout.html">Continue to checkout <span>→</span></a>
+      <a class="cart-checkout-btn" href="checkout.html?businessId='+encodeURIComponent(customerBusinessId())+'">Continue to checkout <span>→</span></a>
       <div class="promo-field"><span>◇</span><input id="promo-code" aria-label="Promo code" placeholder="Have a promo code?" value="${escapeMenuHtml(promo?.code||'')}"><button type="button" data-action="applyPromoCode(this)">Apply</button></div>
       <div id="promo-message" class="promo-message" aria-live="polite">${promo?.discount?'<span>✓ '+escapeMenuHtml(promo.code)+' applied · Save '+money(discount)+'</span>':''}</div>
     </aside>

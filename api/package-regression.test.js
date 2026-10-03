@@ -73,3 +73,23 @@ test('Public integration entitlement is checked after the signed token resolves 
   has(server, "app.get('/api/public/integrations/:token.js'");
   has(server, "await requireFeature('apiIntegrations',b.id)");
 });
+
+
+test('Delivery packaging separates manual Starter zones from connected Rider Dashboard pricing', () => {
+  const manager = fs.readFileSync(path.join(root, 'manager.js'), 'utf8');
+  const delivery = fs.readFileSync(path.join(root, 'api', 'delivery-engine.js'), 'utf8');
+  has(manager, "const visibleNavItems=()=>NAV_ITEMS.filter(x=>!x[3]||managerFeature(x[3]));");
+  has(manager, "['dispatch','⇄','Dispatch','riderModule']");
+  has(manager, "['riders','♟','Riders','riderModule']");
+  has(delivery, "p.features->>'riderModule'");
+  has(delivery, "bc.rider_connected");
+  has(delivery, "pricingMode:'ZONE'");
+  assert.doesNotMatch(server, /manager\\/delivery-zones[^\\n]*advancedDelivery/);
+});
+
+test('Restaurant receives delivery money when Rider Dashboard is not connected', () => {
+  has(server, "const deliveryFeeStatus=deliveryFee>0 ? (riderConnected?'HELD':'MERCHANT') : 'NONE';");
+  has(server, "const riderEarning=riderConnected ? deliveryFee : 0;");
+  has(server, "const merchantShareKes=merchantFood+(riderConnected?0:Number(order.delivery_fee||0));");
+  has(server, "Rider Dashboard must be connected before assigning a rider");
+});

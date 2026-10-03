@@ -61,14 +61,14 @@ export function registerMenuEngine(app, pool, requireManager = (_req,_res,next)=
     const sets=[],vals=[];
     for(const [key,col] of [['name','name'],['description','description'],['active','active'],['sortOrder','sort_order']]){
       if(req.body[key]!==undefined){
-        sets.push(\`\${col}=$\${vals.length+3}\`);
+        sets.push(`${col}=${vals.length+3}`);
         vals.push(key==='sortOrder'?Number(req.body[key]):key==='active'?Boolean(req.body[key]):clean(req.body[key]));
       }
     }
     if(!sets.length)return res.status(400).json({error:'No changes supplied'});
     const businessId=clean(req.body.businessId);
     const params=[req.params.id,businessId,...vals];
-    const r=await pool.query(\`update menu_categories set \${sets.join(',')},updated_at=now() where id=$1 and business_id=$2 returning *\`,params);
+    const r=await pool.query(`update menu_categories set ${sets.join(',')},updated_at=now() where id=$1 and business_id=$2 returning *`,params);
     if(!r.rowCount)return res.status(404).json({error:'Category not found'});
     broadcastRealtime({businessId,event:'menu.updated',data:{type:'CATEGORY_UPDATED',category:r.rows[0]}});
     res.json(r.rows[0]);

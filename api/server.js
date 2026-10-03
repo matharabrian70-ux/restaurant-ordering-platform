@@ -2865,6 +2865,7 @@ async function getRiderConnectionState(businessId, client=pool){
 }
 
 async function createRiderTripAssignment(client,{businessId,orderId,riderId,riderConnected}){
+  if(!riderConnected) throw Object.assign(new Error('Rider Dashboard must be connected before assigning a rider'),{status:409});
   const riderResult=await client.query(`select r.*,coalesce(p.online,false) as online,
       exists(select 1 from rider_trips t join orders o on o.id=t.order_id where t.rider_id=r.id and t.completed_at is null) as busy
       from riders r left join rider_presence p on p.rider_id=r.id

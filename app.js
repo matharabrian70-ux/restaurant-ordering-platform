@@ -252,11 +252,50 @@ async function renderProduct(){
     renderProductData(remote?{id:remote.id,name:remote.name,category:remote.category_name||remote.category||'Menu',price:Number(remote.price||0),image:remote.image_url||'',desc:remote.description||'',options:Array.isArray(remote.options)?remote.options:[]}:null);
   }catch{el.innerHTML='<div class="empty"><h2>Menu item unavailable.</h2><p>Please return to the menu and try again.</p><a class="btn" href="menu.html">Back to menu</a></div>'}
 }
+function customerBusinessId(){
+  return new URLSearchParams(location.search).get('businessId') || window.TENANT_BUSINESS_ID || '11111111-1111-4111-8111-111111111111';
+}
+function getStoredPromo(){try{return JSON.parse(localStorage.getItem('doe_promo')||'null')}catch{return null}}
+function setStoredPromo(value){if(value)localStorage.setItem('doe_promo',JSON.stringify(value));else localStorage.removeItem('doe_promo')}
+async function validateCustomerPromo(code,subtotal){
+  const response=await fetch((window.PLATFORM_API_ORIGIN||'https://restaurant-ordering-api-ow3p.onrender.com')+'/api/promotions/validate',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify({businessId:customerBusinessId(),code:String(code||'').trim().toUpperCase(),subtotal:Number(subtotal)})});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw new Error(data.error||'Promo code could not be applied');
+  return data;
+}
+async function applyPromoCode(button){
+  const input=document.getElementById('promo-code'),message=document.getElementById('promo-message'),code=input?.value.trim();
+  if(!code){if(message)message.textContent='Enter a promo code first.';return;}
+  const subtotal=getCart().reduce((s,i)=>s+i.unit*i.qty,0);
+  if(button){button.disabled=true;button.textContent='CHECKING…';}
+  if(message)message.textContent='';
+  try{
+    const promo=await validateCustomerPromo(code,subtotal);
+    setStoredPromo({...promo,code:promo.code});
+    renderCart();
+  }catch(e){
+    setStoredPromo(null);
+    if(message)message.textContent=e.message||'Promo code could not be applied.';
+  }finally{if(button){button.disabled=false;button.textContent='Apply';}}
+}
+async function validateStoredPromo(){
+  const p=getStoredPromo(),subtotal=getCart().reduce((s,i)=>s+i.unit*i.qty,0);
+  if(!p?.code)return;
+  try{
+    const fresh=await validateCustomerPromo(p.code,subtotal);
+    setStoredPromo({...fresh,code:fresh.code});
+    renderCart();
+  }catch{setStoredPromo(null);renderCart();}
+}
+function syncPromoFromUrl(){
+  const code=new URLSearchParams(location.search).get('promo');
+  if(code)setStoredPromo({code:String(code).trim().toUpperCase()});
+}
 function renderCart(){
   const el=document.getElementById('cart-view');if(!el)return;
   const c=getCart();
   if(!c.length){el.innerHTML='<div class="cart-empty-premium"><div class="cart-empty-icon">🛒</div><p class="eyebrow">YOUR ORDER</p><h1>Your cart is waiting.</h1><p>Add something delicious from the menu and come back here when you are ready.</p><a class="cart-premium-btn" href="menu.html">Browse the menu <span>→</span></a></div>';return}
-  const total=c.reduce((s,i)=>s+i.unit*i.qty,0);
+  const subtotal=c.reduce((s,i)=>s+i.unit*i.qty,0),promo=getStoredPromo(),discount=Math.min(subtotal,Number(promo?.discount||0)),total=Math.max(0,subtotal-discount);
   el.innerHTML=`<div class="cart-layout-premium">
     <section class="cart-items-panel">
       <div class="cart-section-head"><div><h1>Cart <span class="cart-item-count">(${c.reduce((s,i)=>s+i.qty,0)} items)</span></h1></div><button class="clear-cart-btn" type="button" data-action="clearCart()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v6m4-6v6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg> Clear cart</button></div>
@@ -271,15 +310,17 @@ function renderCart(){
     <aside class="cart-summary-premium">
       <div class="summary-top"><h2>Order Summary</h2></div>
       <div class="summary-row-premium"><span>Items</span><strong>${c.reduce((s,i)=>s+i.qty,0)}</strong></div>
-      <div class="summary-row-premium"><span>Subtotal</span><strong>${money(total)}</strong></div>
+      <div class="summary-row-premium"><span>Subtotal</span><strong>${money(subtotal)}</strong></div>
+      ${promo?.code?'<div class="summary-row-premium promo-applied-row"><span>Promo · '+escapeMenuHtml(promo.code)+'</span><strong>− '+money(discount)+'</strong></div>':''}
       <div class="summary-total-premium"><span>Total</span><strong>${money(total)}</strong></div>
       <a class="cart-checkout-btn" href="checkout.html">Continue to checkout <span>→</span></a>
-      <div class="promo-field"><span>◇</span><input aria-label="Promo code" placeholder="Have a promo code?"><button type="button">Apply</button></div>
-
+      <div class="promo-field"><span>◇</span><input id="promo-code" aria-label="Promo code" placeholder="Have a promo code?" value="${escapeMenuHtml(promo?.code||'')}"><button type="button" data-action="applyPromoCode(this)">Apply</button></div>
+      <div id="promo-message" class="promo-message" aria-live="polite">${promo?.discount?'<span>✓ '+escapeMenuHtml(promo.code)+' applied · Save '+money(discount)+'</span>':''}</div>
     </aside>
   </div>`;
+  if(promo?.code&&!promo.discount)validateStoredPromo();
 }
-function clearCart(){localStorage.removeItem('doe_cart');updateCount();renderCart();}
+function clearCart(){localStorage.removeItem('doe_cart');setStoredPromo(null);updateCount();renderCart();}
 function renderCartHero(specials){
   const hero=document.getElementById('cart-special-hero');if(!hero)return;
   const items=(Array.isArray(specials)?specials:[]).filter(x=>x&&x.image);
@@ -344,6 +385,6 @@ const offer=(data.promotions||[])[0],hero=document.querySelector('.hero-card sma
   }
 }
 }
-updateCount();renderMenu();renderProduct();renderCart();renderCheckout();renderOrder();renderDashboard();
+updateCount();syncPromoFromUrl();renderMenu();renderProduct();renderCart();renderCheckout();renderOrder();renderDashboard();
 loadLiveRestaurantMenu();
 loadCartSpecials();

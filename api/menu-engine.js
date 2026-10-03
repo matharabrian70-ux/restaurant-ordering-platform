@@ -121,7 +121,7 @@ export function registerMenuEngine(app, pool, requireManager = (_req,_res,next)=
     try{
       const b=clean(req.body.businessId),p=normalizeCoupon(req.body);
       const r=await pool.query(
-        'update customer_coupons set code=$3,name=code,discount_type=$4,discount_value=$5,min_order_amount=$6,max_redemptions=$7,active=$8,starts_at=coalesce($9,starts_at),expires_at=$10 where id=$1 and business_id=$2 returning id,code,discount_type,discount_value,min_order_amount,max_redemptions,redeemed_count,active,starts_at,expires_at',
+        'update customer_coupons set code=$3,discount_type=$4,discount_value=$5,min_order_amount=$6,max_redemptions=$7,active=$8,starts_at=coalesce($9,starts_at),expires_at=$10 where id=$1 and business_id=$2 returning id,code,discount_type,discount_value,min_order_amount,max_redemptions,redeemed_count,active,starts_at,expires_at',
         [req.params.id,b,p.code,p.discountType,p.discountValue,p.minOrderAmount,p.maxRedemptions,p.active,p.startsAt,p.expiresAt]
       );
       if(!r.rowCount)return res.status(404).json({error:'Promo code not found'});

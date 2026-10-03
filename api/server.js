@@ -3160,7 +3160,7 @@ app.post('/api/station/orders/:id/assign-rider',requireStation,async(req,res)=>{
     if(!['OPERATIONS','COUNTER'].includes(req.station.mode)) return res.status(403).json({error:'This station mode cannot dispatch riders'});
     const {riderId}=req.body;if(!riderId)return res.status(400).json({error:'riderId is required'});
     await client.query('begin');
-    const orderResult=await client.query('select * from orders where id=$1 and business_id=$2 for update',[req.params.id,req.station.business_id]);
+    const orderResult=await client.query('select * from orders where id=$1 and business_id=$2 and branch_id=$3 for update',[req.params.id,req.station.business_id,req.station.branch_id]);
     if(!orderResult.rowCount){await client.query('rollback');return res.status(404).json({error:'Order not found'});}
     const order=orderResult.rows[0];if(order.status!=='ACCEPTED'){await client.query('rollback');return res.status(409).json({error:'Only accepted orders can be dispatched'});}
     const riderResult=await client.query(`select r.*,coalesce(p.online,false) as online,exists(select 1 from rider_trips t where t.rider_id=r.id and t.completed_at is null) as busy from riders r left join rider_presence p on p.rider_id=r.id where r.id=$1 and r.business_id=$2 and r.active=true for update of r`,[riderId,req.station.business_id]);

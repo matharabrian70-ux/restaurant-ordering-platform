@@ -419,6 +419,7 @@ create table if not exists menu_categories (
 );
 alter table products add column if not exists category_id uuid references menu_categories(id) on delete set null;
 alter table products add column if not exists featured boolean not null default false;
+alter table products add column if not exists hero_image_url text;
 alter table products add column if not exists options jsonb not null default '[]'::jsonb;
 alter table products add column if not exists updated_at timestamptz not null default now();
 alter table riders add column if not exists profile_image_url text;

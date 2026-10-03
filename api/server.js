@@ -853,6 +853,28 @@ async function ensurePhaseBSchema(){
   await pool.query(sql);
 }
 
+async function ensureMenuOptionsSchema() {
+  // Older databases may have an incorrectly typed products.options UUID column.
+  // Menu variables are structured JSON and must be stored as jsonb.
+  const typeCheck=await pool.query(`
+    select data_type, udt_name
+    from information_schema.columns
+    where table_schema='public' and table_name='products' and column_name='options'
+    limit 1
+  `);
+  if(typeCheck.rowCount && typeCheck.rows[0].udt_name !== 'jsonb'){
+    await pool.query(`
+      alter table products
+      alter column options type jsonb
+      using '[]'::jsonb
+    `);
+  }else{
+    await pool.query(`
+      alter table products add column if not exists options jsonb not null default '[]'::jsonb
+    `);
+  }
+}
+
 async function ensurePhase1SecuritySchema() {
   await pool.query(`
     alter table orders add column if not exists customer_access_token_hash text;
@@ -1407,7 +1429,8 @@ app.post('/api/manager/google', googleRateLimit, async (req,res)=>{
 app.get('/api/manager/dispatch', requireManager, async (req, res) => {
   try {
     await ensureDeliveryTrackingSchema();
-    await ensurePhase1SecuritySchema();
+    await ensureMenuOptionsSchema();
+  await ensurePhase1SecuritySchema();
   await ensureRealtimeAndExternalApiSecuritySchema();
     const businessId = req.manager.business_id;
     const [connection, riders, unassigned, active] = await Promise.all([

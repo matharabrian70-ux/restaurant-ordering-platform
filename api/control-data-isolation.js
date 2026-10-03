@@ -50,12 +50,27 @@ function registerControlDataIsolation(app,pool,{requireControl,requireControlRol
 
   app.post('/api/control/disputes',requireControl,async(req,res)=>{
     try{
-      const businessId=clean(req.body.businessId,80),orderNumber=clean(req.body.orderNumber,100),category=clean(req.body.category,40).toUpperCase(),reason=clean(req.body.reason,1000);
-      if(!businessId||!orderNumber||!CATEGORIES.has(category)||reason.length<10)return res.status(400).json({error:'Restaurant, order reference, dispute category and a clear reason are required'});
-      const order=await pool.query('select id,business_id from orders where business_id=$1 and order_number=$2 limit 1',[businessId,orderNumber]);
-      if(!order.rowCount)return res.status(404).json({error:'The specified order could not be found for that restaurant'});
+      const businessId=clean(req.body.businessId,80);
+      const orderNumber=clean(req.body.orderNumber,100);
+      const category=clean(req.body.category,40).toUpperCase();
+      const reason=clean(req.body.reason,1000);
+      if(!businessId||!orderNumber||!CATEGORIES.has(category)||reason.length<10){
+        return res.status(400).json({error:'Restaurant, order reference, dispute category and a clear reason are required'});
+      }
+      // Normalize harmless formatting differences in an order reference while
+      // keeping the lookup strictly tenant-scoped.
+      const order=await pool.query(
+        'select id,business_id from orders where business_id=$1 and lower(trim(order_number))=lower(trim($2)) limit 1',
+        [businessId,orderNumber]
+      );
+      if(!order.rowCount){
+        return res.status(404).json({error:'The specified order could not be found for that restaurant. Check the order reference and selected restaurant.'});
+      }
       const reference=caseReference();
-      const c=await pool.query('insert into control_access_cases(id,case_reference,business_id,target_order_id,category,reason,requested_by_admin_id) values(gen_random_uuid(),$1,$2,$3,$4,$5,$6) returning id,case_reference,category,status,created_at',[reference,businessId,order.rows[0].id,category,reason,req.controlAdmin.id]);
+      const c=await pool.query(
+        'insert into control_access_cases(id,case_reference,business_id,target_order_id,category,reason,requested_by_admin_id) values(gen_random_uuid(),$1,$2,$3,$4,$5,$6) returning id,case_reference,category,status,created_at',
+        [reference,businessId,order.rows[0].id,category,reason,req.controlAdmin.id]
+      );
       await audit(pool,{caseId:c.rows[0].id,adminId:req.controlAdmin.id,action:'CASE_CREATED',metadata:{category,reasonLength:reason.length}});
       await recordPlatformAudit(req.controlAdmin.id,businessId,'DISPUTE_CASE_CREATED','Controlled evidence case created',{caseId:c.rows[0].id,category});
       res.status(201).json({case:c.rows[0]});

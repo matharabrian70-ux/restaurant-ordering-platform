@@ -847,6 +847,11 @@ async function ensurePhaseSSchema(){
   const sql = await fs.readFile(new URL('./migrations/011_phase_s_delivery_quote_expiry.sql', import.meta.url), 'utf8');
   await pool.query(sql);
 }
+async function ensurePhaseTSchema(){
+  const fs = await import('node:fs/promises');
+  const sql = await fs.readFile(new URL('./migrations/012_phase_t_branch_execution_routing.sql', import.meta.url), 'utf8');
+  await pool.query(sql);
+}
 
 async function ensurePhaseKSchema(){
   const fs = await import('node:fs/promises');
@@ -4011,6 +4016,7 @@ async function startServer(){
   await ensurePhaseISchema();
   await ensurePhaseJSchema();
   await ensurePhaseSSchema();
+  await ensurePhaseTSchema();
   await ensurePhaseKSchema();
   await ensureIntegrationSchema();
   await ensurePhase1SecuritySchema();

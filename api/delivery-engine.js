@@ -193,6 +193,7 @@ export function registerDeliveryEngine(app,pool,requireManager=(_req,_res,next)=
     try{
       const {name,address,latitude,longitude,googlePlaceId,building,floor,unit,street,estate,landmark,pickupInstructions,active=true,acceptingOrders=true,serviceRadiusKm=18}=req.body;
       if(!name||!address||!Number.isFinite(Number(latitude))||!Number.isFinite(Number(longitude))) return res.status(400).json({error:'Branch name, address and map coordinates are required'});
+      if(Number(latitude)<-90||Number(latitude)>90||Number(longitude)<-180||Number(longitude)>180||!Number.isFinite(Number(serviceRadiusKm))||Number(serviceRadiusKm)<1||Number(serviceRadiusKm)>30)return res.status(400).json({error:'Valid branch coordinates and a 1–30 km service radius are required'});
       const r=await pool.query(`insert into business_branches(id,business_id,name,address,latitude,longitude,google_place_id,building,floor,unit,street,estate,landmark,pickup_instructions,active,accepting_orders,service_radius_km) values(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) returning *`,[req.params.id, name,address,latitude,longitude,googlePlaceId||null,building||null,floor||null,unit||null,street||null,estate||null,landmark||null,pickupInstructions||null,Boolean(active),Boolean(acceptingOrders),serviceRadiusKm]);
       res.status(201).json(r.rows[0]);
     }catch(e){res.status(500).json({error:e.message||'Unable to create branch'});}

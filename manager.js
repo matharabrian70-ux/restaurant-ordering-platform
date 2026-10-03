@@ -353,8 +353,10 @@ function activeAssignmentActions(o){
 function orderCard(o){
   let a='';
   if(o.status==='NEW'&&o.payment_status==='PAID') a='<button class="btn" data-action="accept(\''+o.id+'\',this)">✓ ACCEPT ORDER</button>';
-  else if(o.status==='ACCEPTED') a=o.rider_name?activeAssignmentActions(o):'<div class="dispatch-panel"><div class="dispatch-label">Available riders — longest wait since last delivery gets priority</div>'+picker(o.id)+'</div>';
-  else if(o.status==='OUT_FOR_DELIVERY') a=activeAssignmentActions(o)+'<div class="completed-action"><i></i> DELIVERY IN PROGRESS</div>';
+  else if(o.status==='ACCEPTED') a=managerFeature('riderModule')
+    ? (o.rider_name?activeAssignmentActions(o):'<div class="dispatch-panel"><div class="dispatch-label">Available riders — longest wait since last delivery gets priority</div>'+picker(o.id)+'</div>')
+    : '<div class="completed-action"><i></i> READY FOR RESTAURANT DELIVERY</div>';
+  else if(o.status==='OUT_FOR_DELIVERY') a=(managerFeature('riderModule')?activeAssignmentActions(o):'')+'<div class="completed-action"><i></i> DELIVERY IN PROGRESS</div>';
   else if(o.status==='DELIVERED') a='<div class="completed-action done">✓ COMPLETED</div>';
   else if(o.status==='CANCELLED') a='<div class="completed-action done">CANCELLED</div>';
   else a='<div class="waiting-action">Awaiting payment</div>';

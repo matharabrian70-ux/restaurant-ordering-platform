@@ -2248,7 +2248,7 @@ app.post('/api/orders',
     }
     foodSubtotal=Math.round(foodSubtotal*100)/100;
 
-    if (deliveryData) {
+    if (deliveryData && String(deliveryData.pricing_mode||'').toUpperCase()==='ZONE') {
       const zoneRows=await client.query(
         `select * from delivery_zones
           where business_id=$1 and active=true

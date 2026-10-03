@@ -53,6 +53,44 @@ function syncMenuCategoryFromScroll(){
   sections.forEach(section=>{if(section.getBoundingClientRect().top<=threshold)current=section.dataset.menuCategorySection;});
   setActiveMenuCategory(current);
 }
+
+// Robust menu category pinning.
+// The CSS-only sticky approach can be defeated by an ancestor's scrolling
+// mechanism, so this fallback pins the discovery bar to the viewport once it
+// reaches the header while preserving the page's layout space.
+let menuCategoryPinHandler=null,menuCategoryPinResizeHandler=null;
+function syncMenuCategoryPinned(){
+  const discovery=document.querySelector('.menu-discovery');
+  const bar=document.getElementById('menu-category-bar');
+  const grid=document.getElementById('menu-grid');
+  const header=document.querySelector('.menu-mock-nav');
+  if(!discovery||!bar||!grid||!header)return;
+  const headerBottom=header.getBoundingClientRect().bottom;
+  const discoveryRect=discovery.getBoundingClientRect();
+  const shouldPin=discoveryRect.top<=headerBottom+1;
+  if(shouldPin){
+    if(!discovery.classList.contains('menu-discovery-fixed')){
+      discovery.classList.add('menu-discovery-fixed');
+      const height=discovery.offsetHeight;
+      discovery.style.setProperty('--menu-discovery-height',height+'px');
+      grid.style.paddingTop=height+'px';
+    }
+  }else if(discovery.classList.contains('menu-discovery-fixed')){
+    discovery.classList.remove('menu-discovery-fixed');
+    discovery.style.removeProperty('--menu-discovery-height');
+    grid.style.paddingTop='';
+  }
+}
+function bindMenuCategoryPinning(){
+  if(menuCategoryPinHandler)window.removeEventListener('scroll',menuCategoryPinHandler);
+  if(menuCategoryPinResizeHandler)window.removeEventListener('resize',menuCategoryPinResizeHandler);
+  menuCategoryPinHandler=()=>{if(!window.__menuCategoryPinTick){window.__menuCategoryPinTick=requestAnimationFrame(()=>{window.__menuCategoryPinTick=0;syncMenuCategoryPinned();});}};
+  menuCategoryPinResizeHandler=()=>syncMenuCategoryPinned();
+  window.addEventListener('scroll',menuCategoryPinHandler,{passive:true});
+  window.addEventListener('resize',menuCategoryPinResizeHandler,{passive:true});
+  syncMenuCategoryPinned();
+}
+
 function bindMenuCategoryNavigation(){
   if(menuScrollHandler)window.removeEventListener('scroll',menuScrollHandler);
   if(menuResizeHandler)window.removeEventListener('resize',menuResizeHandler);
@@ -75,6 +113,7 @@ function bindMenuCategoryNavigation(){
     if(section){section.scrollIntoView({behavior:'smooth',block:'start'});setActiveMenuCategory(id,true);}
   }));
   syncMenuCategoryFromScroll();
+  bindMenuCategoryPinning();
 }
 function renderSignatureMenu(products,categories=[]){
   const grid=document.getElementById('menu-grid');if(!grid)return;

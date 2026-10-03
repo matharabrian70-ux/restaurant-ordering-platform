@@ -384,3 +384,39 @@ body[data-page="menu"]{
 @media(max-width:700px){
   .menu-discovery{top:70px!important}
 }
+
+
+/* FINAL ROBUST CATEGORY PIN — JS-backed fixed fallback */
+body[data-page="menu"] .menu-discovery.menu-discovery-fixed{
+  position:fixed!important;
+  left:0!important;
+  right:0!important;
+  top:78px!important;
+  width:100%!important;
+  max-width:none!important;
+  margin:0!important;
+  padding:10px 32px!important;
+  box-sizing:border-box!important;
+  z-index:950!important;
+  background:rgba(255,253,248,.97)!important;
+  backdrop-filter:blur(12px)!important;
+  -webkit-backdrop-filter:blur(12px)!important;
+  box-shadow:0 8px 24px rgba(24,32,25,.10)!important;
+}
+body[data-page="menu"] .menu-discovery.menu-discovery-fixed .menu-category-bar{
+  max-width:none!important;
+  margin:0 auto!important;
+}
+body[data-page="menu"] .menu-discovery.menu-discovery-fixed + .menu-grid{
+  padding-top:var(--menu-discovery-height,80px);
+}
+body[data-page="menu"] > footer > span,
+body[data-page="menu"] > footer > a{
+  display:none!important;
+}
+@media(max-width:700px){
+  body[data-page="menu"] .menu-discovery.menu-discovery-fixed{
+    top:70px!important;
+    padding:8px 4vw!important;
+  }
+}

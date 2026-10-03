@@ -103,7 +103,7 @@ async function load(){
 }
 
 function packageFor(b){return state.packages.find(p=>p.key===b.plan_key);}
-function currentSectionLabel(){return ({overview:'Command Centre',restaurants:'Restaurants',disputes:'Dispute Access',health:'System Health',issues:'Issues & Alerts',activity:'Activity Log',updates:'System Updates'}[state.section]||'Command Centre');}
+function currentSectionLabel(){return ({overview:'Command Centre',restaurants:'Restaurants',disputes:'Dispute Access',health:'System Health',issues:'Issues & Alerts',activity:'Activity Log',updates:'System Updates',compliance:'Compliance'}[state.section]||'Command Centre');}
 
 function render(){
   root.innerHTML='<div class="pc-shell"><header class="pc-nav"><div class="pc-brand"><span>PLATFORM OWNER</span><strong>RESTAURANT ORDERING PLATFORM</strong></div><div class="pc-nav-right"><span class="pc-live-dot"></span><span class="pc-admin">'+esc(state.me?.name||'Platform Owner')+'</span><button class="pc-menu-btn" id="pc-menu-btn">☰ MENU</button></div></header>'+
@@ -120,7 +120,15 @@ function navItems(){
   const items=[['overview','⌂','Command Centre'],['restaurants','▦','Restaurants'],['disputes','⚖','Dispute Access'],['health','✓','System Health'],['issues','!','Issues & Alerts'],['activity','≡','Activity Log'],['updates','↻','System Updates'],['compliance','⚖','Compliance']];
   return '<nav class="pc-nav-menu">'+items.map(x=>'<button class="'+(state.section===x[0]?'active':'')+'" data-section="'+x[0]+'"><span>'+x[1]+'</span>'+x[2]+(x[0]==='issues'&&state.incidents.length?'<b class="pc-nav-badge">'+state.incidents.length+'</b>':'')+'</button>').join('')+'</nav>';
 }
-function bindNav(){document.querySelectorAll('[data-section]').forEach(b=>b.onclick=()=>{state.section=b.dataset.section;state.menu=false;state.selectedCase=null;render();});}
+function bindNav(){
+  document.querySelectorAll('[data-section]').forEach(b=>b.onclick=async()=>{
+    state.section=b.dataset.section;
+    state.menu=false;
+    state.selectedCase=null;
+    render();
+    if(state.section==='compliance') await loadComplianceData();
+  });
+}
 function menuDrawer(){return '<div class="pc-drawer-backdrop"><aside class="pc-drawer"><div class="pc-drawer-head"><div><span class="pc-kicker">MASTER MENU</span><h2>Control Centre</h2></div><button class="pc-modal-close" id="pc-drawer-close">×</button></div>'+navItems()+'<div class="pc-drawer-rule"></div><button class="pc-drawer-signout" id="logout-btn">SIGN OUT</button><p class="pc-drawer-note">Normal Control Centre access excludes restaurant orders, revenue, customer records and rider personal data.</p></aside></div>';}
 
 function sectionContent(){
@@ -145,6 +153,25 @@ async function runHealthCheck(){
     render();
     const box=document.querySelector('.pc-health');
     if(box)box.insertAdjacentHTML('beforeend','<div class="pc-message pc-error">'+esc(error.message)+'</div>');
+  }
+}
+async function loadComplianceData(){
+  try{
+    const [processors,incidents]=await Promise.all([
+      api('/api/platform/compliance/processors'),
+      api('/api/platform/compliance/incidents')
+    ]);
+    state.complianceProcessors=Array.isArray(processors)?processors:[];
+    state.privacyIncidents=Array.isArray(incidents)?incidents:[];
+    if(state.section==='compliance')render();
+  }catch(error){
+    state.complianceProcessors=[];
+    state.privacyIncidents=[];
+    if(state.section==='compliance'){
+      render();
+      const box=document.querySelector('.pc-main');
+      if(box)box.insertAdjacentHTML('afterbegin','<div class="pc-message pc-error">Unable to load compliance data: '+esc(error.message)+'</div>');
+    }
   }
 }
 function complianceStatusClass(status){

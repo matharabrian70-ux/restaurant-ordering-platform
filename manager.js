@@ -1,6 +1,7 @@
 const root=document.getElementById('manager-view'),B=BUSINESS_ID;
 window.__cspSetState=(name,value)=>{if(name==='T')T=value;else if(name==='orderFilter')orderFilter=value;else if(name==='orderSearch')orderSearch=value;};let D={},T='overview',photoData='',heroPhotoData='',selectedRiders={},currentManager=null,orderFilter='NEW',orderSearch='',managerEvents=null,alertedOrders=new Map(),riderInviteResult='';
 const managerFeature=(key)=>Boolean(D.features?.[key]);
+let activeBranchId=localStorage.getItem('doe_manager_branch_context')||'';
 const ALERT_KEY='savanna_manager_alerts';
 const ALERT_SOUNDS={classic:'Classic Ding',double:'Double Bell',chime:'Professional Chime',priority:'Priority Ping',service:'Service Bell'};
 function alertPrefs(){try{const p=JSON.parse(localStorage.getItem(ALERT_KEY)||'{}');return {enabled:p.enabled!==false,sound:ALERT_SOUNDS[p.sound]?p.sound:'classic',volume:Number.isFinite(Number(p.volume))?Math.max(0,Math.min(1,Number(p.volume))):.85}}catch{return {enabled:true,sound:'classic',volume:.85}}}
@@ -35,7 +36,7 @@ function alertsPanel(){const p=alertPrefs();return '<section class="manager-pane
 const money=v=>new Intl.NumberFormat('en-KE',{style:'currency',currency:'KES'}).format(Number(v||0));
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const api=(p,o={})=>apiRequest(p,o);
-const NAV_ITEMS=[['overview','⌂','Overview'],['orders','▤','Orders'],['dispatch','⇄','Dispatch','riderModule'],['menu','☷','Menu'],['promotions','%','Promotions'],['branches','⌖','Branches','branchRouting'],['delivery','⌁','Delivery'],['riders','♟','Riders','riderModule'],['receipts','▥','Receipts'],['payments','¤','Payments'],['refunds','↩','Refunds'],['sms','✉','SMS','sms'],['privacy','⚖','Privacy & compliance'],['station','▣','Order station'],['phase-g','◈','Advanced Operations','advancedDelivery'],['phase-h','✦','Intelligence','advancedAnalytics']];
+const NAV_ITEMS=[['overview','⌂','Overview'],['orders','▤','Orders'],['dispatch','⇄','Dispatch','riderModule'],['menu','☷','Menu'],['promotions','%','Promotions'],['branches','⌖','Branches','branchRouting'],['delivery','⌁','Delivery'],['riders','♟','Riders','riderModule'],['receipts','▥','Receipts'],['payments','¤','Payments'],['refunds','↩','Refunds'],['sms','✉','SMS','sms'],['privacy','⚖','Privacy & compliance'],['team','♙','Managers & audit'],['station','▣','Order station'],['phase-g','◈','Advanced Operations','advancedDelivery'],['phase-h','✦','Intelligence','advancedAnalytics']];
 const visibleNavItems=()=>NAV_ITEMS.filter(x=>!x[3]||managerFeature(x[3]));
 const nav=(k,l)=>'<button class="manager-tab '+(T===k?'active':'')+'" data-action="T=\''+k+'\';'+(k==='privacy'?'loadPrivacySettings().then(()=>render())':'render()')+'" aria-current="'+(T===k?'page':'false')+'"><span class="manager-tab-icon" aria-hidden="true">'+(NAV_ITEMS.find(x=>x[0]===k)?.[1]||'•')+'</span><span>'+l+'</span></button>';
 const managerSidebar=()=>'<aside class="manager-sidebar" aria-label="Manager sections"><div class="manager-sidebar-label">RESTAURANT CONTROL</div><nav class="manager-sidebar-nav">'+visibleNavItems().map(x=>nav(x[0],x[2])).join('')+'</nav><div class="manager-sidebar-footer"><span>LIVE CONTROL CENTRE</span><small>Restaurant operations</small></div></aside>';

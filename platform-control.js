@@ -327,7 +327,24 @@ function bindTenant(){
 }
 function tenantPanel(b){
   const x=state.selectedInspect;
-  return '<div class="pc-modal-backdrop" id="tenant-backdrop"><section class="pc-modal pc-tenant-modal"><button class="pc-modal-close" id="tenant-close">×</button><div class="pc-modal-head"><div><span class="pc-kicker">TENANT CONFIGURATION</span><h2>'+esc(b.name)+'</h2><p>Configuration and service health only. No order/customer records are loaded.</p></div></div>'+(!x?'<div class="pc-loading">Loading safe tenant configuration…</div>':'<div class="pc-section"><div class="pc-tenant-overview"><div><span>STATUS</span><strong>'+esc(x.restaurant.status)+'</strong></div><div><span>PACKAGE</span><strong>'+esc(x.restaurant.plan_name||x.restaurant.plan_key)+'</strong></div><div><span>BRANCH</span><strong>'+(String(x.health?.issues||[]).includes('MISSING_BRANCH')?'MISSING':'READY')+'</strong></div><div><span>MANAGER</span><strong>'+(String(x.health?.issues||[]).includes('MISSING_MANAGER')?'MISSING':'READY')+'</strong></div><div><span>INTEGRATION</span><strong>'+(String(x.health?.issues||[]).includes('NO_ACTIVE_INTEGRATION')?'NOT READY':'READY')+'</strong></div><div><span>DATA ACCESS</span><strong class="pc-health-ok">ISOLATED</strong></div></div></div>')+'</section></div>';
+  return '<div class="pc-modal-backdrop" id="tenant-backdrop"><section class="pc-modal pc-tenant-modal"><button class="pc-modal-close" id="tenant-close">×</button><div class="pc-modal-head"><div><span class="pc-kicker">TENANT CONFIGURATION</span><h2>'+esc(b.name)+'</h2><p>Configuration and service health only. No order/customer records are loaded.</p></div></div>'+(!x?'<div class="pc-loading">Loading safe tenant configuration…</div>':'<div class="pc-section"><div class="pc-tenant-overview"><div><span>STATUS</span><strong>'+esc(x.restaurant.status)+'</strong></div><div><span>PACKAGE</span><strong>'+esc(x.restaurant.plan_name||x.restaurant.plan_key)+'</strong></div><div><span>BRANCH</span><strong>'+(String(x.health?.issues||[]).includes('MISSING_BRANCH')?'MISSING':'READY')+'</strong></div><div><span>MANAGER</span><strong>'+(String(x.health?.issues||[]).includes('MISSING_MANAGER')?'MISSING':'READY')+'</strong></div><div><span>INTEGRATION</span><strong>'+(String(x.health?.issues||[]).includes('NO_ACTIVE_INTEGRATION')?'NOT READY':'READY')+'</strong></div><div><span>DATA ACCESS</span><strong class="pc-health-ok">ISOLATED</strong></div></div></div><div class="pc-section"><div class="pc-panel-title"><div><span class="pc-kicker">PAYMENT SETTLEMENT</span><h3>Restaurant payout account</h3><p>The restaurant's Paystack subaccount receives its merchant share. Orders are blocked until this is configured.</p></div></div><label>PAYSTACK SUBACCOUNT CODE<input id="tenant-paystack-subaccount" value="'+esc(b.paystack_subaccount_code||'')+'" placeholder="ACCT_..."></label><button class="pc-btn" id="tenant-save-settlement">SAVE SETTLEMENT ACCOUNT</button><span id="tenant-settlement-status" class="pc-note"></span></div></section></div>');
+}
+async function saveTenantSettlement(){
+  const code=document.getElementById('tenant-paystack-subaccount')?.value.trim()||'';
+  if(!state.selected)return;
+  const button=document.getElementById('tenant-save-settlement');if(button)button.disabled=true;
+  try{
+    const b=state.selected;
+    await api('/api/platform/businesses/'+encodeURIComponent(b.id),{method:'PATCH',body:JSON.stringify({name:b.name,slug:b.slug,planKey:b.plan_key,paystackSubaccountCode:code})});
+    b.paystack_subaccount_code=code;const status=document.getElementById('tenant-settlement-status');if(status)status.textContent='Saved.';
+    await load();
+  }catch(e){const status=document.getElementById('tenant-settlement-status');if(status)status.textContent=e.message||'Could not save settlement account.';}
+  finally{if(button)button.disabled=false;}
+}
+function bindTenant(){
+  document.getElementById('tenant-close')?.addEventListener('click',()=>{state.selected=null;state.selectedInspect=null;render();});
+  document.getElementById('tenant-backdrop')?.addEventListener('click',e=>{if(e.target.id==='tenant-backdrop'){state.selected=null;state.selectedInspect=null;render();}});
+  document.getElementById('tenant-save-settlement')?.addEventListener('click',saveTenantSettlement);
 }
 function bindIncidentActions(){
   document.getElementById('logout-btn')?.addEventListener('click',logout);

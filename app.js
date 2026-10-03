@@ -63,21 +63,86 @@ function renderSignatureMenu(products,categories=[]){
   MENU_PRODUCTS.clear();products.forEach(p=>MENU_PRODUCTS.set(String(p.id),p));
   const categoryList=normalizeMenuCategories(products,categories);
   MENU_CATEGORY_STATE.categories=categoryList;
-  const grouped=categoryList.map((category,index)=>({category,index,products:products.filter(p=>{
-    const pid=p.category_id?String(p.category_id):'',name=String(p.category||'Menu').trim().toLowerCase();
-    return (pid&&pid===category.id)||(!pid&&name===category.name.toLowerCase())||(category.id.startsWith('name:')&&name===category.name.toLowerCase());
-  })})).filter(x=>x.products.length);
+  const grouped=categoryList.map((category,index)=>({
+    category,index,
+    products:products.filter(p=>{
+      const pid=p.category_id?String(p.category_id):'',name=String(p.category||'Menu').trim().toLowerCase();
+      return (pid&&pid===category.id)||(!pid&&name===category.name.toLowerCase())||(category.id.startsWith('name:')&&name===category.name.toLowerCase());
+    })
+  })).filter(x=>x.products.length);
   const nav=document.getElementById('menu-category-nav');
-  if(nav)nav.innerHTML='<button type="button" class="menu-category-pill active" data-menu-category-nav="all" aria-current="true">All</button>'+grouped.map(x=>'<button type="button" class="menu-category-pill" data-menu-category-nav="'+escapeMenuHtml(x.category.id)+'" aria-current="false">'+escapeMenuHtml(x.category.name)+'</button>').join('');
+  if(nav){
+    const specialButton='<button type="button" class="menu-category-pill" data-menu-category-nav="today-special">🔥 Today’s Special</button>';
+    nav.innerHTML='<button type="button" class="menu-category-pill active" data-menu-category-nav="all">All</button>'+
+      grouped.map(x=>'<button type="button" class="menu-category-pill" data-menu-category-nav="'+escapeMenuHtml(x.category.id)+'">'+escapeMenuHtml(x.category.name)+'</button>').join('')+specialButton;
+  }
   grid.innerHTML=grouped.map(x=>{
     const sectionId=menuCategorySlug(x.category.id,x.index);
-    return '<section class="menu-category-section" id="'+sectionId+'" data-menu-category-section="'+escapeMenuHtml(x.category.id)+'"><div class="menu-category-heading"><span class="eyebrow">MENU CATEGORY</span><h2>'+escapeMenuHtml(x.category.name)+'</h2></div><div class="menu-category-products">'+x.products.map(p=>{
-      const id=escapeMenuHtml(p.id),name=escapeMenuHtml(p.name),category=escapeMenuHtml(p.category||x.category.name),desc=escapeMenuHtml(p.desc||''),image=escapeMenuHtml(p.image||'');
-      const featured=p.featured?'<span class="signature-badge signature-featured"><span class="signature-star">★</span> FEATURED</span>':'';
-      return '<article class="signature-menu-card"><div class="signature-menu-photo"><img src="'+image+'" alt="'+name+'" loading="lazy"><div class="signature-menu-image-top"><span class="signature-category-chip">'+category+'</span>'+featured+'</div></div><div class="signature-menu-body"><div class="signature-menu-copy"><h3>'+name+'</h3><p class="signature-description">'+desc+'</p><div class="signature-meta"><strong class="signature-price">'+money(p.price)+'</strong><span class="signature-available"><span class="signature-dot"></span> AVAILABLE</span></div></div><div class="signature-menu-actions"><button type="button" class="signature-add-btn" data-menu-add="'+id+'"><span class="signature-add-icon">+</span><span>'+(Array.isArray(p.options)&&p.options.length?'CHOOSE':'ADD')+'</span></button></div></div></article>';
-    }).join('')+'</div></section>';
+    return '<section class="menu-category-section" id="'+sectionId+'" data-menu-category-section="'+escapeMenuHtml(x.category.id)+'">'+
+      '<div class="menu-category-heading"><span class="eyebrow">MENU CATEGORY</span><h2>'+escapeMenuHtml(x.category.name)+'</h2></div>'+
+      '<div class="menu-category-products">'+x.products.map(p=>{
+        const id=escapeMenuHtml(p.id),name=escapeMenuHtml(p.name),desc=escapeMenuHtml(p.desc||''),image=escapeMenuHtml(p.image||'');
+        const featured=Boolean(p.featured||p.is_special||p.today_special||p.todaySpecial);
+        const badge=featured?'<span class="signature-badge">🔥 Today’s Special</span>':'';
+        return '<article class="signature-menu-card" data-menu-product-card data-product-name="'+escapeMenuHtml((p.name||'')+' '+(p.desc||''))+'">'+
+          '<div class="signature-menu-photo"><img src="'+image+'" alt="'+name+'" loading="lazy"><div class="signature-menu-image-top">'+badge+'</div></div>'+
+          '<div class="signature-menu-body"><div class="signature-menu-copy"><h3>'+name+'</h3><p class="signature-description">'+desc+'</p><div class="signature-meta"><strong class="signature-price">'+money(p.price)+'</strong></div></div>'+
+          '<div class="signature-menu-actions"><button type="button" class="quantity-mini" data-qty-minus="'+id+'" aria-label="Decrease quantity">−</button><span class="quantity-mini-value" data-qty-value="'+id+'">1</span><button type="button" class="quantity-mini" data-qty-plus="'+id+'" aria-label="Increase quantity">+</button>'+
+          '<button type="button" class="signature-add-btn" data-menu-add="'+id+'"><span class="signature-add-icon">🛒</span><span>Add to Cart</span></button></div></div></article>';
+      }).join('')+'</div></section>';
   }).join('')||'<div class="empty-state">No menu items are available right now.</div>';
   bindMenuCategoryNavigation();
+  bindMenuSearch();
+  bindMenuQuantities();
+  setActiveMenuCategory('all');
+}
+function bindMenuSearch(){
+  const input=document.getElementById('menu-search-input');if(!input||input.dataset.bound)return;
+  input.dataset.bound='1';
+  input.addEventListener('input',()=>{
+    const q=input.value.trim().toLowerCase();
+    document.querySelectorAll('[data-menu-product-card]').forEach(card=>{card.style.display=!q||card.dataset.productName.toLowerCase().includes(q)?'':'none';});
+  });
+}
+function bindMenuQuantities(){
+  document.querySelectorAll('[data-qty-minus],[data-qty-plus]').forEach(btn=>{
+    if(btn.dataset.bound)return;btn.dataset.bound='1';
+    btn.addEventListener('click',e=>{
+      e.preventDefault();
+      const id=btn.dataset.qtyMinus||btn.dataset.qtyPlus;
+      const value=document.querySelector('[data-qty-value="'+CSS.escape(id)+'"]');
+      if(!value)return;
+      let n=Math.max(1,Number(value.textContent)||1);
+      n+=btn.dataset.qtyPlus?1:-1;value.textContent=n;
+      const card=btn.closest('.signature-menu-card');if(card)card.dataset.selectedQty=n;
+    });
+  });
+}
+let MENU_HERO_ITEMS=[],MENU_HERO_INDEX=0,MENU_HERO_TIMER=null;
+function renderMenuHero(products){
+  const hero=document.getElementById('menu-special-hero');if(!hero)return;
+  const items=(Array.isArray(products)?products:[]).filter(p=>p&&p.image).filter(p=>p.featured||p.is_special||p.today_special||p.todaySpecial||String(p.category||'').toLowerCase().includes('special'));
+  const source=items.length?items:((Array.isArray(products)?products:[]).filter(p=>p&&p.image).slice(0,4));
+  MENU_HERO_ITEMS=source;MENU_HERO_INDEX=0;
+  if(!source.length)return;
+  const paint=()=>{
+    const p=MENU_HERO_ITEMS[MENU_HERO_INDEX%MENU_HERO_ITEMS.length];
+    const img=hero.querySelector('.menu-special-bg'),title=hero.querySelector('[data-hero-title]'),desc=hero.querySelector('[data-hero-desc]'),dots=hero.querySelector('[data-hero-dots]');
+    if(img){img.classList.add('changing');setTimeout(()=>{img.onload=()=>img.classList.remove('changing');img.src=p.image;img.alt=p.name||'Today’s special';},120);}
+    if(title){
+      const words=String(p.name||'Today’s Special').split(/\s+/);const last=words.pop()||'';title.innerHTML=escapeMenuHtml(words.join(' ')||'Today’s')+' <em>'+escapeMenuHtml(last)+'</em>';
+    }
+    if(desc)desc.textContent=p.desc||'Grilled to perfection. Rich in flavour.';
+    if(dots)dots.innerHTML=MENU_HERO_ITEMS.map((_,i)=>'<button type="button" class="'+(i===MENU_HERO_INDEX?'active':'')+'" data-hero-dot="'+i+'" aria-label="Special '+(i+1)+'"></button>').join('');
+  };
+  const restart=()=>{if(MENU_HERO_TIMER)clearInterval(MENU_HERO_TIMER);if(MENU_HERO_ITEMS.length>1)MENU_HERO_TIMER=setInterval(()=>{MENU_HERO_INDEX=(MENU_HERO_INDEX+1)%MENU_HERO_ITEMS.length;paint()},6000)};
+  hero.onclick=e=>{
+    const dot=e.target.closest('[data-hero-dot]');if(dot){MENU_HERO_INDEX=Number(dot.dataset.heroDot)||0;paint();restart();return}
+    if(e.target.closest('[data-hero-prev]')){MENU_HERO_INDEX=(MENU_HERO_INDEX-1+MENU_HERO_ITEMS.length)%MENU_HERO_ITEMS.length;paint();restart();return}
+    if(e.target.closest('[data-hero-next]')){MENU_HERO_INDEX=(MENU_HERO_INDEX+1)%MENU_HERO_ITEMS.length;paint();restart();return}
+    if(e.target.closest('[data-hero-order]')){const p=MENU_HERO_ITEMS[MENU_HERO_INDEX];if(p) addMenuProduct(p.id);}
+  };
+  paint();restart();
 }
 function renderMenu(){renderSignatureMenu(PRODUCTS,[])}
 function addMenuProduct(id){
@@ -207,13 +272,13 @@ const response=await fetch((window.PLATFORM_API_ORIGIN || 'https://restaurant-or
 if(!response.ok)throw new Error('Menu API unavailable');
 const data=await response.json();
 const products=(data.products||[]).map(p=>({id:p.id,name:p.name,category:p.category_name||p.category||'Menu',category_id:p.category_id||null,price:Number(p.price||0),image:p.image_url||'',desc:p.description||'',options:Array.isArray(p.options)?p.options:[],featured:Boolean(p.featured)}));
-if(products.length){renderSignatureMenu(products,data.categories||[]);}
+if(products.length){renderSignatureMenu(products,data.categories||[]);renderMenuHero(products);}
 const strip=document.getElementById('promotions-strip');if(strip){const promos=data.promotions||[];strip.innerHTML=promos.length?'<div class="promo-heading"><p class="eyebrow">WHAT’S ON</p><h2>Good things, right now.</h2></div><div class="promo-list">'+promos.slice(0,6).map(p=>'<article><span>'+escapeMenuHtml(String(p.type||'OFFER').replaceAll('_',' '))+'</span><h3>'+escapeMenuHtml(p.name||'Offer')+'</h3><p>'+escapeMenuHtml(p.banner_text||'Limited-time restaurant promotion')+'</p></article>').join('')+'</div>':'<div class="menu-service-note"><span><i class="live-dot"></i><strong>Made fresh to order</strong></span><span>Pick a category and start building your order.</span></div>';}
 const offer=(data.promotions||[])[0],hero=document.querySelector('.hero-card small');if(offer&&hero){hero.textContent=offer.banner_text||offer.name;const strong=hero.parentElement?.querySelector('strong');if(strong)strong.textContent=offer.name}
 }catch(error){
   // Never leave the customer with an unexplained blank menu when the API is down.
   // The local/demo catalog remains visible and the customer gets a clear status message.
-  renderSignatureMenu(PRODUCTS);
+  renderSignatureMenu(PRODUCTS);renderMenuHero(PRODUCTS);
   const strip=document.getElementById('promotions-strip');
   if(strip){
     strip.innerHTML='<div class="menu-service-note" aria-label="Menu temporarily unavailable"><span><i class="live-dot"></i><strong>Menu is loading</strong></span><span>Please try again in a moment — your menu will refresh automatically.</span></div>';

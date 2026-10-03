@@ -573,7 +573,7 @@ function promos(){
 }
 function couponCard(c){
   const type=c.discount_type==='PERCENT'?esc(c.discount_value)+'% off':money(c.discount_value)+' off';
-  const link='cart.html?businessId='+encodeURIComponent(B)+'&promo='+encodeURIComponent(c.code);
+  const link='menu.html?businessId='+encodeURIComponent(B)+'&promo='+encodeURIComponent(c.code);
   return '<article class="coupon-card '+(c.active?'':'off')+'"><div class="coupon-main"><span class="coupon-code">'+esc(c.code)+'</span><strong>'+type+'</strong><small>Minimum '+money(c.min_order_amount)+(c.max_redemptions===null?' · Unlimited uses':' · '+Number(c.redeemed_count||0)+' / '+Number(c.max_redemptions)+' used')+'</small></div><div class="coupon-actions"><button class="btn btn-small" data-action="copyPromoCode(this,'+JSON.stringify(c.code)+')">COPY CODE</button><button class="btn btn-small secondary" data-action="sharePromoCode('+JSON.stringify(c.code)+','+JSON.stringify(link)+','+JSON.stringify(type)+')">SHARE</button><button class="btn btn-small secondary" data-action="toggleCoupon('+JSON.stringify(c.id)+','+(!c.active)+')">'+(c.active?'PAUSE':'ACTIVATE')+'</button></div></article>';
 }
 function promoCard(p){return '<article class="promotion-card '+(p.active?'':'off')+'"><div><span class="eyebrow">'+esc(p.type.replaceAll('_',' '))+'</span><h3>'+esc(p.name)+'</h3><p>'+(p.type==='PERCENT'?esc(p.value)+'% off':p.type==='FIXED'?money(p.value)+' off':p.type==='SPECIAL_PRICE'?'Special price '+money(p.value):'Value '+esc(p.value))+'</p></div><button class="btn btn-small '+(p.active?'':'done')+'" data-action="togglePromo(\''+p.id+'\','+(!p.active)+')">'+(p.active?'PAUSE':'ACTIVATE')+'</button></article>'}

@@ -220,7 +220,7 @@ function renderCart(){
   const total=c.reduce((s,i)=>s+i.unit*i.qty,0);
   el.innerHTML=`<div class="cart-layout-premium">
     <section class="cart-items-panel">
-      <div class="cart-section-head"><div><p class="eyebrow">YOUR ORDER</p><h1>Almost there!</h1><p class="cart-subtitle">Great food is just a few clicks away.</p></div><button class="clear-cart-btn" type="button" data-action="clearCart()"><span>⌫</span> Clear cart</button></div>
+      <div class="cart-section-head"><div><h1>Cart <span class="cart-item-count">(${c.reduce((s,i)=>s+i.qty,0)} items)</span></h1></div><button class="clear-cart-btn" type="button" data-action="clearCart()">♧&nbsp; Clear cart</button></div>
       <div class="cart-items-list">${c.map((i,n)=>`<article class="cart-item-premium">
         <img src="${escapeMenuHtml(i.image||'')}" alt="${escapeMenuHtml(i.name)}">
         <div class="cart-item-premium-main"><div><h3>${escapeMenuHtml(i.name)}</h3><p>${escapeMenuHtml(Object.entries(i.options||{}).map(x=>x[0]+': '+x[1]).join(' • ')||'Standard item')}</p><strong>${money(i.unit*i.qty)}</strong></div>
@@ -230,7 +230,7 @@ function renderCart(){
       <a class="back-menu-link" href="menu.html">← Add more products</a>
     </section>
     <aside class="cart-summary-premium">
-      <div class="summary-top"><p class="eyebrow">ORDER SUMMARY</p><h2>Ready when you are.</h2></div>
+      <div class="summary-top"><h2>Order Summary</h2></div>
       <div class="summary-row-premium"><span>Items</span><strong>${c.reduce((s,i)=>s+i.qty,0)}</strong></div>
       <div class="summary-row-premium"><span>Subtotal</span><strong>${money(total)}</strong></div>
       <div class="summary-total-premium"><span>Total</span><strong>${money(total)}</strong></div>

@@ -1789,12 +1789,72 @@ app.post('/api/manager/team',requireManager,requireManagerRole('OWNER'),async(re
 
 app.patch('/api/manager/team/:id',requireManager,requireManagerRole('OWNER'),async(req,res)=>{
   try{
-    const id=String(req.params.id);
-    if(id===String(req.manager.id)&&req.body.active===false)return res.status(409).json({error:'You cannot deactivate your own manager account'});
-    const current=await pool.query('select id,role,active from manager_users where id=$1 and business_id=$2',[id,req.manager.business_id]);
+    const id=String(req.params.id||'').trim();
+    if(!id)return res.status(400).json({error:'Manager id is required'});
+    if(id===String(req.manager.id)&&req.body.active===false){
+      return res.status(409).json({error:'You cannot deactivate your own manager account'});
+    }
+    const current=await pool.query(
+      'select id,name,email,role,active from manager_users where id=$1 and business_id=$2',
+      [id,req.manager.business_id]
+    );
     if(!current.rowCount)return res.status(404).json({error:'Manager not found'});
+
     const fields=[],values=[];
-    if(req.body.name!==undefined){const name=String(req.body.name).trim();if(name.length<2||name.length>120)return res.status(400).json({error:'Invalid manager name'});fields.push('name=
+    const add=(field,value)=>{values.push(value);fields.push(field+'=$'+values.length);};
+
+    if(req.body.name!==undefined){
+      const name=String(req.body.name).trim();
+      if(name.length<2||name.length>120)return res.status(400).json({error:'Invalid manager name'});
+      add('name',name);
+    }
+    if(req.body.email!==undefined){
+      const email=String(req.body.email).trim().toLowerCase();
+      if(!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)){
+        return res.status(400).json({error:'Invalid manager email'});
+      }
+      add('email',email);
+    }
+    if(req.body.role!==undefined){
+      const role=String(req.body.role).trim().toUpperCase();
+      if(!['MANAGER','OWNER'].includes(role))return res.status(400).json({error:'Invalid manager role'});
+      if(id===String(req.manager.id)&&role!=='OWNER')return res.status(409).json({error:'You cannot remove your own owner role'});
+      add('role',role);
+    }
+    if(req.body.active!==undefined){
+      add('active',Boolean(req.body.active));
+    }
+    if(req.body.password!==undefined){
+      const password=String(req.body.password||'');
+      if(password.length<10||password.length>256){
+        return res.status(400).json({error:'Manager password must be 10–256 characters'});
+      }
+      add('password_hash',hashManagerPassword(password));
+    }
+
+    if(!fields.length)return res.status(400).json({error:'No manager changes were supplied'});
+
+    values.push(id,req.manager.business_id);
+    const result=await pool.query(
+      'update manager_users set '+fields.join(', ')+',updated_at=now() where id=$'+(values.length-1)+' and business_id=$'+values.length+' returning id,name,email,role,active,updated_at',
+      values
+    );
+    const changed=result.rows[0];
+    const audit=await createManagerAuditEvent({
+      manager:req.manager,
+      method:req.method,
+      path:req.path,
+      body:req.body,
+      branchId:null,
+      statusCode:200
+    });
+    if(audit)await notifyManagersOfMajorChange({...audit,...changed});
+    res.json(changed);
+  }catch(error){
+    if(error.code==='23505')return res.status(409).json({error:'A manager with that email already exists for this restaurant'});
+    res.status(400).json({error:error.message||'Unable to update manager'});
+  }
+});
 
 app.get('/api/businesses/:id', async (req,res)=>{
   try{

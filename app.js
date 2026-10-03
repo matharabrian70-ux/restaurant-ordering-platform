@@ -139,14 +139,14 @@ function bindMenuQuantities(){
 let MENU_HERO_ITEMS=[],MENU_HERO_INDEX=0,MENU_HERO_TIMER=null;
 function renderMenuHero(products){
   const hero=document.getElementById('menu-special-hero');if(!hero)return;
-  const items=(Array.isArray(products)?products:[]).filter(p=>p&&p.image).filter(p=>p.featured||p.is_special||p.today_special||p.todaySpecial||String(p.category||'').toLowerCase().includes('special'));
+  const items=(Array.isArray(products)?products:[]).filter(p=>p&&(p.heroImage||p.image)).filter(p=>p.featured||p.is_special||p.today_special||p.todaySpecial||String(p.category||'').toLowerCase().includes('special'));
   const source=items.length?items:((Array.isArray(products)?products:[]).filter(p=>p&&p.image).slice(0,4));
   MENU_HERO_ITEMS=source;MENU_HERO_INDEX=0;
   if(!source.length)return;
   const paint=()=>{
     const p=MENU_HERO_ITEMS[MENU_HERO_INDEX%MENU_HERO_ITEMS.length];
     const img=hero.querySelector('.menu-special-bg'),title=hero.querySelector('[data-hero-title]'),desc=hero.querySelector('[data-hero-desc]'),dots=hero.querySelector('[data-hero-dots]');
-    if(img){img.classList.add('changing');setTimeout(()=>{img.onload=()=>img.classList.remove('changing');img.src=p.image;img.alt=p.name||'Today’s special';},120);}
+    if(img){img.classList.add('changing');setTimeout(()=>{img.onload=()=>img.classList.remove('changing');img.src=p.heroImage||p.image;img.alt=p.name||'Today’s special';},120);}
     if(title){
       const words=String(p.name||'Today’s Special').split(/\s+/);const last=words.pop()||'';title.innerHTML=escapeMenuHtml(words.join(' ')||'Today’s')+' <em>'+escapeMenuHtml(last)+'</em>';
     }
@@ -291,7 +291,7 @@ try{
 const response=await fetch((window.PLATFORM_API_ORIGIN || 'https://restaurant-ordering-api-ow3p.onrender.com')+'/api/menu/public?businessId='+encodeURIComponent(window.TENANT_BUSINESS_ID || (typeof BUSINESS_ID!=='undefined'?BUSINESS_ID:'11111111-1111-4111-8111-111111111111')), { headers: { Accept: 'application/json' } });
 if(!response.ok)throw new Error('Menu API unavailable');
 const data=await response.json();
-const products=(data.products||[]).map(p=>({id:p.id,name:p.name,category:p.category_name||p.category||'Menu',category_id:p.category_id||null,price:Number(p.price||0),image:p.image_url||'',desc:p.description||'',options:Array.isArray(p.options)?p.options:[],featured:Boolean(p.featured)}));
+const products=(data.products||[]).map(p=>({id:p.id,name:p.name,category:p.category_name||p.category||'Menu',category_id:p.category_id||null,price:Number(p.price||0),image:p.image_url||'',heroImage:p.hero_image_url||'',desc:p.description||'',options:Array.isArray(p.options)?p.options:[],featured:Boolean(p.featured)}));
 if(products.length){renderSignatureMenu(products,data.categories||[]);renderMenuHero(products);}
 const strip=document.getElementById('promotions-strip');if(strip){const promos=data.promotions||[];strip.innerHTML=promos.length?'<div class="promo-heading"><p class="eyebrow">WHAT’S ON</p><h2>Good things, right now.</h2></div><div class="promo-list">'+promos.slice(0,6).map(p=>'<article><span>'+escapeMenuHtml(String(p.type||'OFFER').replaceAll('_',' '))+'</span><h3>'+escapeMenuHtml(p.name||'Offer')+'</h3><p>'+escapeMenuHtml(p.banner_text||'Limited-time restaurant promotion')+'</p></article>').join('')+'</div>':'<div class="menu-service-note"><span><i class="live-dot"></i><strong>Made fresh to order</strong></span><span>Pick a category and start building your order.</span></div>';}
 const offer=(data.promotions||[])[0],hero=document.querySelector('.hero-card small');if(offer&&hero){hero.textContent=offer.banner_text||offer.name;const strong=hero.parentElement?.querySelector('strong');if(strong)strong.textContent=offer.name}

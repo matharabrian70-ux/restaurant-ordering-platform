@@ -8,7 +8,10 @@
 <body data-page="menu">
 <header class="menu-mock-nav">
   <a class="menu-mock-brand" href="index.html" data-tenant-brand><span class="brand-leaf">◢</span><span>Savanna <b>Bites</b></span><small>GOOD FOOD · GREAT MOMENTS</small></a>
-  <nav><a class="active" href="menu.html">Menu</a><a class="menu-mock-cart" href="cart.html">Cart <b id="cart-count">0</b><span class="cart-icon">🛒</span></a></nav>
+  <nav><a class="active" href="menu.html">Menu</a><a class="menu-mock-cart" href="cart.html" aria-label="Cart">
+  <svg class="menu-cart-svg" viewBox="0 0 48 48" aria-hidden="true"><path d="M5 8h6l4.2 22.4a3 3 0 0 0 2.9 2.4h18.2a3 3 0 0 0 2.9-2.3L43 14H13" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><circle cx="20" cy="40" r="2.8" fill="currentColor"/><circle cx="36" cy="40" r="2.8" fill="currentColor"/></svg>
+  <b id="cart-count">0</b>
+</a></nav>
 </header>
 <main class="menu-mock-page">
   <section id="menu-special-hero" class="menu-special-hero" aria-label="Today's special">

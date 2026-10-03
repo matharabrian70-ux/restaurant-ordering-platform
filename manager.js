@@ -1,5 +1,6 @@
 const root=document.getElementById('manager-view'),B=BUSINESS_ID;
 window.__cspSetState=(name,value)=>{if(name==='T')T=value;else if(name==='orderFilter')orderFilter=value;else if(name==='orderSearch')orderSearch=value;};let D={},T='overview',photoData='',heroPhotoData='',selectedRiders={},currentManager=null,orderFilter='NEW',orderSearch='',managerEvents=null,alertedOrders=new Map(),riderInviteResult='';
+const managerFeature=(key)=>Boolean(D.features?.[key]);
 const ALERT_KEY='savanna_manager_alerts';
 const ALERT_SOUNDS={classic:'Classic Ding',double:'Double Bell',chime:'Professional Chime',priority:'Priority Ping',service:'Service Bell'};
 function alertPrefs(){try{const p=JSON.parse(localStorage.getItem(ALERT_KEY)||'{}');return {enabled:p.enabled!==false,sound:ALERT_SOUNDS[p.sound]?p.sound:'classic',volume:Number.isFinite(Number(p.volume))?Math.max(0,Math.min(1,Number(p.volume))):.85}}catch{return {enabled:true,sound:'classic',volume:.85}}}
@@ -18,7 +19,7 @@ function startManagerRealtime(){
       managerEvents=new EventSource(API_BASE_URL+'/api/events?realtimeToken='+encodeURIComponent(tokenData.token));
     const refresh=()=>{clearTimeout(window.managerRealtimeRetry);(Promise.resolve()).then(()=>load());};
     managerEvents.addEventListener('order.updated',e=>{try{const d=JSON.parse(e.data||'{}');if(d.status==='NEW'&&d.paymentStatus==='PAID'){const key=String(d.orderId||'');if(!alertedOrders.has(key)){alertedOrders.set(key,Date.now());playOrderAlert();setTimeout(()=>alertedOrders.delete(key),15000)}}refresh();}catch{}});
-    managerEvents.addEventListener('rider.updated',()=>syncRiderListInPlace());
+    if(managerFeature('riderModule')) managerEvents.addEventListener('rider.updated',()=>syncRiderListInPlace());
     ['delivery.updated','refund.updated','payment.updated','station.updated','menu.updated','promotion.updated','branch.updated'].forEach(name=>managerEvents.addEventListener(name,refresh));
     managerEvents.onerror=()=>{if(managerEvents){managerEvents.close();managerEvents=null;}window.managerRealtimeRetry=setTimeout(connect,3000);};
     }catch(e){
@@ -34,17 +35,33 @@ function alertsPanel(){const p=alertPrefs();return '<section class="manager-pane
 const money=v=>new Intl.NumberFormat('en-KE',{style:'currency',currency:'KES'}).format(Number(v||0));
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const api=(p,o={})=>apiRequest(p,o);
-const NAV_ITEMS=[['overview','⌂','Overview'],['orders','▤','Orders'],['dispatch','⇄','Dispatch'],['menu','☷','Menu'],['promotions','%','Promotions'],['branches','⌖','Branches'],['delivery','⌁','Delivery'],['riders','♟','Riders'],['receipts','▥','Receipts'],['payments','¤','Payments'],['refunds','↩','Refunds'],['sms','✉','SMS'],['privacy','⚖','Privacy & compliance'],['station','▣','Order station'],['phase-g','◈','Advanced Operations'],['phase-h','✦','Intelligence']];
+const NAV_ITEMS=[['overview','⌂','Overview'],['orders','▤','Orders'],['dispatch','⇄','Dispatch','riderModule'],['menu','☷','Menu'],['promotions','%','Promotions'],['branches','⌖','Branches','branchRouting'],['delivery','⌁','Delivery'],['riders','♟','Riders','riderModule'],['receipts','▥','Receipts'],['payments','¤','Payments'],['refunds','↩','Refunds'],['sms','✉','SMS','sms'],['privacy','⚖','Privacy & compliance'],['station','▣','Order station'],['phase-g','◈','Advanced Operations','advancedDelivery'],['phase-h','✦','Intelligence','advancedAnalytics']];
+const visibleNavItems=()=>NAV_ITEMS.filter(x=>!x[3]||managerFeature(x[3]));
 const nav=(k,l)=>'<button class="manager-tab '+(T===k?'active':'')+'" data-action="T=\''+k+'\';'+(k==='privacy'?'loadPrivacySettings().then(()=>render())':'render()')+'" aria-current="'+(T===k?'page':'false')+'"><span class="manager-tab-icon" aria-hidden="true">'+(NAV_ITEMS.find(x=>x[0]===k)?.[1]||'•')+'</span><span>'+l+'</span></button>';
-const managerSidebar=()=>'<aside class="manager-sidebar" aria-label="Manager sections"><div class="manager-sidebar-label">RESTAURANT CONTROL</div><nav class="manager-sidebar-nav">'+NAV_ITEMS.map(x=>nav(x[0],x[2])).join('')+'</nav><div class="manager-sidebar-footer"><span>LIVE CONTROL CENTRE</span><small>Restaurant operations</small></div></aside>';
-const managerMobileSections=()=>'<details class="manager-mobile-sections"><summary><span>☰</span> Manager sections</summary><div class="manager-mobile-section-list">'+NAV_ITEMS.map(x=>nav(x[0],x[2])).join('')+'</div></details>';
+const managerSidebar=()=>'<aside class="manager-sidebar" aria-label="Manager sections"><div class="manager-sidebar-label">RESTAURANT CONTROL</div><nav class="manager-sidebar-nav">'+visibleNavItems().map(x=>nav(x[0],x[2])).join('')+'</nav><div class="manager-sidebar-footer"><span>LIVE CONTROL CENTRE</span><small>Restaurant operations</small></div></aside>';
+const managerMobileSections=()=>'<details class="manager-mobile-sections"><summary><span>☰</span> Manager sections</summary><div class="manager-mobile-section-list">'+visibleNavItems().map(x=>nav(x[0],x[2])).join('')+'</div></details>';
 async function load(){
   if(!getManagerToken()) return showLogin();
   try{ currentManager=await api('/api/manager/me'); }catch(e){ return showLogin(); }
   root.innerHTML='<div class="manager-loading"><div class="manager-spinner"></div><h2>Loading control centre…</h2></div>';
   try{
-    const x=await Promise.all([api('/api/orders?businessId='+B),api('/api/riders?businessId='+B),api('/api/menu?businessId='+B),api('/api/businesses/'+B+'/branches'),api('/api/businesses/'+B+'/delivery-pricing'),api('/api/manager/delivery-zones'),api('/api/stations?businessId='+B),api('/api/businesses/'+B+'/branding'),api('/api/manager/receipt-settings'),api('/api/manager/dispatch'),api('/api/manager/refunds'),api('/api/manager/payments')]);
-    D={orders:x[0],riders:x[1],menu:x[2],branches:x[3],pricing:x[4],deliveryZones:x[5]||[],stations:x[6]||[],branding:x[7]?.branding||{},receiptConfig:x[8]?.config||{},dispatch:x[9]||{},refunds:x[10]||[],payments:x[11]||[],smsConfig:{}};
+    const featureState=await api('/api/features?businessId='+encodeURIComponent(B));
+    const riderEnabled=Boolean(featureState?.features?.riderModule);
+    const x=await Promise.all([
+      api('/api/orders?businessId='+B),
+      riderEnabled?api('/api/riders?businessId='+B):Promise.resolve([]),
+      api('/api/menu?businessId='+B),
+      api('/api/businesses/'+B+'/branches'),
+      api('/api/businesses/'+B+'/delivery-pricing'),
+      api('/api/manager/delivery-zones'),
+      api('/api/stations?businessId='+B),
+      api('/api/businesses/'+B+'/branding'),
+      api('/api/manager/receipt-settings'),
+      riderEnabled?api('/api/manager/dispatch'):Promise.resolve({riderConnected:false,riders:[],unassigned:[],active:[],summary:{}}),
+      api('/api/manager/refunds'),
+      api('/api/manager/payments')
+    ]);
+    D={features:featureState.features||{},orders:x[0],riders:x[1],menu:x[2],branches:x[3],pricing:x[4],deliveryZones:x[5]||[],stations:x[6]||[],branding:x[7]?.branding||{},receiptConfig:x[8]?.config||{},dispatch:x[9]||{},refunds:x[10]||[],payments:x[11]||[],smsConfig:{}};
     try{D.menu.coupons=await api('/api/menu/coupons?businessId='+encodeURIComponent(B));}catch{D.menu.coupons=[];}
     render();
     startManagerRealtime();
@@ -185,6 +202,7 @@ function dispatchRiderOptions(order){
   }).join(''):'<option value="">NO RIDERS AVAILABLE</option>';
 }
 function dispatch(){
+  if(!managerFeature('riderModule')) return '<section class="manager-panel"><div class="empty-state">Rider Dashboard is not included in this restaurant package.</div></section>';
   const d=D.dispatch||{},s=d.summary||{},riders=d.riders||[],unassigned=d.unassigned||[],active=d.active||[];
   if(d.error)return '<section class="manager-panel"><div class="login-error">'+esc(d.error)+'</div><button class="btn" data-action="load()">TRY AGAIN</button></section>';
   const riderConnected=Boolean(d.riderConnected); unassigned.forEach(o=>detailRegister('order',o.id,o)); active.forEach(o=>detailRegister('order',o.id,o));
@@ -604,9 +622,9 @@ async function promo(e){e.preventDefault();const g=id=>document.getElementById(i
 async function togglePromo(id,a){const p=D.menu.promotions.find(x=>x.id===id);if(!p)return;try{await api('/api/menu/promotions/'+id,{method:'PATCH',body:JSON.stringify({businessId:B,name:p.name,type:p.type,value:p.value,minOrder:p.min_order_kes,startsAt:p.starts_at,endsAt:p.ends_at,daysOfWeek:p.days_of_week,startTime:p.start_time,endTime:p.end_time,active:a,bannerText:p.banner_text,productIds:p.product_ids,category:p.category})});T='promotions';await load()}catch(e){alert(e.message)}}
 function branches(){return '<div class="manager-grid two"><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">FULFILLMENT</span><h2>Branches</h2><p>Customers do not choose a branch; the delivery engine selects the best active branch.</p></div></div>'+(D.branches.map(b=>'<div class="branch-card"><div><b>'+esc(b.name)+'</b><span>'+esc(b.address)+'</span><small>'+Number(b.service_radius_km||18)+' km radius</small></div><span class="status-chip '+(b.active?'active':'inactive')+'">'+(b.active?'ACTIVE':'OFF')+'</span></div>').join('')||'<div class="empty-state">No branches configured.</div>')+'</section><section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">ADD LOCATION</span><h2>New branch</h2></div></div><form onsubmit="branch(event)"><label>Name<input id="bn" required></label><label>Address<input id="ba" required></label><div class="form-grid"><label>Latitude<input id="blat" type="number" step="any" required></label><label>Longitude<input id="blng" type="number" step="any" required></label></div><label>Service radius (km)<input id="br" type="number" min="1" max="30" value="18"></label><label>Pickup instructions<input id="bi"></label><button class="btn wide">ADD BRANCH</button></form></section></div>'}
 async function branch(e){e.preventDefault();const g=id=>document.getElementById(id).value;try{await api('/api/businesses/'+B+'/branches',{method:'POST',body:JSON.stringify({name:g('bn'),address:g('ba'),latitude:Number(g('blat')),longitude:Number(g('blng')),serviceRadiusKm:Number(g('br')),pickupInstructions:g('bi'),active:true,acceptingOrders:true})});T='branches';await load()}catch(x){alert(x.message)}}
-function delivery(){const p=D.pricing,zones=D.deliveryZones||[];return '<section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">DELIVERY PRICING</span><h2>'+(p.editable?'Restaurant master pricing':'Automatic platform pricing')+'</h2><p>'+(p.editable?'Bounded master rules.':'Advanced pricing is platform-managed and balances customer cost with rider earnings.')+'</p></div><span class="mode-badge">'+p.mode+'</span></div>'+(p.editable?'<form onsubmit="saveDelivery(event)" class="form-grid four">'+[['base_fee_kes','Base fee'],['per_km_kes','Per km'],['per_minute_kes','Per minute'],['minimum_fee_kes','Minimum'],['maximum_fee_kes','Maximum'],['peak_multiplier','Peak multiplier']].map(x=>'<label>'+x[1]+'<input id="dp-'+x[0]+'" type="number" step=".01" value="'+p.rules[x[0]]+'"></label>').join('')+'<button class="btn">SAVE PRICING</button></form>':'<div class="auto-pricing"><b>AUTOMATIC</b><span>'+money(p.rules.minimum_fee_kes)+' – '+money(p.rules.maximum_fee_kes)+' customer range</span><span>Route distance + traffic duration + fuel movement + rider payment floor</span></div>')+'</section><section class="manager-panel delivery-zones-panel"><div class="panel-title"><div><span class="eyebrow">RESTAURANT DELIVERY ZONES</span><h2>Zones & delivery prices</h2><p>Control where this restaurant delivers, the delivery fee and the minimum order for each zone.</p></div><span class="mode-badge">'+zones.length+' ZONE'+(zones.length===1?'':'S')+'</span></div><div class="delivery-zone-list">'+(zones.length?zones.map(z=>'<article class="delivery-zone-card"><div><strong>'+esc(z.name)+'</strong><small>'+esc(z.zone_type)+' · '+(z.active?'ACTIVE':'DISABLED')+' · Priority '+Number(z.priority||0)+'</small><small>Fee '+money(z.fee)+' · Minimum '+money(z.minimum_order)+'</small></div><div class="delivery-zone-actions"><button class="btn btn-small" data-action="toggleDeliveryZone(\''+z.id+'\','+(!z.active)+')">'+(z.active?'DISABLE':'ENABLE')+'</button><button class="btn btn-small secondary" data-action="editDeliveryZone(\''+z.id+'\')">EDIT PRICE</button></div></article>').join(''):'<div class="empty-state">No delivery zones configured yet.</div>')+'</div><details class="delivery-zone-create"><summary class="btn">＋ ADD DELIVERY ZONE</summary><form onsubmit="createDeliveryZone(event)" class="form-grid four"><label>Zone name<input id="zone-name" required placeholder="e.g. Westlands"></label><label>Zone type<select id="zone-type"><option value="RADIUS">Radius</option><option value="POLYGON">Polygon</option></select></label><label>Delivery fee<input id="zone-fee" type="number" min="0" step=".01" required placeholder="0"></label><label>Minimum order<input id="zone-min" type="number" min="0" step=".01" required placeholder="0"></label><label>Center latitude<input id="zone-lat" type="number" step=".000001" required></label><label>Center longitude<input id="zone-lng" type="number" step=".000001" required></label><label>Radius metres<input id="zone-radius" type="number" min="1" required></label><label>Priority<input id="zone-priority" type="number" min="0" step="1" value="0"></label><button class="btn">CREATE DELIVERY ZONE</button></form></details></section>'}
+function delivery(){const p=D.pricing,zones=D.deliveryZones||[];const riderConnected=Boolean(D.dispatch?.riderConnected);return '<section class="manager-panel"><div class="panel-title"><div><span class="eyebrow">DELIVERY PRICING</span><h2>'+(p.editable?'Restaurant delivery pricing':'Automatic platform pricing')+'</h2><p>'+(p.editable?'Set simple delivery zones and the fee customers pay. The restaurant handles its own delivery person.':'Automatic pricing is active because the Rider Dashboard is connected. Rider earnings are handled by the rider workflow.')+'</p></div><span class="mode-badge">'+(riderConnected?'RIDER CONNECTED':'MANUAL DELIVERY')+'</span></div>'+(p.editable?'':'<div class="auto-pricing"><b>AUTOMATIC</b><span>'+money(p.rules.minimum_fee_kes)+' – '+money(p.rules.maximum_fee_kes)+' customer range</span><span>Route distance + traffic duration + fuel movement + rider payment floor</span></div>')+'</section><section class="manager-panel delivery-zones-panel"><div class="panel-title"><div><span class="eyebrow">RESTAURANT DELIVERY ZONES</span><h2>Zones & delivery prices</h2><p>Control where this restaurant delivers, the delivery fee and the minimum order for each zone.</p></div><span class="mode-badge">'+zones.length+' ZONE'+(zones.length===1?'':'S')+'</span></div><div class="delivery-zone-list">'+(zones.length?zones.map(z=>'<article class="delivery-zone-card"><div><strong>'+esc(z.name)+'</strong><small>'+esc(z.zone_type)+' · '+(z.active?'ACTIVE':'DISABLED')+' · Priority '+Number(z.priority||0)+'</small><small>Fee '+money(z.fee)+' · Minimum '+money(z.minimum_order)+'</small></div><div class="delivery-zone-actions"><button class="btn btn-small" data-action="toggleDeliveryZone(\''+z.id+'\','+(!z.active)+')">'+(z.active?'DISABLE':'ENABLE')+'</button><button class="btn btn-small secondary" data-action="editDeliveryZone(\''+z.id+'\')">EDIT PRICE</button></div></article>').join(''):'<div class="empty-state">No delivery zones configured yet.</div>')+'</div><details class="delivery-zone-create"><summary class="btn">＋ ADD DELIVERY ZONE</summary><form onsubmit="createDeliveryZone(event)" class="form-grid four"><label>Zone name<input id="zone-name" required placeholder="e.g. Westlands"></label><label>Coverage radius (km)<input id="zone-radius-km" type="number" min="0.5" max="30" step="0.5" required placeholder="e.g. 3"></label><label>Delivery fee<input id="zone-fee" type="number" min="0" step=".01" required placeholder="e.g. 150"></label><label>Minimum order<input id="zone-min" type="number" min="0" step=".01" required placeholder="0"></label><label>Priority<input id="zone-priority" type="number" min="0" step="1" value="0"></label><button class="btn">CREATE DELIVERY ZONE</button></form></details></section>'}
 async function saveDelivery(e){e.preventDefault();const k=['base_fee_kes','per_km_kes','per_minute_kes','minimum_fee_kes','maximum_fee_kes','peak_multiplier'],b={};k.forEach(x=>b[x]=Number(document.getElementById('dp-'+x).value));try{await api('/api/businesses/'+B+'/delivery-pricing',{method:'PATCH',body:JSON.stringify(b)});T='delivery';await load()}catch(x){alert(x.message)}}
-async function createDeliveryZone(e){e.preventDefault();const g=id=>document.getElementById(id)?.value;try{await api('/api/manager/delivery-zones',{method:'POST',body:JSON.stringify({name:g('zone-name'),zoneType:g('zone-type'),fee:Number(g('zone-fee')),minimumOrder:Number(g('zone-min')),centerLatitude:Number(g('zone-lat')),centerLongitude:Number(g('zone-lng')),radiusMeters:Number(g('zone-radius')),priority:Number(g('zone-priority')||0)})});T='delivery';await load()}catch(x){alert(x.message)}}
+async function createDeliveryZone(e){e.preventDefault();const g=id=>document.getElementById(id)?.value;try{await api('/api/manager/delivery-zones',{method:'POST',body:JSON.stringify({name:g('zone-name'),zoneType:'RADIUS',fee:Number(g('zone-fee')),minimumOrder:Number(g('zone-min')),radiusMeters:Number(g('zone-radius-km'))*1000,priority:Number(g('zone-priority')||0)})});T='delivery';await load()}catch(x){alert(x.message)}}
 async function toggleDeliveryZone(zoneId,active){try{await api('/api/manager/delivery-zones/'+encodeURIComponent(zoneId),{method:'PATCH',body:JSON.stringify({active})});T='delivery';await load()}catch(x){alert(x.message)}}
 async function editDeliveryZone(zoneId){const z=(D.deliveryZones||[]).find(x=>String(x.id)===String(zoneId));if(!z)return;const fee=prompt('Delivery fee (KES)',z.fee);if(fee===null)return;const minimum=prompt('Minimum order (KES)',z.minimum_order);if(minimum===null)return;const priority=prompt('Priority',z.priority||0);if(priority===null)return;try{await api('/api/manager/delivery-zones/'+encodeURIComponent(zoneId),{method:'PATCH',body:JSON.stringify({fee:Number(fee),minimumOrder:Number(minimum),priority:Number(priority)})});T='delivery';await load()}catch(x){alert(x.message)}}
 function riderStatusLabel(status){
@@ -614,6 +632,7 @@ function riderStatusLabel(status){
 }
 function riderStatusClass(status){return String(status||'').toLowerCase().replace(/_/g,'-');}
 function riders(){
+  if(!managerFeature('riderModule')) return '<section class="manager-panel"><div class="empty-state">Rider Dashboard is not included in this restaurant package.</div></section>';
   const list=sortRiders(D.riders||[]);
   const pending=list.filter(r=>r.rider_status==='PENDING_APPROVAL').length;
   const invited=list.filter(r=>r.rider_status==='INVITED').length;
@@ -674,6 +693,7 @@ async function approveRider(id,button){
   catch(x){button.disabled=false;button.textContent='APPROVE RIDER';alert(x.message);}
 }
 async function syncRiderListInPlace(){
+  if(!managerFeature('riderModule')) return;
   try{
     D.riders=await api('/api/riders?businessId='+encodeURIComponent(B));
     if(T!=='riders')return;
@@ -689,6 +709,7 @@ async function syncRiderListInPlace(){
 }
 function startManagerLiveFallback(){
   clearInterval(window.managerLiveFallback);
+  if(!managerFeature('riderModule')) return;
   window.managerLiveFallback=setInterval(()=>syncRiderListInPlace(),2000);
 }
 async function suspendRider(id,button){

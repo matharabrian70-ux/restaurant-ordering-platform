@@ -219,15 +219,14 @@ export function registerAdvancedOperations(app,pool){
     const riderModule=Boolean(packageState.rows[0]?.rider_module);
     const riderConnected=Boolean(packageState.rows[0]?.rider_connected);
     if(riderModule&&riderConnected)return res.status(403).json({error:'Automatic Rider Dashboard pricing is active; manual delivery zones are disabled'});
-    const type=clean(req.body.zoneType,20).toUpperCase(),fee=Number(req.body.fee||0),minimum=Number(req.body.minimumOrder||0);
+    const type=clean(req.body.zoneType,20).toUpperCase(),fee=Number(req.body.fee||0),minimum=Number(req.body.minimumOrder||0),branchId=clean(req.body.branchId,80);
     if(type!=='RADIUS'||!clean(req.body.name,100)||!Number.isFinite(fee)||fee<0||!Number.isFinite(minimum)||minimum<0)return res.status(400).json({error:'Valid radius zone name, fee and minimum order are required'});
+    const branch=await pool.query('select id,latitude,longitude from business_branches where id=$1 and business_id=$2 and active=true limit 1',[branchId,req.manager.businessId]);
+    if(!branch.rowCount)return res.status(400).json({error:'Select an active branch for this delivery zone'});
     let centerLatitude=Number(req.body.centerLatitude),centerLongitude=Number(req.body.centerLongitude);
-    if(!Number.isFinite(centerLatitude)||!Number.isFinite(centerLongitude)){
-      const branch=await pool.query('select latitude,longitude from business_branches where business_id=$1 and active=true order by name limit 1',[req.manager.businessId]);
-      centerLatitude=Number(branch.rows[0]?.latitude);centerLongitude=Number(branch.rows[0]?.longitude);
-    }
+    if(!Number.isFinite(centerLatitude)||!Number.isFinite(centerLongitude)){centerLatitude=Number(branch.rows[0].latitude);centerLongitude=Number(branch.rows[0].longitude);}
     if(!Number.isFinite(centerLatitude)||!Number.isFinite(centerLongitude)||!(Number(req.body.radiusMeters)>0))return res.status(400).json({error:'A restaurant branch location and radius are required'});
-    const r=await pool.query('insert into delivery_zones(business_id,name,zone_type,fee,minimum_order,radius_meters,center_latitude,center_longitude,polygon,priority) values($1,$2,\'RADIUS\',$3,$4,$5,$6,$7,null,$8) returning *',[req.manager.businessId,clean(req.body.name,100),fee,minimum,Number(req.body.radiusMeters),centerLatitude,centerLongitude,Number(req.body.priority||0)]);
+    const r=await pool.query('insert into delivery_zones(business_id,branch_id,name,zone_type,fee,minimum_order,radius_meters,center_latitude,center_longitude,polygon,priority) values($1,$2,$3,\'RADIUS\',$4,$5,$6,$7,$8,null,$9) returning *',[req.manager.businessId,branchId,clean(req.body.name,100),fee,minimum,Number(req.body.radiusMeters),centerLatitude,centerLongitude,Number(req.body.priority||0)]);
     res.status(201).json(r.rows[0]);
   });
   app.patch('/api/manager/delivery-zones/:id',manager,async(req,res)=>{

@@ -2303,12 +2303,12 @@ app.post('/api/orders',
         selected_branch_distance_meters,selected_branch_duration_seconds,customer_access_token_hash
       ) values(
         $1,$2,$3,$4,'NEW','PENDING',$5,$6,$7,$8,$9,$7,$10,$11,$12,$13,$14,$15,$16,$17,$18,
-        $19,$20,$21,$22,$23,$24,$25
+        $19,$20,$21,$22,$23,$24,$25,$26
       ) returning *`,
       [
         orderId,businessId,customerResult.rows[0].id,orderNumber,normalizedPaymentMethod,
         deliveryNote?.trim()||null,foodSubtotal,numericTotal,deliveryFee,coupon?.id||null,couponDiscount,
-        deliveryFee>0?'QUOTED':'NONE',pickupAddress,deliveryAddress,
+        deliveryFeeStatus,pickupAddress,deliveryAddress,
         deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,
         deliveryData?.duration_seconds||null,riderEarning,deliveryData?.branch_id||null,
         deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,

@@ -103,3 +103,57 @@
   .cart-assurances strong{font-size:9px}
   .cart-premium-footer{display:grid;padding-bottom:35px}
 }
+
+/* Approved screenshot-level cart composition */
+body[data-page="cart"]{background:#f7f5ef!important}
+.cart-premium-nav{position:absolute;top:0;left:0;right:0;height:96px;padding:0 clamp(28px,6.2vw,104px);background:transparent!important;color:#fff;z-index:30}
+.cart-premium-brand{position:relative;color:#fff!important;font-family:Georgia,"Times New Roman",serif;font-size:31px;font-weight:800;letter-spacing:-.045em;padding-left:46px;line-height:1}
+.cart-premium-brand:before{content:"";position:absolute;left:0;top:-2px;width:31px;height:40px;background:#5aae4c;border-radius:75% 12% 75% 12%;transform:rotate(-38deg)}
+.cart-premium-brand:after{content:"GOOD FOOD  •  GREAT MOMENTS";position:absolute;left:47px;top:36px;font:700 9px Arial,sans-serif;letter-spacing:.28em;color:rgba(255,255,255,.75);white-space:nowrap}
+.cart-premium-nav nav{gap:0}
+.cart-premium-nav nav a:first-child{display:none}
+.cart-premium-nav-cart{width:55px;height:55px;border-radius:50%;background:rgba(0,0,0,.48);display:grid!important;place-items:center;position:relative;font-size:0!important;backdrop-filter:blur(5px)}
+.cart-premium-nav-cart:before{content:"🛒";font-size:25px;filter:grayscale(1) brightness(0) invert(1)}
+.cart-premium-nav-cart b{position:absolute;right:-2px;top:-2px;min-width:25px;height:25px;padding:0;border:2px solid rgba(0,0,0,.25);background:#2fb84f;font-size:11px}
+.cart-special-hero{height:313px;border-radius:0;overflow:hidden}
+.cart-special-image{object-position:60% 48%;transform:none;filter:saturate(1.04)}
+.cart-special-overlay{background:linear-gradient(90deg,rgba(5,10,6,.88) 0%,rgba(5,10,6,.65) 36%,rgba(5,10,6,.16) 73%,rgba(5,10,6,.08) 100%),linear-gradient(0deg,rgba(5,10,6,.22),transparent 58%)}
+.cart-special-content{max-width:1400px;padding:0 8.2vw 8px;justify-content:center}
+.cart-special-brand{display:none}
+.cart-special-kicker{margin-top:35px;background:rgba(93,48,22,.88);padding:8px 15px;font-size:11px}
+.cart-special-content h1{font-size:clamp(48px,5.2vw,72px);margin:13px 0 8px}
+.cart-special-content p{font-size:18px}
+.cart-special-dots{margin-top:13px}
+.cart-hero-menu{display:none}
+.cart-page-shell{max-width:1400px;margin:-24px auto 0;padding:0 5vw 65px}
+.cart-layout-premium{grid-template-columns:minmax(0,1.2fr) minmax(360px,.72fr);gap:18px}
+.cart-items-panel,.cart-summary-premium{border-radius:20px;box-shadow:0 14px 45px rgba(23,32,25,.08)}
+.cart-items-panel{padding:31px 37px}
+.cart-section-head{padding-bottom:19px}
+.cart-section-head h1{font-family:Arial,sans-serif;font-size:30px;letter-spacing:-.045em;margin:0;font-weight:900}
+.cart-item-count{font-size:20px}
+.clear-cart-btn{font-size:12px}
+.cart-items-list{gap:13px;margin-top:15px}
+.cart-item-premium{gap:18px;padding:17px;border-radius:15px}
+.cart-item-premium>img{width:150px;height:128px;flex-basis:150px;border-radius:11px}
+.cart-item-premium-main h3{font-size:20px}
+.cart-item-premium-main strong{font-size:18px}
+.cart-item-premium-actions{margin-top:10px}
+.cart-summary-premium{padding:28px 34px}
+.summary-top h2{font-family:Arial,sans-serif;font-size:27px;letter-spacing:-.045em;margin:0 0 18px;font-weight:900}
+.summary-row-premium{padding:15px 0}
+.summary-total-premium{padding:19px 0 22px}
+.summary-total-premium strong{font-size:27px}
+.cart-checkout-btn{min-height:61px;font-size:15px}
+.promo-field{margin-top:17px}
+.cart-assurances{margin-top:20px;padding-top:20px}
+.cart-premium-footer{padding-top:28px}
+@media(max-width:900px){
+  .cart-premium-nav{height:78px;padding:0 5vw}
+  .cart-premium-brand{font-size:23px;padding-left:36px}
+  .cart-premium-brand:before{width:25px;height:33px}
+  .cart-premium-brand:after{left:36px;top:30px;font-size:7px}
+  .cart-special-hero{height:330px}
+  .cart-special-content{padding:0 7vw}
+  .cart-page-shell{margin:-22px auto 0;padding:0 4vw 55px}
+}

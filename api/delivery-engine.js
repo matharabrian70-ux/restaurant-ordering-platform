@@ -224,6 +224,8 @@ export function registerDeliveryEngine(app,pool,requireManager=(_req,_res,next)=
   });
   app.delete('/api/businesses/:id/branches/:branchId',requireManager,async(req,res)=>{
     try{
+      const activeBranchCount=await pool.query("select count(*)::int as count from business_branches where business_id=$1 and active=true",[req.params.id]);
+      if(Number(activeBranchCount.rows[0]?.count||0)<=1)return res.status(409).json({error:'At least one active branch must remain available for ordering.'});
       const activeOrders=await pool.query("select count(*)::int as count from orders where business_id=$1 and branch_id=$2 and status not in ('DELIVERED','CANCELLED')",[req.params.id,req.params.branchId]);
       if(Number(activeOrders.rows[0]?.count||0)>0)return res.status(409).json({error:'This branch has active orders. Complete or cancel them before deactivating the branch.'});
       const r=await pool.query('update business_branches set active=false,accepting_orders=false,updated_at=now() where id=$1 and business_id=$2 returning id',[req.params.branchId,req.params.id]); if(!r.rowCount)return res.status(404).json({error:'Branch not found'});res.json({ok:true});

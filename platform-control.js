@@ -16,8 +16,14 @@ async function api(path,opt={}){
   const headers={'Content-Type':'application/json',...(opt.headers||{})};
   if(token())headers.Authorization='Bearer '+token();
   const response=await fetch(API+path,{...opt,headers});
-  const data=await response.json().catch(()=>({}));
-  if(!response.ok)throw new Error(data.error||'Platform request failed');
+  const raw=await response.text();
+  let data={};
+  try{data=raw?JSON.parse(raw):{};}catch{}
+  if(!response.ok){
+    const detail=data.error||raw.replace(/<[^>]*>/g,' ').replace(/\\s+/g,' ').trim();
+    throw new Error(detail||('Platform request failed (HTTP '+response.status+')'));
+  }
+  return data;
   return data;
 }
 

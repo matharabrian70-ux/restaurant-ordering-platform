@@ -61,7 +61,9 @@ async function load(){
       api('/api/manager/refunds'),
       api('/api/manager/payments')
     ]);
-    D={features:featureState.features||{},orders:x[0],riders:x[1],menu:x[2],branches:x[3],pricing:x[4],deliveryZones:x[5]||[],stations:x[6]||[],branding:x[7]?.branding||{},receiptConfig:x[8]?.config||{},dispatch:x[9]||{},refunds:x[10]||[],payments:x[11]||[],smsConfig:{}};
+    D={features:featureState.features||{},orders:x[0],riders:x[1],menu:x[2],branches:x[3],pricing:x[4],deliveryZones:x[5]||[],stations:x[6]||[],branding:x[7]?.branding||{},receiptConfig:x[8]?.config||{},dispatch:x[9]||{},refunds:x[10]||[],payments:x[11]||{},smsConfig:{}};
+    const activeNavItem=NAV_ITEMS.find(x=>x[0]===T);
+    if(activeNavItem?.[3]&&!managerFeature(activeNavItem[3])) T='overview';
     try{D.menu.coupons=await api('/api/menu/coupons?businessId='+encodeURIComponent(B));}catch{D.menu.coupons=[];}
     render();
     startManagerRealtime();

@@ -174,7 +174,11 @@ export function registerDeliveryEngine(app,pool,requireManager=(_req,_res,next)=
           count(*) filter (where payment_status='PAID' and status<>'CANCELLED')::int as paid_orders,
           coalesce(sum(total) filter (where payment_status='PAID' and status<>'CANCELLED'),0)::numeric as revenue,
           coalesce(sum(delivery_fee) filter (where payment_status='PAID' and status<>'CANCELLED'),0)::numeric as delivery_revenue,
-          coalesce(avg(total) filter (where payment_status='PAID' and status<>'CANCELLED'),0)::numeric as average_order
+          coalesce(avg(total) filter (where payment_status='PAID' and status<>'CANCELLED'),0)::numeric as average_order,
+          count(*) filter (where created_at>=current_date)::int as today_orders,
+          coalesce(sum(total) filter (where created_at>=current_date and payment_status='PAID' and status<>'CANCELLED'),0)::numeric as today_revenue,
+          count(*) filter (where created_at>=current_date-interval '7 days')::int as week_orders,
+          coalesce(sum(total) filter (where created_at>=current_date-interval '7 days' and payment_status='PAID' and status<>'CANCELLED'),0)::numeric as week_revenue
           from orders where business_id=$1 and branch_id=$2`,[req.params.id,req.params.branchId]),
         pool.query(`select status,count(*)::int as count from orders where business_id=$1 and branch_id=$2 group by status order by status`,[req.params.id,req.params.branchId]),
         pool.query(`select id,name,device_type,mode,active,last_seen_at,created_at,updated_at from restaurant_order_stations where business_id=$1 and branch_id=$2 order by active desc,last_seen_at desc`,[req.params.id,req.params.branchId]),

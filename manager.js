@@ -398,12 +398,13 @@ function renderVariableGroups(targetId='new-variable-groups',draft=newMenuVariab
         <input class="variable-draft-input" data-group-index="${gi}" data-variable-field="name" value="${esc(g.name||'')}" placeholder="Variable name e.g. Size" maxlength="80">
         <button type="button" class="btn btn-small secondary" data-action="${removeGroupFn}(${gi})">REMOVE</button>
       </div>
+      <div class="menu-variable-choice-help"><b>How this works:</b> Key is an internal identifier; Customer label is what customers see. You can leave Key blank and it will be generated automatically from the label.</div>
       <div class="menu-variable-choices">
         ${(g.choices||[]).map((ch,ci)=>`
           <div class="menu-variable-choice">
-            <input class="variable-draft-input" data-group-index="${gi}" data-choice-index="${ci}" data-variable-field="key" value="${esc(ch?.[0]||'')}" placeholder="Key" maxlength="80">
-            <input class="variable-draft-input" data-group-index="${gi}" data-choice-index="${ci}" data-variable-field="label" value="${esc(ch?.[1]||'')}" placeholder="Customer label" maxlength="120">
-            <input class="variable-draft-input" data-group-index="${gi}" data-choice-index="${ci}" data-variable-field="price" type="number" min="0" max="100000" step=".01" value="${Number(ch?.[2]||0)}" placeholder="+ KES">
+            <input class="variable-draft-input" data-group-index="${gi}" data-choice-index="${ci}" data-variable-field="key" value="${esc(ch?.[0]||'')}" placeholder="Internal key e.g. small (optional)" maxlength="80" title="Internal identifier. Leave blank to generate it automatically from the customer label.">
+            <input class="variable-draft-input" data-group-index="${gi}" data-choice-index="${ci}" data-variable-field="label" value="${esc(ch?.[1]||'')}" placeholder="Customer label e.g. Small" maxlength="120" title="This is the name customers will see.">
+            <input class="variable-draft-input" data-group-index="${gi}" data-choice-index="${ci}" data-variable-field="price" type="number" min="0" max="100000" step=".01" value="${Number(ch?.[2]||0)}" placeholder="Extra KES e.g. 200">
             <button type="button" class="btn btn-small secondary" data-action="${removeChoiceFn}(${gi},${ci})" aria-label="Remove choice">×</button>
           </div>`).join('')}
       </div>
@@ -463,8 +464,28 @@ function selectMenuCategory(id){
 async function reorderMenuCategories(orderedIds){
   const button=document.querySelector('[data-menu-reorder-save]');
   if(button){button.disabled=true;button.textContent='SAVING…';}
-  try{await api('/api/menu/categories/reorder',{method:'POST',body:JSON.stringify({businessId:B,categoryIds:orderedIds})});T='menu';await load();}
-  catch(e){alert(e.message||'Unable to reorder categories');if(button){button.disabled=false;button.textContent='SAVE CATEGORY ORDER';}}
+  try{
+    try{
+      await api('/api/menu/categories/reorder',{method:'POST',body:JSON.stringify({businessId:B,categoryIds:orderedIds})});
+    }catch(primaryError){
+      // Backward-compatible fallback for a manager API deployment that has
+      // category PATCH support but has not yet picked up the bulk reorder route.
+      const current=[...(D.menu?.categories||[])];
+      const byId=new Map(current.map(c=>[String(c.id),c]));
+      if(orderedIds.length!==current.length||orderedIds.some(id=>!byId.has(String(id))))throw primaryError;
+      for(let i=0;i<orderedIds.length;i++){
+        await api('/api/menu/categories/'+encodeURIComponent(orderedIds[i]),{
+          method:'PATCH',
+          body:JSON.stringify({businessId:B,sortOrder:i})
+        });
+      }
+    }
+    T='menu';
+    await load();
+  }catch(e){
+    alert(e.message||'Unable to reorder categories');
+    if(button){button.disabled=false;button.textContent='SAVE CATEGORY ORDER';}
+  }
 }
 async function moveMenuCategory(id,direction){
   const cats=[...(D.menu?.categories||[])].sort((a,b)=>Number(a.sort_order)-Number(b.sort_order)||String(a.name).localeCompare(String(b.name)));

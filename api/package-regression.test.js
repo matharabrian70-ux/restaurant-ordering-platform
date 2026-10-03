@@ -93,3 +93,30 @@ test('Restaurant receives delivery money when Rider Dashboard is not connected',
   has(server, "const merchantShareKes=merchantFood+(riderConnected?0:Number(order.delivery_fee||0));");
   has(server, "Rider Dashboard must be connected before assigning a rider");
 });
+
+test('Branch execution routing is authoritative', () => {
+  const delivery = fs.readFileSync(path.join(root, 'api', 'delivery-engine.js'), 'utf8');
+  has(delivery, "order by priority desc,created_at desc");
+  has(delivery, "business_id=$1 and active=true and accepting_orders=true");
+  has(delivery, "sort((a,b)=>a.distanceKm-b.distanceKm)[0]");
+  has(server, "and o.branch_id=$2 order by o.created_at desc limit 200");
+  has(server, "and o.business_id=$2 and o.branch_id=$3 for update");
+});
+
+test('Order stations are permanently bound to a branch', () => {
+  has(server, "An active branch is required for every order-control station");
+  has(server, "st.branch_id");
+  has(server, "bb.id=st.branch_id");
+  has(server, "and bb.active=true");
+  has(server, "branchId:req.station.branch_id");
+});
+
+test('Restaurant provisioning never invents Nairobi as a branch location', () => {
+  has(server, "Valid branch latitude and longitude are required");
+  assert.doesNotMatch(server, /-1\.286389,36\.817223/);
+});
+
+test('Paystack settlement cannot silently fall back to the platform account', () => {
+  has(server, "This restaurant has not completed its Paystack settlement setup");
+  has(server, "const split=order.paystack_subaccount_code && merchantShareKes>0");
+});

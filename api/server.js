@@ -2098,8 +2098,7 @@ app.post('/api/delivery/quote', quoteRateLimit, quoteBusinessRateLimit, async (r
     const delivery=String(req.body.deliveryAddress||'').trim();
     if(!business||!pickup||!delivery) return res.status(400).json({error:'businessId, pickupAddress and deliveryAddress are required'});
     if(pickup.length>DELIVERY_QUOTE_MAX_ADDRESS_LENGTH||delivery.length>DELIVERY_QUOTE_MAX_ADDRESS_LENGTH) return res.status(400).json({error:'Delivery addresses are too long'});
-    const features=await pool.query('select rider_module_enabled from business_features where business_id=$1',[business]);
-    if(!features.rowCount||!features.rows[0].rider_module_enabled) return res.status(404).json({error:'Delivery module is not enabled for this business'});
+    if(!await getRiderConnectionState(business)) return res.status(404).json({error:'Rider Dashboard delivery is not connected for this business'});
     const key=quoteCacheKey(business,pickup,delivery);
     const cached=deliveryQuoteCache.get(key);
     const q=cached&&cached.expiresAt>Date.now()?cached.quote:await calculateDeliveryQuote({businessId:business,pickupAddress:pickup,deliveryAddress:delivery});

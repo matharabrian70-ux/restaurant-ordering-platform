@@ -41,3 +41,55 @@ body[data-page="menu"]{touch-action:pan-y;}
 .menu-mock-page{touch-action:pan-y;}
 .menu-category-nav{touch-action:pan-x;overscroll-behavior-x:contain;}
 .menu-category-pill,.menu-hero-arrow,.menu-hero-order,.signature-add-btn,.quantity-mini{touch-action:manipulation;}
+
+/* Approved menu screenshot composition — fixed geometry, tenant data remains dynamic */
+body[data-page="menu"]{background:#f7f5ef!important;color:#151b16}
+.menu-mock-nav{height:78px!important;background:#fffdf8!important;padding:0 6%!important;border-bottom:1px solid #e9e6de!important}
+.menu-mock-brand{font-family:Arial,sans-serif!important;font-size:22px!important;grid-template-columns:0 auto!important;color:#172019!important}
+.menu-mock-brand .brand-leaf{display:none}
+.menu-mock-brand small{display:none}
+.menu-mock-brand b{color:#172019!important}
+.menu-mock-nav nav{gap:24px!important}
+.menu-mock-nav nav a{font-size:14px!important}
+.menu-mock-cart .cart-icon{display:none}
+.menu-mock-page{max-width:none!important;padding:0 0 55px!important}
+.menu-special-hero{width:min(895px,calc(100% - 40px));height:235px!important;margin:0 auto 18px!important;border-radius:22px!important}
+.menu-special-copy{left:42px!important;top:50%!important}
+.menu-special-copy h1{font-size:48px!important;margin:12px 0 8px!important}
+.menu-special-copy p{font-size:15px!important}
+.menu-special-pill{padding:7px 12px!important;font-size:9px!important}
+.menu-hero-order{margin-top:16px!important;padding:11px 22px!important;font-size:12px!important}
+.menu-hero-arrow{width:42px!important;height:42px!important}
+.menu-benefits{width:min(895px,calc(100% - 40px));height:94px!important;margin:0 auto 28px!important;border-radius:0!important;padding:0 42px!important;gap:28px!important}
+.menu-benefits strong{font-size:12px!important}
+.menu-benefits small{font-size:10px!important}
+.menu-discovery{max-width:1083px!important;margin:0 auto!important;padding:0!important}
+.menu-category-bar{background:#fffdf8!important;padding:12px 14px!important;margin-bottom:27px!important;border:1px solid #eeeae2!important}
+.menu-category-nav{gap:8px!important}
+.menu-category-pill{height:40px!important;padding:0 18px!important;font-size:11px!important}
+.menu-search{height:40px!important;flex-basis:285px!important;width:285px!important}
+.menu-grid{max-width:1083px!important;margin:0 auto!important}
+.menu-category-section{margin-bottom:42px!important}
+.menu-category-heading{margin-bottom:15px!important;padding:0!important}
+.menu-category-heading h2{font-size:31px!important}
+.menu-category-products{grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:18px!important}
+.signature-menu-card{border-radius:14px!important}
+.signature-menu-photo{height:171px!important}
+.signature-menu-body{min-height:168px!important;padding:12px 14px 13px!important}
+.signature-menu-copy h3{font-size:18px!important}
+.signature-description{font-size:12px!important}
+.signature-add-btn{height:40px!important;width:166px!important;flex-basis:166px!important;font-size:12px!important}
+@media(max-width:1000px){
+  .menu-category-products{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .menu-benefits{padding:0 25px!important}
+}
+@media(max-width:700px){
+  .menu-mock-nav{height:70px!important}
+  .menu-special-hero{width:100%!important;height:330px!important;margin:0!important;border-radius:0!important}
+  .menu-special-copy{left:7%!important}
+  .menu-benefits{width:calc(100% - 24px)!important;height:auto!important;margin:12px auto 18px!important;padding:15px 6%!important;border-radius:14px!important}
+  .menu-discovery{padding:0 4vw!important}
+  .menu-category-bar{display:grid!important}
+  .menu-category-products{grid-template-columns:1fr!important}
+  .menu-grid{padding:0 4vw!important}
+}

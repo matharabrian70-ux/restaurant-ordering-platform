@@ -1,6 +1,6 @@
 const API_BASE_URL = window.PLATFORM_API_ORIGIN || 'https://restaurant-ordering-api-ow3p.onrender.com';
 const DEFAULT_BUSINESS_ID = '11111111-1111-4111-8111-111111111111';
-const BUSINESS_ID = new URLSearchParams(location.search).get('businessId') || DEFAULT_BUSINESS_ID;
+const BUSINESS_ID = new URLSearchParams(location.search).get('businessId') || (typeof getStoredPromo==='function' ? getStoredPromo()?.businessId : null) || DEFAULT_BUSINESS_ID;
 const MANAGER_TOKEN_KEY = 'savanna_manager_session';
 const CUSTOMER_ORDER_TOKEN_KEY = 'savanna_customer_order_token';
 function getManagerToken(){ return window.PlatformSession ? PlatformSession.getLegacyToken('manager') : sessionStorage.getItem(MANAGER_TOKEN_KEY) || ''; }

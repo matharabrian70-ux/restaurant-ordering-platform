@@ -389,12 +389,6 @@ insert into delivery_pricing_rules(business_id)
 select id from businesses
 on conflict(business_id) do nothing;
 
-insert into business_branches(id,business_id,name,address,latitude,longitude,active,accepting_orders)
-select gen_random_uuid(),id,'Main Branch',coalesce(pickup_address,name),-1.286389,36.817223,true,true
-from businesses b
-where b.slug='savanna-bites'
-and not exists(select 1 from business_branches bb where bb.business_id=b.id);
-
 update orders o set branch_id=q.branch_id,customer_lat=q.customer_lat,customer_lng=q.customer_lng
 from delivery_quotes q where o.id=q.order_id and (o.branch_id is null or o.customer_lat is null);
 

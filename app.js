@@ -236,7 +236,7 @@ function renderCart(){
       <div class="summary-total-premium"><span>Total</span><strong>${money(total)}</strong></div>
       <a class="cart-checkout-btn" href="checkout.html">Continue to checkout <span>→</span></a>
       <div class="promo-field"><span>◇</span><input aria-label="Promo code" placeholder="Have a promo code?"><button type="button">Apply</button></div>
-      <div class="cart-assurances"><div><span>✓</span><strong>Secure<br>Checkout</strong></div><div><span>↗</span><strong>Freshly<br>Prepared</strong></div><div><span>✦</span><strong>Quality<br>Ingredients</strong></div></div>
+
     </aside>
   </div>`;
 }

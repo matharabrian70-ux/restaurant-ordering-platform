@@ -1273,9 +1273,11 @@ async function getStationFromSession(req) {
   const raw = String(req.headers.authorization || '');
   const token = raw.startsWith('Bearer ') ? raw.slice(7).trim() : '';
   if (!token) return null;
-  const result = await pool.query(`select s.*,st.name,st.device_type,st.mode,st.business_id,st.active
-    from station_sessions s join restaurant_order_stations st on st.id=s.station_id
-    where s.token_hash=$1 and s.expires_at>now() and st.active=true`, [hashSessionToken(token)]);
+  const result = await pool.query(`select s.*,st.name,st.device_type,st.mode,st.business_id,st.branch_id,st.active
+    from station_sessions s
+    join restaurant_order_stations st on st.id=s.station_id
+    join business_branches bb on bb.id=st.branch_id and bb.business_id=st.business_id
+    where s.token_hash=$1 and s.expires_at>now() and st.active=true and bb.active=true`, [hashSessionToken(token)]);
   return result.rows[0] || null;
 }
 async function requireStation(req, res, next) {

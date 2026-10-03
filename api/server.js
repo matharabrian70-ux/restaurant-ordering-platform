@@ -1255,6 +1255,85 @@ function requireManagerRole(...allowedRoles) {
     next();
   };
 }
+
+function managerAuditSeverity(req){
+  const p=String(req.path||'');
+  if(/^\/manager\/(team|users)/.test(p)||/^\/stations\//.test(p)||/\/branches(?:\/|$)/.test(p)||/delivery-pricing/.test(p)||/delivery-zones/.test(p)||/menu\/(coupons|categories)/.test(p)||/\/menu(?:\/|$)/.test(p)||/refunds/.test(p)) return 'MAJOR';
+  return 'NORMAL';
+}
+function managerAuditSummary(req){
+  const p=String(req.path||'');
+  const action=String(req.method||'').toUpperCase();
+  if(p.includes('/branches')) return action+' branch configuration';
+  if(p.includes('/stations')) return action+' order-control device';
+  if(p.includes('/delivery-zones')||p.includes('/delivery-pricing')) return action+' delivery pricing';
+  if(p.includes('/menu/coupons')) return action+' customer promo code';
+  if(p.includes('/menu')) return action+' menu configuration';
+  if(p.includes('/refunds')) return action+' refund operation';
+  if(p.includes('/team')||p.includes('/users')) return action+' manager access';
+  return action+' manager operation';
+}
+function sanitizeManagerAuditBody(body){
+  if(!body||typeof body!=='object')return {};
+  const out={};
+  for(const [k,v] of Object.entries(body)){
+    if(/password|token|secret|credential|authorization|key/i.test(k))continue;
+    if(typeof v==='string')out[k]=v.length>300?v.slice(0,300)+'…':v;
+    else if(['number','boolean'].includes(typeof v)||v===null)out[k]=v;
+    else if(Array.isArray(v))out[k]=v.slice(0,20);
+  }
+  return out;
+}
+async function createManagerAuditEvent({manager,method,path,body,branchId=null,statusCode=200}){
+  if(!manager||!['POST','PUT','PATCH','DELETE'].includes(String(method).toUpperCase())||statusCode>=400)return null;
+  const severity=managerAuditSeverity({path,method});
+  const summary=managerAuditSummary({path,method});
+  const result=await pool.query(
+    `insert into manager_audit_events(business_id,manager_id,manager_name,manager_email,action,method,path,branch_id,severity,summary,metadata)
+     values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+     returning id,created_at`,
+    [manager.business_id,manager.id,manager.name,manager.email,summary,String(method).toUpperCase(),path,branchId,severity,summary,JSON.stringify(sanitizeManagerAuditBody(body))]
+  );
+  return result.rows[0]||null;
+}
+async function notifyManagersOfMajorChange(event){
+  if(!event||event.severity!=='MAJOR')return;
+  const managers=await pool.query('select id,name,email from manager_users where business_id=$1 and active=true order by name',[event.business_id]);
+  const subject='Restaurant manager change: '+event.summary;
+  const message=event.manager_name+' ('+event.manager_email+') made a major change: '+event.summary+'. Time: '+new Date(event.created_at).toLocaleString('en-KE')+'.';
+  for(const m of managers.rows){
+    await pool.query(
+      `insert into manager_notifications(business_id,manager_id,audit_event_id,channel,status,subject,message)
+       values($1,$2,$3,'IN_APP','SENT',$4,$5)`,
+      [event.business_id,m.id,event.id,subject,message]
+    );
+  }
+  const apiKey=String(process.env.RESEND_API_KEY||'').trim();
+  const from=String(process.env.MANAGER_AUDIT_FROM_EMAIL||'').trim();
+  if(!apiKey||!from)return;
+  for(const m of managers.rows){
+    try{
+      const response=await fetch('https://api.resend.com/emails',{
+        method:'POST',
+        headers:{Authorization:'Bearer '+apiKey,'Content-Type':'application/json'},
+        body:JSON.stringify({from,to:m.email,subject,text:message})
+      });
+      const raw=await response.text();
+      await pool.query(
+        `insert into manager_notifications(business_id,manager_id,audit_event_id,channel,status,subject,message,delivered_at,error)
+         values($1,$2,$3,'EMAIL',$4,$5,$6,$7,$8)`,
+        [event.business_id,m.id,event.id,response.ok?'SENT':'FAILED',subject,message,response.ok?new Date():null,response.ok?null:raw.slice(0,500)]
+      );
+    }catch(error){
+      await pool.query(
+        `insert into manager_notifications(business_id,manager_id,audit_event_id,channel,status,subject,message,error)
+         values($1,$2,$3,'EMAIL','FAILED',$4,$5,$6)`,
+        [event.business_id,m.id,event.id,subject,message,String(error.message||error).slice(0,500)]
+      );
+    }
+  }
+}
+
 async function requireManagerOrder(req, res, next) {
   return requireManager(req, res, async () => {
     try {

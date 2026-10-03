@@ -3377,13 +3377,13 @@ app.get('/api/platform/businesses/:id/inspect',requirePlatformAdmin,async(req,re
     const id=req.params.id;
     const [b,health]=await Promise.all([
       pool.query("select b.id,b.name,b.slug,b.status,b.plan_key,b.website_url,b.domain,b.primary_color,b.created_at,coalesce(p.name,b.plan_key) as plan_name from businesses b left join platform_packages p on p.key=b.plan_key where b.id=$1",[id]),
-      pool.query("select b.status,
+      pool.query(`select b.status,
         exists(select 1 from business_branches where business_id=b.id and active=true) as branch,
         exists(select 1 from delivery_pricing_rules where business_id=b.id) as pricing,
         exists(select 1 from manager_users where business_id=b.id and active=true) as manager,
         exists(select 1 from business_connections where business_id=b.id) as connection,
         exists(select 1 from business_integrations where business_id=b.id and status='ACTIVE') as integration
-        from businesses b where b.id=$1",[id])
+        from businesses b where b.id=$1`,[id])
     ]);
     if(!b.rowCount)return res.status(404).json({error:'Restaurant not found'});
     const h=health.rows[0]||{},issues=[];

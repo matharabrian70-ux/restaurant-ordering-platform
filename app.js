@@ -53,6 +53,14 @@ function bindMenuCategoryNavigation(){
   document.querySelectorAll('[data-menu-category-nav]').forEach(button=>button.addEventListener('click',()=>{
     const id=button.dataset.menuCategoryNav;
     if(id==='all'){document.getElementById('menu-grid')?.scrollIntoView({behavior:'smooth',block:'start'});setActiveMenuCategory('all');return;}
+    if(id==='today-special'){
+      document.querySelectorAll('[data-menu-product-card]').forEach(card=>{
+        const isSpecial=card.querySelector('.signature-badge');
+        card.style.display=isSpecial?'':'none';
+      });
+      setActiveMenuCategory(id);return;
+    }
+    document.querySelectorAll('[data-menu-product-card]').forEach(card=>card.style.display='');
     const section=[...document.querySelectorAll('[data-menu-category-section]')].find(x=>x.dataset.menuCategorySection===id);
     if(section){section.scrollIntoView({behavior:'smooth',block:'start'});setActiveMenuCategory(id);}
   }));
@@ -148,6 +156,8 @@ function renderMenu(){renderSignatureMenu(PRODUCTS,[])}
 function addMenuProduct(id){
   const p=MENU_PRODUCTS.get(String(id));
   if(!p)return;
+  const card=document.querySelector('.signature-menu-card [data-menu-add="'+CSS.escape(String(id))+'"]')?.closest('.signature-menu-card');
+  const qty=Math.max(1,Number(card?.dataset.selectedQty)||1);
   if(Array.isArray(p.options)&&p.options.length){
     location.href='product.html?id='+encodeURIComponent(p.id);
     return;
@@ -157,7 +167,7 @@ function addMenuProduct(id){
     name:p.name,
     base:Number(p.price||0),
     unit:Number(p.price||0),
-    qty:1,
+    qty:qty,
     options:{},
     image:p.image||''
   });

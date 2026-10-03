@@ -2,10 +2,14 @@
   const API=window.PLATFORM_API_ORIGIN || 'https://restaurant-ordering-api-ow3p.onrender.com';
   const params=new URLSearchParams(location.search);
   const businessId=params.get('businessId')||'11111111-1111-4111-8111-111111111111';
-  const links=[
-    ['Privacy','privacy.html'],['Terms','terms.html'],['Cookies','cookie-policy.html'],
-    ['Data rights','data-rights.html'],['Refunds','refund-policy.html'],['Delivery terms','delivery-terms.html'],['Rider terms','rider-terms.md']
-  ];
+  const page=document.body?.dataset.page || '';
+  const isRider=page==='rider' || location.pathname.endsWith('/rider.html');
+  const isRestaurant=page==='manager' || location.pathname.endsWith('/manager.html') || location.pathname.endsWith('/station.html') || location.pathname.endsWith('/records.html');
+  const links=isRider
+    ? [['Privacy','privacy.html'],['Rider terms','rider-terms.md']]
+    : isRestaurant
+      ? [['Terms','terms.html'],['Privacy','privacy.html'],['Refund policy','refund-policy.html']]
+      : [['Terms','terms.html'],['Privacy','privacy.html'],['Refund policy','refund-policy.html']];
   function addFooter(){
     let footer=document.querySelector('footer');
     if(!footer){footer=document.createElement('footer');document.body.appendChild(footer);}

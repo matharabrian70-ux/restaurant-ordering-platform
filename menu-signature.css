@@ -326,3 +326,33 @@ body[data-page="menu"]{
     top:auto!important;
   }
 }
+
+
+/* Interactive menu controls — replace decorative pseudo-elements */
+.signature-menu-image-top:after{display:none!important}
+.signature-favorite{
+  width:40px;height:40px;border:0;border-radius:50%;
+  background:rgba(16,19,16,.72);color:#fff;
+  display:grid;place-items:center;
+  font:28px/1 Arial,sans-serif;
+  cursor:pointer;padding:0;
+  flex:0 0 auto;
+  transition:transform .15s ease,background .15s ease,color .15s ease;
+  -webkit-tap-highlight-color:transparent;
+}
+.signature-favorite:hover{transform:scale(1.06);background:rgba(16,19,16,.88)}
+.signature-favorite.active{background:#fff;color:#d93b3b}
+.signature-favorite:focus-visible{outline:3px solid #58b96c;outline-offset:2px}
+.menu-view-all{
+  appearance:none;border:0;background:transparent;padding:8px 2px;
+  color:#168039;font:700 14px Arial,sans-serif;
+  cursor:pointer;white-space:nowrap;
+  -webkit-tap-highlight-color:transparent;
+}
+.menu-view-all span{font-size:18px;margin-left:4px}
+.menu-view-all:hover{text-decoration:underline}
+.menu-view-all:focus-visible{outline:2px solid #58b96c;outline-offset:3px;border-radius:4px}
+@media(max-width:700px){
+  .signature-favorite{width:38px;height:38px;font-size:27px}
+  .menu-view-all{font-size:13px}
+}

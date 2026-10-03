@@ -19,7 +19,7 @@ function changeQty(index,delta){const c=getCart();c[index].qty=Math.max(1,c[inde
 const MENU_PRODUCTS = new Map();
 function escapeMenuHtml(value){return String(value??'').replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]))}
 let MENU_CATEGORY_STATE={categories:[],activeId:'all'};
-let menuScrollHandler=null;
+let menuScrollHandler=null,menuResizeHandler=null;
 function menuCategorySlug(value,index=0){return 'menu-category-'+String(value||'category-'+index).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'')+'-'+index;}
 function normalizeMenuCategories(products,categories){
   const source=Array.isArray(categories)?categories:[];
@@ -55,12 +55,14 @@ function syncMenuCategoryFromScroll(){
 }
 function bindMenuCategoryNavigation(){
   if(menuScrollHandler)window.removeEventListener('scroll',menuScrollHandler);
+  if(menuResizeHandler)window.removeEventListener('resize',menuResizeHandler);
   menuScrollHandler=()=>{if(!window.__menuCategoryTick){window.__menuCategoryTick=requestAnimationFrame(()=>{window.__menuCategoryTick=0;syncMenuCategoryFromScroll();});}};
   window.addEventListener('scroll',menuScrollHandler,{passive:true});
-  window.addEventListener('resize',syncMenuCategoryFromScroll,{passive:true});
+  menuResizeHandler=()=>syncMenuCategoryFromScroll();
+  window.addEventListener('resize',menuResizeHandler,{passive:true});
   document.querySelectorAll('[data-menu-category-nav]').forEach(button=>button.addEventListener('click',()=>{
     const id=button.dataset.menuCategoryNav;
-    if(id==='all'){document.getElementById('menu-grid')?.scrollIntoView({behavior:'smooth',block:'start'});setActiveMenuCategory('all');return;}
+    if(id==='all'){document.querySelectorAll('[data-menu-product-card]').forEach(card=>card.style.display='');document.getElementById('menu-grid')?.scrollIntoView({behavior:'smooth',block:'start'});setActiveMenuCategory('all',true);return;}
     if(id==='today-special'){
       document.querySelectorAll('[data-menu-product-card]').forEach(card=>{
         const isSpecial=card.querySelector('.signature-badge');

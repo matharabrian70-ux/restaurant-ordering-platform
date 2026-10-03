@@ -271,8 +271,8 @@ async function loadCartSpecials(){
     const products=Array.isArray(data.products)?data.products:[];
     const specials=products.filter(p=>{
       const category=String(p.category_name||p.category||'').toLowerCase();
-      return Boolean(p.image_url&&(p.featured||p.is_featured||p.is_special||p.today_special||p.todaySpecial||/today.?s special|specials?/.test(category)));
-    }).map(p=>({name:p.name,image:p.image_url,desc:p.description||'Freshly made. Unforgettable taste.'}));
+      return Boolean((p.hero_image_url||p.image_url)&&(p.featured||p.is_featured||p.is_special||p.today_special||p.todaySpecial||/today.?s special|specials?/.test(category)));
+    }).map(p=>({name:p.name,image:p.hero_image_url||p.image_url,desc:p.description||'Freshly made. Unforgettable taste.'}));
     const fallback=products.filter(p=>p.image_url).slice(0,3).map(p=>({name:p.name,image:p.image_url,desc:p.description||'Freshly made. Unforgettable taste.'}));
     renderCartHero(specials.length?specials:fallback);
   }catch(error){

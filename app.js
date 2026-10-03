@@ -220,11 +220,11 @@ function renderCart(){
   const total=c.reduce((s,i)=>s+i.unit*i.qty,0);
   el.innerHTML=`<div class="cart-layout-premium">
     <section class="cart-items-panel">
-      <div class="cart-section-head"><div><h1>Cart <span class="cart-item-count">(${c.reduce((s,i)=>s+i.qty,0)} items)</span></h1></div><button class="clear-cart-btn" type="button" data-action="clearCart()">♧&nbsp; Clear cart</button></div>
+      <div class="cart-section-head"><div><h1>Cart <span class="cart-item-count">(${c.reduce((s,i)=>s+i.qty,0)} items)</span></h1></div><button class="clear-cart-btn" type="button" data-action="clearCart()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v6m4-6v6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg> Clear cart</button></div>
       <div class="cart-items-list">${c.map((i,n)=>`<article class="cart-item-premium">
         <img src="${escapeMenuHtml(i.image||'')}" alt="${escapeMenuHtml(i.name)}">
         <div class="cart-item-premium-main"><div><h3>${escapeMenuHtml(i.name)}</h3><p>${escapeMenuHtml(Object.entries(i.options||{}).map(x=>x[0]+': '+x[1]).join(' • ')||'Standard item')}</p><strong>${money(i.unit*i.qty)}</strong></div>
-          <div class="cart-item-premium-actions"><div class="quantity-control"><button type="button" aria-label="Decrease quantity" data-action="changeQty(${n},-1)">−</button><span>${i.qty}</span><button type="button" aria-label="Increase quantity" data-action="changeQty(${n},1)">+</button></div><button class="remove-premium" type="button" data-action="removeItem(${n})">Remove</button></div>
+          <div class="cart-item-premium-actions"><div class="quantity-control"><button type="button" aria-label="Decrease quantity" data-action="changeQty(${n},-1)">−</button><span>${i.qty}</span><button type="button" aria-label="Increase quantity" data-action="changeQty(${n},1)">+</button></div><button class="remove-premium" type="button" data-action="removeItem(${n})"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3m-8 0 1 13h8l1-13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg> Remove</button></div>
         </div>
       </article>`).join('')}</div>
       <a class="back-menu-link" href="menu.html">← Add more products</a>

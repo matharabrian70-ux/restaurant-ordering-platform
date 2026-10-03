@@ -3667,11 +3667,13 @@ app.post('/api/platform/businesses',requirePlatformAdmin,requirePlatformRole('PL
     const name=String(req.body.name||'').trim();
     const slug=platformSlug(req.body.slug||name);
     const address=String(req.body.address||'').trim();
+    const latitude=Number(req.body.latitude),longitude=Number(req.body.longitude);
     const planKey=String(req.body.planKey||'STARTER').trim().toUpperCase();
     const domain=String(req.body.domain||'').trim()||null;
     const primaryColor=String(req.body.primaryColor||'').trim()||null;
     const websiteUrl=String(req.body.websiteUrl||'').trim()||null;
     if(!name||!slug||!address)return res.status(400).json({error:'Restaurant name, slug and pickup address are required'});
+    if(!Number.isFinite(latitude)||!Number.isFinite(longitude)||latitude<-90||latitude>90||longitude<-180||longitude>180)return res.status(400).json({error:'Valid branch latitude and longitude are required. Use the restaurant pin location.'});
     const pkg=await client.query('select key,features from platform_packages where key=$1 and active=true',[planKey]);
     if(!pkg.rowCount)return res.status(400).json({error:'Unknown or inactive package'});
     await client.query('begin');
@@ -3680,7 +3682,7 @@ app.post('/api/platform/businesses',requirePlatformAdmin,requirePlatformRole('PL
     const b=business.rows[0];
     await client.query('insert into business_features(business_id,rider_module_enabled) values($1,$2)',[b.id,Boolean(pkg.rows[0].features?.riderModule)]);
     await client.query('insert into delivery_pricing_rules(business_id) values($1) on conflict(business_id) do nothing',[b.id]);
-    await client.query('insert into business_branches(id,business_id,name,address,latitude,longitude,active,accepting_orders) values(gen_random_uuid(),$1,$2,$3,-1.286389,36.817223,true,true)',[b.id,'Main Branch',address]);
+    await client.query('insert into business_branches(id,business_id,name,address,latitude,longitude,active,accepting_orders) values(gen_random_uuid(),$1,$2,$3,$4,$5,true,true)',[b.id,'Main Branch',address,latitude,longitude]);
     for(const [category,sort] of [['Mains',10],['Sides',20],['Drinks',30],['Desserts',40]]) await client.query('insert into menu_categories(id,business_id,name,sort_order) values(gen_random_uuid(),$1,$2,$3)',[b.id,category,sort]);
     await client.query('commit');
     await recordPlatformAudit(req.platformAdmin.id,b.id,'TENANT_CREATED','Restaurant tenant provisioned',{planKey,websiteUrl,domain});

@@ -253,7 +253,8 @@ async function renderProduct(){
   }catch{el.innerHTML='<div class="empty"><h2>Menu item unavailable.</h2><p>Please return to the menu and try again.</p><a class="btn" href="menu.html">Back to menu</a></div>'}
 }
 function customerBusinessId(){
-  return new URLSearchParams(location.search).get('businessId') || window.TENANT_BUSINESS_ID || '11111111-1111-4111-8111-111111111111';
+  const q=new URLSearchParams(location.search).get('businessId');
+  return q || window.TENANT_BUSINESS_ID || getStoredPromo()?.businessId || '11111111-1111-4111-8111-111111111111';
 }
 function getStoredPromo(){try{return JSON.parse(localStorage.getItem('doe_promo')||'null')}catch{return null}}
 function setStoredPromo(value){if(value)localStorage.setItem('doe_promo',JSON.stringify(value));else localStorage.removeItem('doe_promo')}
@@ -271,7 +272,7 @@ async function applyPromoCode(button){
   if(message)message.textContent='';
   try{
     const promo=await validateCustomerPromo(code,subtotal);
-    setStoredPromo({...promo,code:promo.code});
+    setStoredPromo({...promo,code:promo.code,businessId:customerBusinessId()});
     renderCart();
   }catch(e){
     setStoredPromo(null);
@@ -283,13 +284,13 @@ async function validateStoredPromo(){
   if(!p?.code)return;
   try{
     const fresh=await validateCustomerPromo(p.code,subtotal);
-    setStoredPromo({...fresh,code:fresh.code});
+    setStoredPromo({...fresh,code:fresh.code,businessId:customerBusinessId()});
     renderCart();
   }catch{setStoredPromo(null);renderCart();}
 }
 function syncPromoFromUrl(){
   const code=new URLSearchParams(location.search).get('promo');
-  if(code)setStoredPromo({code:String(code).trim().toUpperCase()});
+  if(code)setStoredPromo({code:String(code).trim().toUpperCase(),businessId:new URLSearchParams(location.search).get('businessId')||window.TENANT_BUSINESS_ID||'11111111-1111-4111-8111-111111111111'});
 }
 function renderCart(){
   const el=document.getElementById('cart-view');if(!el)return;

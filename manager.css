@@ -623,3 +623,13 @@
   .coupon-actions{width:100%;justify-content:flex-start}
   .coupon-actions .btn{flex:1;min-width:92px}
 }
+
+.branch-card{appearance:none;width:100%;border:1px solid rgba(25,35,27,.10);background:#fff;text-align:left;display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px;border-radius:16px;margin-top:10px;cursor:pointer;color:inherit;font:inherit;transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease}
+.branch-card:hover{transform:translateY(-2px);box-shadow:0 12px 28px rgba(20,30,22,.08);border-color:rgba(24,128,57,.28)}
+.branch-card>div{display:grid;gap:5px}
+.branch-card b{font-size:16px}
+.branch-card span:not(.status-chip),.branch-card small{color:#687166}
+.branch-detail-panel .manager-summary{margin-top:18px}
+.branch-order-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 0;border-bottom:1px solid rgba(25,35,27,.08)}
+.branch-order-row>div{display:grid;gap:4px}
+.branch-order-row span{font-size:12px;color:#687166}

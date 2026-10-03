@@ -1786,7 +1786,7 @@ async function markPaymentSuccessful(reference, paystackData = null, expectedOrd
   try {
     await client.query('begin');
     const paymentResult = await client.query(
-      `select p.*, o.total, o.id as order_id, o.business_id, o.status as order_status
+      `select p.*, o.total, o.id as order_id, o.business_id, o.customer_id, o.coupon_id, o.status as order_status
          from payments p
          join orders o on o.id=p.order_id
         where p.provider='PAYSTACK'
@@ -1828,6 +1828,30 @@ async function markPaymentSuccessful(reference, paystackData = null, expectedOrd
         where id=$1 and status in ('PENDING','INITIALIZING')`,
       [payment.id]
     );
+    if(payment.coupon_id){
+      const coupon=await client.query(
+        'select id,redeemed_count,max_redemptions from customer_coupons where id=$1 for update',
+        [payment.coupon_id]
+      );
+      if(!coupon.rowCount) throw new Error('Coupon no longer exists');
+      if(coupon.rows[0].max_redemptions!==null && Number(coupon.rows[0].redeemed_count)>=Number(coupon.rows[0].max_redemptions)){
+        throw new Error('Coupon redemption limit was reached before payment confirmation');
+      }
+      const already=await client.query(
+        'select id from customer_coupon_redemptions where coupon_id=$1 and customer_id=$2 limit 1 for update',
+        [payment.coupon_id,payment.customer_id]
+      );
+      if(already.rowCount) throw new Error('Coupon has already been used by this customer');
+      await client.query(
+        `insert into customer_coupon_redemptions(id,coupon_id,customer_id,order_id)
+         values(gen_random_uuid(),$1,$2,$3)`,
+        [payment.coupon_id,payment.customer_id,payment.order_id]
+      );
+      await client.query(
+        'update customer_coupons set redeemed_count=redeemed_count+1 where id=$1',
+        [payment.coupon_id]
+      );
+    }
     const updated = await client.query(
       `update orders set payment_status='PAID' where id=$1 returning *`,
       [payment.order_id]
@@ -2335,17 +2359,9 @@ app.post('/api/orders',
       );
     }
 
-    if(coupon){
-      await client.query(
-        `insert into customer_coupon_redemptions(id,coupon_id,customer_id,order_id)
-         values(gen_random_uuid(),$1,$2,$3)`,
-        [coupon.id,customerResult.rows[0].id,orderId]
-      );
-      await client.query(
-        'update customer_coupons set redeemed_count=redeemed_count+1 where id=$1',
-        [coupon.id]
-      );
-    }
+    // Coupon redemption is committed only after successful payment.
+    // The order still validates the coupon and prevents reuse by this customer,
+    // but an abandoned/failed payment cannot consume the restaurant's quota.
 
     if(deliveryData){
       await client.query('update delivery_quotes set order_id=$1,updated_at=now() where id=$2 and status=\'USED\'',[orderId,quoteId]);

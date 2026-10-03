@@ -112,6 +112,7 @@ async function geocodeAddress(pool,address){
   return {lat:num(loc.lat),lng:num(loc.lng),cached:false};
 }
 async function quote(pool,{businessId,customerLat,customerLng,deliveryAddress,branchId=null,orderAmount=0}){
+  if(!String(deliveryAddress||'').trim()) throw new Error('Delivery address is required');
   const advanced=await getFeature(pool,businessId);
   if(!advanced){
     const lat=num(customerLat,NaN),lng=num(customerLng,NaN);

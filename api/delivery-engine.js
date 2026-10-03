@@ -211,6 +211,8 @@ export function registerDeliveryEngine(app,pool,requireManager=(_req,_res,next)=
         if(!Number.isFinite(radius)||radius<1||radius>30)return res.status(400).json({error:'Service radius must be between 1 and 30 km'});
       }
       if(req.body.active===false){
+        const activeBranchCount=await pool.query("select count(*)::int as count from business_branches where business_id=$1 and active=true",[req.params.id]);
+        if(Number(activeBranchCount.rows[0]?.count||0)<=1)return res.status(409).json({error:'At least one active branch must remain available for ordering.'});
         const activeOrders=await pool.query("select count(*)::int as count from orders where business_id=$1 and branch_id=$2 and status not in ('DELIVERED','CANCELLED')",[req.params.id,req.params.branchId]);
         if(Number(activeOrders.rows[0]?.count||0)>0)return res.status(409).json({error:'This branch has active orders. Complete or cancel them before deactivating the branch.'});
       }

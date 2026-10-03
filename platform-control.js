@@ -24,7 +24,6 @@ async function api(path,opt={}){
     throw new Error(detail||('Platform request failed (HTTP '+response.status+')'));
   }
   return data;
-  return data;
 }
 
 function login(message){

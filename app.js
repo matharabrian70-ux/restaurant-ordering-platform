@@ -97,22 +97,59 @@ function renderSignatureMenu(products,categories=[]){
   grid.innerHTML=grouped.map(x=>{
     const sectionId=menuCategorySlug(x.category.id,x.index);
     return '<section class="menu-category-section" id="'+sectionId+'" data-menu-category-section="'+escapeMenuHtml(x.category.id)+'">'+
-      '<div class="menu-category-heading"><span class="eyebrow">MENU CATEGORY</span><h2>'+escapeMenuHtml(x.category.name)+'</h2></div>'+
+      '<div class="menu-category-heading"><span class="eyebrow">MENU CATEGORY</span><h2>'+escapeMenuHtml(x.category.name)+'</h2><button type="button" class="menu-view-all" data-view-menu-category="'+escapeMenuHtml(x.category.id)+'">View all <span aria-hidden="true">→</span></button></div>'+
       '<div class="menu-category-products">'+x.products.map(p=>{
         const id=escapeMenuHtml(p.id),name=escapeMenuHtml(p.name),desc=escapeMenuHtml(p.desc||''),image=escapeMenuHtml(p.image||'');
         const featured=Boolean(p.featured||p.is_special||p.today_special||p.todaySpecial);
         const badge=featured?'<span class="signature-badge">🔥 Today’s Special</span>':'';
         return '<article class="signature-menu-card" data-menu-product-card data-product-name="'+escapeMenuHtml((p.name||'')+' '+(p.desc||''))+'">'+
-          '<div class="signature-menu-photo"><img src="'+image+'" alt="'+name+'" loading="lazy"><div class="signature-menu-image-top">'+badge+'</div></div>'+
+          '<div class="signature-menu-photo"><img src="'+image+'" alt="'+name+'" loading="lazy"><div class="signature-menu-image-top">'+badge+'<button type="button" class="signature-favorite" data-menu-favorite="'+id+'" aria-label="Add '+name+' to favorites" aria-pressed="false">♡</button></div></div>'+
           '<div class="signature-menu-body"><div class="signature-menu-copy"><h3>'+name+'</h3><p class="signature-description">'+desc+'</p><div class="signature-meta"><strong class="signature-price">'+money(p.price)+'</strong></div></div>'+
           '<div class="signature-menu-actions"><button type="button" class="quantity-mini" data-qty-minus="'+id+'" aria-label="Decrease quantity">−</button><span class="quantity-mini-value" data-qty-value="'+id+'">1</span><button type="button" class="quantity-mini" data-qty-plus="'+id+'" aria-label="Increase quantity">+</button>'+
           '<button type="button" class="signature-add-btn" data-menu-add="'+id+'"><span class="signature-add-icon">🛒</span><span>Add to Cart</span></button></div></div></article>';
       }).join('')+'</div></section>';
   }).join('')||'<div class="empty-state">No menu items are available right now.</div>';
   bindMenuCategoryNavigation();
+  bindMenuInteractiveControls();
   bindMenuSearch();
   bindMenuQuantities();
   setActiveMenuCategory('all');
+}
+function bindMenuInteractiveControls(){
+  document.querySelectorAll('[data-menu-favorite]').forEach(button=>{
+    if(button.dataset.bound)return;
+    button.dataset.bound='1';
+    const id=button.dataset.menuFavorite;
+    const favorites=read('doe_favorites',[]);
+    const active=favorites.includes(String(id));
+    button.classList.toggle('active',active);
+    button.setAttribute('aria-pressed',active?'true':'false');
+    button.textContent=active?'♥':'♡';
+    button.addEventListener('click',e=>{
+      e.preventDefault(); e.stopPropagation();
+      const list=read('doe_favorites',[]);
+      const key=String(id), index=list.indexOf(key);
+      if(index>=0) list.splice(index,1); else list.push(key);
+      write('doe_favorites',list);
+      const on=list.includes(key);
+      button.classList.toggle('active',on);
+      button.setAttribute('aria-pressed',on?'true':'false');
+      button.textContent=on?'♥':'♡';
+    });
+  });
+  document.querySelectorAll('[data-view-menu-category]').forEach(button=>{
+    if(button.dataset.bound)return;
+    button.dataset.bound='1';
+    button.addEventListener('click',e=>{
+      e.preventDefault(); e.stopPropagation();
+      const id=button.dataset.viewMenuCategory;
+      const section=[...document.querySelectorAll('[data-menu-category-section]')].find(x=>x.dataset.menuCategorySection===id);
+      if(section){
+        setActiveMenuCategory(id,true);
+        section.scrollIntoView({behavior:'smooth',block:'start'});
+      }
+    });
+  });
 }
 function bindMenuSearch(){
   const input=document.getElementById('menu-search-input');if(!input||input.dataset.bound)return;

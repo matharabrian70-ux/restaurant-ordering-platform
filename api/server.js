@@ -3694,6 +3694,14 @@ app.patch('/api/platform/businesses/:id',requirePlatformAdmin,requirePlatformRol
       const key=String(req.body.planKey||'').toUpperCase();
       const p=await pool.query('select key,features from platform_packages where key=$1 and active=true',[key]);
       if(!p.rowCount)return res.status(400).json({error:'Unknown or inactive package'});
+      if(String(current.rows[0].plan_key||'').toUpperCase()!=='STARTER' && !Boolean(p.rows[0].features?.riderModule)){
+        const activeTrips=await pool.query(`
+          select count(*)::int as count
+          from rider_trips t join orders o on o.id=t.order_id
+          where o.business_id=$1 and t.completed_at is null
+        `,[req.params.id]);
+        if(Number(activeTrips.rows[0]?.count||0)>0)return res.status(409).json({error:'This restaurant has active rider deliveries. Complete them before downgrading to a package without the Rider Dashboard.'});
+      }
       add('plan_key',key);plan=p.rows[0];
     }
     if(!sets.length)return res.status(400).json({error:'No changes supplied'});
@@ -3781,6 +3789,16 @@ app.patch('/api/control/businesses/:id',requireControl,requireControlRole('PLATF
     if(!name||!slug)return res.status(400).json({error:'Invalid restaurant configuration'});
     const pkg=await pool.query('select key,features from platform_packages where key=$1 and active=true',[planKey]);
     if(!pkg.rowCount)return res.status(400).json({error:'Unknown or inactive package'});
+    const currentPlan=await pool.query('select plan_key from businesses where id=$1',[id]);
+    if(!currentPlan.rowCount)return res.status(404).json({error:'Restaurant not found'});
+    if(String(currentPlan.rows[0].plan_key||'').toUpperCase()!=='STARTER' && !Boolean(pkg.rows[0].features?.riderModule)){
+      const activeTrips=await pool.query(`
+        select count(*)::int as count
+        from rider_trips t join orders o on o.id=t.order_id
+        where o.business_id=$1 and t.completed_at is null
+      `,[id]);
+      if(Number(activeTrips.rows[0]?.count||0)>0)return res.status(409).json({error:'This restaurant has active rider deliveries. Complete them before downgrading to a package without the Rider Dashboard.'});
+    }
     const r=await pool.query('update businesses set name=$1,slug=$2,plan_key=$3,mpesa_phone=$4,paystack_subaccount_code=$5,updated_at=now() where id=$6 returning *',[name,slug,planKey,String(req.body.mpesaPhone||'').trim()||null,String(req.body.paystackSubaccountCode||'').trim()||null,id]);
     if(!r.rowCount)return res.status(404).json({error:'Restaurant not found'});
     const connection=await saveBusinessConnection(id,req.body);

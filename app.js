@@ -29,9 +29,17 @@ function normalizeMenuCategories(products,categories){
   products.forEach(p=>{const name=String(p.category||'Menu').trim()||'Menu';const pid=p.category_id?String(p.category_id):'';const exists=pid&&result.some(c=>c.id===pid);const byName=result.find(c=>c.name.toLowerCase()===name.toLowerCase());if(!exists&&!byName)result.push({id:pid||'name:'+name.toLowerCase(),name});});
   return result;
 }
-function setActiveMenuCategory(id){
+function setActiveMenuCategory(id,scrollActive=false){
   MENU_CATEGORY_STATE.activeId=id||'all';
-  document.querySelectorAll('[data-menu-category-nav]').forEach(b=>{const active=b.dataset.menuCategoryNav===MENU_CATEGORY_STATE.activeId;b.classList.toggle('active',active);b.setAttribute('aria-current',active?'true':'false');if(active)b.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});});
+  document.querySelectorAll('[data-menu-category-nav]').forEach(b=>{
+    const active=b.dataset.menuCategoryNav===MENU_CATEGORY_STATE.activeId;
+    b.classList.toggle('active',active);
+    b.setAttribute('aria-current',active?'true':'false');
+    // Only move the category strip when the customer explicitly selects a category.
+    // The scroll observer must never call scrollIntoView(), otherwise normal page
+    // scrolling gets pulled back toward the category bar on every scroll frame.
+    if(active&&scrollActive)b.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});
+  });
 }
 function syncMenuCategoryFromScroll(){
   const grid=document.getElementById('menu-grid'),bar=document.getElementById('menu-category-bar');
@@ -58,11 +66,11 @@ function bindMenuCategoryNavigation(){
         const isSpecial=card.querySelector('.signature-badge');
         card.style.display=isSpecial?'':'none';
       });
-      setActiveMenuCategory(id);return;
+      setActiveMenuCategory(id,true);return;
     }
     document.querySelectorAll('[data-menu-product-card]').forEach(card=>card.style.display='');
     const section=[...document.querySelectorAll('[data-menu-category-section]')].find(x=>x.dataset.menuCategorySection===id);
-    if(section){section.scrollIntoView({behavior:'smooth',block:'start'});setActiveMenuCategory(id);}
+    if(section){section.scrollIntoView({behavior:'smooth',block:'start'});setActiveMenuCategory(id,true);}
   }));
   syncMenuCategoryFromScroll();
 }

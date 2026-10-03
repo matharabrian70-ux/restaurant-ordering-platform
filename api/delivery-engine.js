@@ -132,7 +132,6 @@ async function quote(pool,{businessId,customerLat,customerLng,deliveryAddress,br
   }
   let lat=num(customerLat,NaN), lng=num(customerLng,NaN);
   if(!Number.isFinite(lat)||!Number.isFinite(lng)){ const g=await geocodeAddress(pool,deliveryAddress); lat=g.lat; lng=g.lng; }
-  const advanced=await getFeature(pool,businessId);
   const rules=await getRules(pool,businessId);
   const fuel=await getFuel(pool);
   let branches=await getBranches(pool,businessId);

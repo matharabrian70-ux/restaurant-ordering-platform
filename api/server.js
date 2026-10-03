@@ -1898,7 +1898,7 @@ async function completeOrderByConfirmation(orderId, actor, { requireDisconnected
          ) rt on true
         where o.id=$1
         for update of o`,
-      [orderId,riderConnected]
+      [orderId]
     );
     if (!orderResult.rowCount) {
       await client.query('rollback');
@@ -1924,7 +1924,7 @@ async function completeOrderByConfirmation(orderId, actor, { requireDisconnected
               delivery_fee_released_at=case when $2 then coalesce(delivery_fee_released_at,now()) else null end
         where id=$1
         returning *`,
-      [orderId]
+      [orderId,riderConnected]
     );
 
     if (order.trip_id) {

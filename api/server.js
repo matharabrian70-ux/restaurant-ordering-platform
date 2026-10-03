@@ -389,11 +389,14 @@ function capabilityForRequest(req) {
   if (/^\/orders\/[^/]+\/(?:assign-rider|cancel-rider-assignment|reassign-rider)$/.test(path)) {
     capabilities.push('advancedDelivery','riderModule');
   }
-  if (/^\/delivery\/(?:quote|quote-v2|zones\/quote)/.test(path)) {
+  if (/^\/delivery\/quote(?:$|\/)/.test(path)) {
     capabilities.push('advancedDelivery');
   }
+  // quote-v2 and zone quotes are dual-mode: Starter uses restaurant zones,
+  // Growth/Pro use the connected Rider Dashboard delivery engine.
   if (/^\/businesses\/[^/]+\/delivery-pricing$/.test(path)) {
-    capabilities.push('advancedDelivery');
+    // Delivery pricing is available to every manager. The delivery engine
+    // decides whether rules are editable or automatic.
   }
   if (/^\/businesses\/[^/]+\/branches/.test(path)) {
     capabilities.push(method === 'GET' ? 'branchRouting' : 'multiBranch');
@@ -405,10 +408,11 @@ function capabilityForRequest(req) {
   if (/^\/manager\/sms(?:-|\/|$)/.test(path)) {
     capabilities.push('sms');
   }
-  if (/^\/manager\/(?:aggregator-integrations|aggregator-orders|delivery-zones)/.test(path) ||
+  if (/^\/manager\/(?:aggregator-integrations|aggregator-orders)/.test(path) ||
       /^\/aggregator\//.test(path)) {
-    capabilities.push(/^\/manager\/delivery-zones/.test(path) ? 'advancedDelivery' : 'apiIntegrations');
+    capabilities.push('apiIntegrations');
   }
+  // Restaurant-controlled delivery zones are core ordering functionality.
   if (/^\/manager\/branding$/.test(path) || /^\/control\/businesses\/[^/]+\/branding\/import$/.test(path)) {
     capabilities.push('websiteIntegration');
   }
@@ -1429,6 +1433,7 @@ app.post('/api/manager/google', googleRateLimit, async (req,res)=>{
 // Phase 4 Restaurant Operations OS: one manager view for dispatch state across orders, riders and live tracking.
 app.get('/api/manager/dispatch', requireManager, async (req, res) => {
   try {
+    if(!await getRiderConnectionState(req.manager.business_id)) return res.status(403).json({error:'Rider Dashboard is not connected for this restaurant',code:'RIDER_DASHBOARD_NOT_CONNECTED'});
     await ensureDeliveryTrackingSchema();
     await ensureMenuOptionsSchema();
   await ensurePhase1SecuritySchema();
@@ -1891,14 +1896,15 @@ async function completeOrderByConfirmation(orderId, actor, { requireDisconnected
          ) rt on true
         where o.id=$1
         for update of o`,
-      [orderId]
+      [orderId,riderConnected]
     );
     if (!orderResult.rowCount) {
       await client.query('rollback');
       return { error: 'Order not found', status: 404 };
     }
     const order = orderResult.rows[0];
-    if (requireDisconnectedRiderDashboard && order.rider_connected) {
+    const riderConnected=await getRiderConnectionState(order.business_id,client);
+    if (requireDisconnectedRiderDashboard && riderConnected) {
       await client.query('rollback');
       return { error: 'This restaurant uses the Rider Dashboard. The rider must complete the delivery from the rider portal.', status: 409 };
     }
@@ -1912,8 +1918,8 @@ async function completeOrderByConfirmation(orderId, actor, { requireDisconnected
           set status='DELIVERED',
               delivered_at=coalesce(delivered_at,now()),
               delivery_status='DELIVERED',
-              delivery_fee_status='RELEASED',
-              delivery_fee_released_at=coalesce(delivery_fee_released_at,now())
+              delivery_fee_status=case when $2 then 'RELEASED' else 'MERCHANT' end,
+              delivery_fee_released_at=case when $2 then coalesce(delivery_fee_released_at,now()) else null end
         where id=$1
         returning *`,
       [orderId]
@@ -2260,6 +2266,10 @@ app.post('/api/orders',
     const numericTotal=Math.round((foodSubtotal-couponDiscount+deliveryFee)*100)/100;
     if(numericTotal<0) throw new Error('Invalid order total');
 
+    const riderConnected=deliveryFee>0 ? await getRiderConnectionState(businessId,client) : false;
+    const deliveryFeeStatus=deliveryFee>0 ? (riderConnected?'HELD':'MERCHANT') : 'NONE';
+    const riderEarning=riderConnected ? deliveryFee : 0;
+
     const orderId=crypto.randomUUID();
 
     const customerResult=await client.query(
@@ -2293,14 +2303,14 @@ app.post('/api/orders',
         selected_branch_distance_meters,selected_branch_duration_seconds,customer_access_token_hash
       ) values(
         $1,$2,$3,$4,'NEW','PENDING',$5,$6,$7,$8,$9,$7,$10,$11,$12,$13,$14,$15,$16,$17,$18,
-        'HELD',$19,$20,$21,$22,$23,$24,$25
+        $19,$20,$21,$22,$23,$24,$25
       ) returning *`,
       [
         orderId,businessId,customerResult.rows[0].id,orderNumber,normalizedPaymentMethod,
         deliveryNote?.trim()||null,foodSubtotal,numericTotal,deliveryFee,coupon?.id||null,couponDiscount,
         deliveryFee>0?'QUOTED':'NONE',pickupAddress,deliveryAddress,
         deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,
-        deliveryData?.duration_seconds||null,deliveryFee,deliveryData?.branch_id||null,
+        deliveryData?.duration_seconds||null,riderEarning,deliveryData?.branch_id||null,
         deliveryData?.customer_lat||null,deliveryData?.customer_lng||null,deliveryData?.distance_meters||null,
         deliveryData?.duration_seconds||null,customerAccess.hash
       ]
@@ -2369,7 +2379,7 @@ app.post('/api/payments/paystack/initialize', requireCustomerOrderBody, async (r
     await client.query('begin');
     await client.query('select pg_advisory_xact_lock(hashtext($1))',[String(orderId)]);
     const result=await client.query(`select o.id,o.order_number,o.total,o.food_subtotal,o.delivery_fee,o.payment_status,o.payment_method,o.status,
-      c.email,c.phone,b.paystack_subaccount_code,p.id as payment_id,p.provider_reference,p.status as payment_state,
+      c.email,c.phone,b.paystack_subaccount_code,o.coupon_discount,p.id as payment_id,p.provider_reference,p.status as payment_state,
       p.idempotency_key,p.authorization_url,p.payment_mode
       from orders o join customers c on c.id=o.customer_id join businesses b on b.id=o.business_id
       join payments p on p.order_id=o.id and p.provider='PAYSTACK'
@@ -2395,7 +2405,12 @@ app.post('/api/payments/paystack/initialize', requireCustomerOrderBody, async (r
   }finally{client.release();}
 
   const reference=`SB-${orderId.replace(/-/g,'')}-${crypto.randomBytes(10).toString('hex')}`;
-  const split=order.paystack_subaccount_code?{type:'flat',bearer_type:'account',subaccounts:[{subaccount:order.paystack_subaccount_code,share:Math.round(Number(order.food_subtotal)*100)}]}:null;
+  const riderConnected=await getRiderConnectionState(order.business_id);
+  const merchantFood=Math.max(0,Number(order.food_subtotal||0)-Number(order.coupon_discount||0));
+  const merchantShareKes=merchantFood+(riderConnected?0:Number(order.delivery_fee||0));
+  const split=order.paystack_subaccount_code && merchantShareKes>0
+    ? {type:'flat',bearer_type:'account',subaccounts:[{subaccount:order.paystack_subaccount_code,share:Math.min(Math.round(Number(order.total)*100),Math.round(merchantShareKes*100))}]}
+    : null;
   try{
     if(order.payment_method==='M-Pesa'){
       const payload={email:order.email,amount:String(Math.round(Number(order.total)*100)),currency:'KES',reference,mobile_money:{phone:normalizeKenyanPhone(order.phone),provider:'mpesa'}};
@@ -2791,6 +2806,8 @@ async function updateDeliveryStatus(req,res,nextStatus){
     if(!allowed[current]?.includes(nextStatus)) return res.status(409).json({error:`Cannot move delivery from ${current} to ${nextStatus}`});
     await pool.query('insert into delivery_events(id,trip_id,status,note) values(gen_random_uuid(),$1,$2,$3)',[trip.id,nextStatus,req.body.note||null]);
     if(nextStatus==='DELIVERED'){
+      const riderConnected=await getRiderConnectionState(trip.business_id);
+      if(!riderConnected) return res.status(409).json({error:'Rider Dashboard is no longer connected for this restaurant'});
       await pool.query(`update orders set status='DELIVERED',delivered_at=coalesce(delivered_at,now()),delivery_status='DELIVERED',delivery_fee_status='RELEASED',delivery_fee_released_at=now() where id=$1`,[trip.order_id]);
       await pool.query(`update rider_trips set completed_at=now(),confirmed_by='rider' where id=$1`,[trip.id]);
       const earning=await pool.query(`insert into rider_earnings(id,rider_id,trip_id,amount,status,released_at) select gen_random_uuid(),rider_id,$1,delivery_fee,'RELEASED',now() from orders where id=$2 on conflict(trip_id) do update set status='RELEASED',released_at=now() returning *`,[trip.id,trip.order_id]);
@@ -2831,7 +2848,17 @@ app.get('/api/admin/riders/:id/trips',requireRiderModule,requireManager,async(re
   res.json(result.rows);
 });
 async function getRiderConnectionState(businessId, client=pool){
-  const result=await client.query('select coalesce(rider_connected,false) as rider_connected from business_connections where business_id=$1 limit 1',[businessId]);
+  const result=await client.query(`
+    select (
+      coalesce(bc.rider_connected,false)
+      and coalesce((p.features->>'riderModule')::boolean,false)
+    ) as rider_connected
+    from businesses b
+    left join platform_packages p on p.key=b.plan_key
+    left join business_connections bc on bc.business_id=b.id
+    where b.id=$1
+    limit 1
+  `,[businessId]);
   return Boolean(result.rows[0]?.rider_connected);
 }
 
@@ -2871,6 +2898,7 @@ app.post('/api/orders/:id/assign-rider',requireRiderModule,requireManagerOrder,a
     const order=orderResult.rows[0];
     if(order.status!=='ACCEPTED'){await client.query('rollback');return res.status(409).json({error:'Only accepted orders can be sent for delivery'});}
     const riderConnected=await getRiderConnectionState(order.business_id,client);
+    if(!riderConnected){await client.query('rollback');return res.status(409).json({error:'Rider Dashboard must be connected before assigning a rider'});}
     const assignment=await createRiderTripAssignment(client,{businessId:order.business_id,orderId:order.id,riderId,riderConnected});
     await client.query('commit');
     const updatedOrder=(await pool.query('select * from orders where id=$1',[order.id])).rows[0];
@@ -3745,7 +3773,7 @@ app.get('/api/control/businesses/:id/status',requireControl,async(req,res)=>{
 });
 registerBrandingEngine(app,pool,{requireControl,requireManager,broadcastRealtime});
 registerReceiptEngine(app,pool,{requireManager});
-registerDeliveryEngine(app,pool,requireManager);
+registerDeliveryEngine(app,pool,requireManager,quoteRateLimit,quoteBusinessRateLimit);
 registerMenuEngine(app,pool,requireManager,broadcastRealtime);
 registerPosEngine(app,pool,{requireManager,broadcastRealtime});
 registerCustomerGrowth(app,pool);

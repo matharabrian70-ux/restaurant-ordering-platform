@@ -164,6 +164,28 @@ export function registerDeliveryEngine(app,pool,requireManager=(_req,_res,next)=
     try{ const rows=await pool.query('select id,name,address,latitude,longitude,google_place_id,building,floor,unit,street,estate,landmark,pickup_instructions,active,accepting_orders from business_branches where business_id=$1 order by name',[req.params.id]); res.json(rows.rows); }
     catch(e){res.status(500).json({error:'Unable to load branches'});}
   });
+  app.get('/api/businesses/:id/branches/:branchId/summary',requireManager,async(req,res)=>{
+    try{
+      const branch=await pool.query('select * from business_branches where id=$1 and business_id=$2',[req.params.branchId,req.params.id]);
+      if(!branch.rowCount)return res.status(404).json({error:'Branch not found'});
+      const b=branch.rows[0];
+      const [summary,statuses,stations,recent]=await Promise.all([
+        pool.query(`select count(*)::int as orders,
+          count(*) filter (where payment_status='PAID' and status<>'CANCELLED')::int as paid_orders,
+          coalesce(sum(total) filter (where payment_status='PAID' and status<>'CANCELLED'),0)::numeric as revenue,
+          coalesce(sum(delivery_fee) filter (where payment_status='PAID' and status<>'CANCELLED'),0)::numeric as delivery_revenue,
+          coalesce(avg(total) filter (where payment_status='PAID' and status<>'CANCELLED'),0)::numeric as average_order
+          from orders where business_id=$1 and branch_id=$2`,[req.params.id,req.params.branchId]),
+        pool.query(`select status,count(*)::int as count from orders where business_id=$1 and branch_id=$2 group by status order by status`,[req.params.id,req.params.branchId]),
+        pool.query(`select id,name,device_type,mode,active,last_seen_at,created_at,updated_at from restaurant_order_stations where business_id=$1 and branch_id=$2 order by active desc,last_seen_at desc`,[req.params.id,req.params.branchId]),
+        pool.query(`select o.id,o.order_number,o.status,o.payment_status,o.total,o.delivery_fee,o.created_at,c.name as customer_name
+          from orders o join customers c on c.id=o.customer_id
+          where o.business_id=$1 and o.branch_id=$2 order by o.created_at desc limit 20`,[req.params.id,req.params.branchId])
+      ]);
+      res.json({branch:b,summary:summary.rows[0],statuses:statuses.rows,stations:stations.rows,recentOrders:recent.rows});
+    }catch(e){res.status(500).json({error:e.message||'Unable to load branch details'});}
+  });
+
   app.post('/api/businesses/:id/branches',requireManager,async(req,res)=>{
     try{
       const {name,address,latitude,longitude,googlePlaceId,building,floor,unit,street,estate,landmark,pickupInstructions,active=true,acceptingOrders=true,serviceRadiusKm=18}=req.body;

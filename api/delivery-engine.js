@@ -210,6 +210,10 @@ export function registerDeliveryEngine(app,pool,requireManager=(_req,_res,next)=
         const radius=Number(req.body.serviceRadiusKm);
         if(!Number.isFinite(radius)||radius<1||radius>30)return res.status(400).json({error:'Service radius must be between 1 and 30 km'});
       }
+      if(req.body.active===false){
+        const activeOrders=await pool.query("select count(*)::int as count from orders where business_id=$1 and branch_id=$2 and status not in ('DELIVERED','CANCELLED')",[req.params.id,req.params.branchId]);
+        if(Number(activeOrders.rows[0]?.count||0)>0)return res.status(409).json({error:'This branch has active orders. Complete or cancel them before deactivating the branch.'});
+      }
       if(!sets.length)return res.status(400).json({error:'No branch changes supplied'});
       vals.unshift(req.params.branchId,req.params.id);
       const r=await pool.query(`update business_branches set ${sets.join(',')},updated_at=now() where id=$1 and business_id=$2 returning *`,vals);
@@ -217,7 +221,11 @@ export function registerDeliveryEngine(app,pool,requireManager=(_req,_res,next)=
     }catch(e){res.status(500).json({error:e.message||'Unable to update branch'});}
   });
   app.delete('/api/businesses/:id/branches/:branchId',requireManager,async(req,res)=>{
-    try{const r=await pool.query('update business_branches set active=false,accepting_orders=false,updated_at=now() where id=$1 and business_id=$2 returning id',[req.params.branchId,req.params.id]); if(!r.rowCount)return res.status(404).json({error:'Branch not found'});res.json({ok:true});}
+    try{
+      const activeOrders=await pool.query("select count(*)::int as count from orders where business_id=$1 and branch_id=$2 and status not in ('DELIVERED','CANCELLED')",[req.params.id,req.params.branchId]);
+      if(Number(activeOrders.rows[0]?.count||0)>0)return res.status(409).json({error:'This branch has active orders. Complete or cancel them before deactivating the branch.'});
+      const r=await pool.query('update business_branches set active=false,accepting_orders=false,updated_at=now() where id=$1 and business_id=$2 returning id',[req.params.branchId,req.params.id]); if(!r.rowCount)return res.status(404).json({error:'Branch not found'});res.json({ok:true});
+    }
     catch(e){res.status(500).json({error:'Unable to deactivate branch'});}
   });
   app.get('/api/businesses/:id/delivery-pricing',requireManager,async(req,res)=>{

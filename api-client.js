@@ -19,7 +19,7 @@ async function apiRequest(path, options = {}) {
 }
 
 async function getDeliveryQuote({ pickupAddress, deliveryAddress, latitude, longitude }) { return apiRequest('/api/delivery/quote-v2', { method:'POST', body: JSON.stringify({ businessId: BUSINESS_ID, pickupAddress, deliveryAddress, customerLat: latitude, customerLng: longitude }) }); }
-function orderRequestFingerprint({ customer, phone, email, note, payment, items, quoteId, deliveryAddress }) {
+function orderRequestFingerprint({ customer, phone, email, note, payment, items, quoteId, deliveryAddress, couponCode }) {
   return JSON.stringify({
     businessId: BUSINESS_ID,
     customer: { name: String(customer || '').trim(), phone: String(phone || '').trim(), email: String(email || '').trim() },
@@ -27,11 +27,12 @@ function orderRequestFingerprint({ customer, phone, email, note, payment, items,
     paymentMethod: payment,
     quoteId: quoteId || null,
     deliveryNote: String(note || '').trim(),
-    deliveryAddress: String(deliveryAddress || '').trim()
+    deliveryAddress: String(deliveryAddress || '').trim(),
+    couponCode: String(couponCode || '').trim().toUpperCase() || null
   });
 }
-async function createRemoteOrder({ customer, phone, email, note, payment, items, subtotal, total, quoteId, deliveryAddress, legal }) {
-  const fingerprint=orderRequestFingerprint({customer,phone,email,note,payment,items,quoteId,deliveryAddress});
+async function createRemoteOrder({ customer, phone, email, note, payment, items, subtotal, total, quoteId, deliveryAddress, couponCode, legal }) {
+  const fingerprint=orderRequestFingerprint({customer,phone,email,note,payment,items,quoteId,deliveryAddress,couponCode});
   let intent=null;
   try{ intent=JSON.parse(sessionStorage.getItem('savanna_order_intent')||'null'); }catch{}
   if(!intent||intent.fingerprint!==fingerprint){
@@ -51,6 +52,7 @@ async function createRemoteOrder({ customer, phone, email, note, payment, items,
       quoteId,
       deliveryNote: note,
       deliveryAddress,
+      couponCode: couponCode ? String(couponCode).trim().toUpperCase() : null,
       legal: legal || {}
     })
   });

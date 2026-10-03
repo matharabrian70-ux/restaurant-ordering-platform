@@ -57,7 +57,7 @@ async function load(){
       api('/api/stations?businessId='+B),
       api('/api/businesses/'+B+'/branding'),
       api('/api/manager/receipt-settings'),
-      riderEnabled?api('/api/manager/dispatch'):Promise.resolve({riderConnected:false,riders:[],unassigned:[],active:[],summary:{}}),
+      riderEnabled?api('/api/manager/dispatch').catch(()=>({riderConnected:false,riders:[],unassigned:[],active:[],summary:{}})):Promise.resolve({riderConnected:false,riders:[],unassigned:[],active:[],summary:{}}),
       api('/api/manager/refunds'),
       api('/api/manager/payments')
     ]);

@@ -37,3 +37,5 @@ button{cursor:pointer}
 
 .pc-evidence{margin:10px 0 0;padding:14px;background:#f7f7f3;border:1px solid var(--pc-line);border-radius:9px;overflow:auto;max-height:360px;white-space:pre-wrap;word-break:break-word;font:10px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--pc-ink)}
 .pc-evidence-actions{align-items:stretch}.pc-evidence-actions .pc-btn{flex:1;min-width:150px}.pc-form textarea{width:100%;border:1px solid var(--pc-line);border-radius:8px;padding:11px;background:#fff;color:var(--pc-ink);outline:none;resize:vertical}.pc-form textarea:focus,.pc-form input:focus,.pc-form select:focus{border-color:#a9afa9}
+
+.pc-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}.pc-form-help{display:block;margin:-4px 0 10px;color:#687166;font-size:12px;line-height:1.45}@media(max-width:700px){.pc-form-grid{grid-template-columns:1fr}}

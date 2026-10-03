@@ -18,7 +18,7 @@ async function apiRequest(path, options = {}) {
   return data;
 }
 
-async function getDeliveryQuote({ pickupAddress, deliveryAddress, latitude, longitude }) { return apiRequest('/api/delivery/quote-v2', { method:'POST', body: JSON.stringify({ businessId: BUSINESS_ID, pickupAddress, deliveryAddress, customerLat: latitude, customerLng: longitude }) }); }
+async function getDeliveryQuote({ pickupAddress, deliveryAddress, latitude, longitude, orderAmount=0 }) { return apiRequest('/api/delivery/quote-v2', { method:'POST', body: JSON.stringify({ businessId: BUSINESS_ID, pickupAddress, deliveryAddress, customerLat: latitude, customerLng: longitude, orderAmount }) }); }
 function orderRequestFingerprint({ customer, phone, email, note, payment, items, quoteId, deliveryAddress, couponCode }) {
   return JSON.stringify({
     businessId: BUSINESS_ID,

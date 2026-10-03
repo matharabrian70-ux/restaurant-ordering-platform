@@ -41,3 +41,24 @@ from lateral (
 ) b
 where s.branch_id is null
   and b.id is not null;
+
+-- Historical orders that predate branch routing are assigned to the nearest active branch
+-- when customer coordinates exist; otherwise use the restaurant's first active branch.
+update orders o
+set branch_id = b.id
+from lateral (
+  select bb.id
+  from business_branches bb
+  where bb.business_id=o.business_id
+    and bb.active=true
+  order by
+    case when o.customer_lat is not null and o.customer_lng is not null
+      then ((bb.latitude-o.customer_lat)*(bb.latitude-o.customer_lat)
+           +(bb.longitude-o.customer_lng)*(bb.longitude-o.customer_lng))
+      else 0
+    end,
+    bb.name
+  limit 1
+) b
+where o.branch_id is null
+  and b.id is not null;

@@ -381,6 +381,9 @@ alter table delivery_quotes add column if not exists customer_lat numeric(10,7);
 alter table delivery_quotes add column if not exists customer_lng numeric(10,7);
 alter table delivery_quotes add column if not exists rider_earning_kes numeric(12,2) not null default 0;
 alter table delivery_quotes add column if not exists pricing_mode text not null default 'MASTER';
+alter table delivery_quotes add column if not exists expires_at timestamptz;
+alter table delivery_quotes add column if not exists updated_at timestamptz not null default now();
+update delivery_quotes set expires_at=coalesce(expires_at,created_at + interval '15 minutes'),updated_at=coalesce(updated_at,created_at,now()) where expires_at is null;
 
 insert into delivery_pricing_rules(business_id)
 select id from businesses

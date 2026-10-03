@@ -1919,7 +1919,7 @@ async function updateRefundFromWebhook(data) {
   finally { client.release(); }
 }
 
-async function completeOrderByConfirmation(orderId, actor, { requireDisconnectedRiderDashboard = false } = {}) {
+async function completeOrderByConfirmation(orderId, actor, { requireDisconnectedRiderDashboard = false, businessId = null, branchId = null } = {}) {
   const client = await pool.connect();
   try {
     await client.query('begin');
@@ -1932,8 +1932,10 @@ async function completeOrderByConfirmation(orderId, actor, { requireDisconnected
            select id,rider_id from rider_trips where order_id=o.id order by assigned_at desc limit 1
          ) rt on true
         where o.id=$1
+          and ($2::uuid is null or o.business_id=$2)
+          and ($3::uuid is null or o.branch_id=$3)
         for update of o`,
-      [orderId]
+      [orderId,businessId,branchId]
     );
     if (!orderResult.rowCount) {
       await client.query('rollback');
@@ -3196,7 +3198,7 @@ app.post('/api/station/orders/:id/assign-rider',requireStation,async(req,res)=>{
 app.post('/api/station/orders/:id/confirm-delivery',requireStation,async(req,res)=>{
   try{
     if(!['OPERATIONS','COUNTER'].includes(req.station.mode)) return res.status(403).json({error:'This station mode cannot confirm delivery'});
-    const result=await completeOrderByConfirmation(req.params.id,'restaurant',{requireDisconnectedRiderDashboard:true});
+    const result=await completeOrderByConfirmation(req.params.id,'restaurant',{requireDisconnectedRiderDashboard:true,businessId:req.station.business_id,branchId:req.station.branch_id});
     if(result.error) return res.status(result.status).json({error:result.error});
     res.json(result.order);
   }catch(error){res.status(500).json({error:error.message||'Unable to confirm delivery'});}

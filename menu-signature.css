@@ -145,3 +145,107 @@ body[data-page="menu"]{background:#f7f5ef!important;color:#151b16}
     font-size:24px;
   }
 }
+
+
+/* FINAL MENU REFERENCE — full-width hero + persistent category navigation */
+.menu-mock-nav{
+  position:sticky!important;
+  top:0!important;
+  z-index:100!important;
+}
+.menu-mock-page{max-width:none!important}
+.menu-special-hero{
+  width:calc(100% - 64px)!important;
+  max-width:none!important;
+  height:295px!important;
+  margin:0 32px 15px!important;
+  border-radius:0 0 18px 18px!important;
+}
+.menu-special-copy{left:9%!important}
+.menu-benefits{
+  width:calc(100% - 64px)!important;
+  max-width:none!important;
+  margin:15px 32px 25px!important;
+}
+.menu-discovery{
+  max-width:none!important;
+  padding:0 32px!important;
+}
+.menu-category-bar{
+  position:sticky!important;
+  top:78px!important;
+  z-index:90!important;
+  background:rgba(255,253,248,.97)!important;
+  backdrop-filter:blur(12px)!important;
+  -webkit-backdrop-filter:blur(12px)!important;
+  border:1px solid #eeeae2!important;
+  box-shadow:0 6px 20px rgba(24,32,25,.07)!important;
+}
+.menu-grid{
+  max-width:none!important;
+  margin:0 48px!important;
+}
+.menu-category-products{
+  grid-template-columns:repeat(4,minmax(0,1fr))!important;
+  gap:20px!important;
+}
+.menu-category-section{
+  scroll-margin-top:145px!important;
+}
+
+/* Category buttons remain reachable while scrolling horizontally on smaller screens. */
+@media(max-width:1000px){
+  .menu-special-hero{width:calc(100% - 40px)!important;margin-left:20px!important;margin-right:20px!important}
+  .menu-benefits{width:calc(100% - 40px)!important;margin-left:20px!important;margin-right:20px!important}
+  .menu-discovery{padding:0 20px!important}
+  .menu-grid{margin:0 30px!important}
+  .menu-category-products{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+}
+@media(max-width:700px){
+  .menu-mock-nav{
+    position:sticky!important;
+    top:0!important;
+  }
+  .menu-special-hero{
+    width:100%!important;
+    height:330px!important;
+    margin:0 0 12px!important;
+    border-radius:0!important;
+  }
+  .menu-benefits{
+    width:calc(100% - 24px)!important;
+    margin:12px auto 18px!important;
+  }
+  .menu-discovery{padding:0 4vw!important}
+  .menu-category-bar{
+    top:70px!important;
+    padding:10px!important;
+    margin-bottom:20px!important;
+  }
+  .menu-category-nav{
+    width:100%!important;
+    overflow-x:auto!important;
+    padding-bottom:2px!important;
+  }
+  .menu-category-pill{
+    flex:0 0 auto!important;
+  }
+  .menu-search{
+    width:100%!important;
+    flex-basis:auto!important;
+  }
+  .menu-grid{
+    margin:0!important;
+    padding:0 4vw!important;
+  }
+  .menu-category-section{
+    scroll-margin-top:145px!important;
+  }
+}
+
+/* Do not allow a hidden/old page lock to disable scrolling. */
+body[data-page="menu"]{
+  overflow-y:auto!important;
+  overflow-x:hidden!important;
+  position:static!important;
+}

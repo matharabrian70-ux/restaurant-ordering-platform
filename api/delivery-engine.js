@@ -117,12 +117,18 @@ async function quote(pool,{businessId,customerLat,customerLng,deliveryAddress,br
   if(!advanced){
     const lat=num(customerLat,NaN),lng=num(customerLng,NaN);
     if(!Number.isFinite(lat)||!Number.isFinite(lng)) throw new Error('Device location is required to calculate this restaurant\'s delivery-zone fee. Tap USE MY LOCATION and try again.');
-    const zones=await pool.query('select * from delivery_zones where business_id=$1 and active=true order by priority desc,created_at desc',[businessId]);
+    const branches=await pool.query('select id,name,address,latitude,longitude,service_radius_km from business_branches where business_id=$1 and active=true and accepting_orders=true',[businessId]);
+    const branch=branches.rows
+      .filter(b=>Number.isFinite(Number(b.latitude))&&Number.isFinite(Number(b.longitude)))
+      .map(b=>({...b,distanceKm:haversineKm(Number(b.latitude),Number(b.longitude),lat,lng)}))
+      .filter(b=>b.distanceKm<=Math.max(2,Number(b.service_radius_km||18)))
+      .sort((a,b)=>a.distanceKm-b.distanceKm)[0];
+    if(!branch) throw new Error('Your delivery location is outside the restaurant delivery area');
+    const zones=await pool.query('select * from delivery_zones where business_id=$1 and active=true and (branch_id=$2 or branch_id is null) order by priority desc,created_at desc',[businessId,branch.id]);
     const matches=zones.rows.filter(z=>z.zone_type==='RADIUS' && Number.isFinite(Number(z.center_latitude)) && Number.isFinite(Number(z.center_longitude)) && haversineKm(Number(z.center_latitude),Number(z.center_longitude),lat,lng)*1000<=Number(z.radius_meters));
     if(!matches.length) throw new Error('Your delivery location is outside the restaurant\'s delivery zones');
     const zone=matches[0];
     if(Number(orderAmount||0)<Number(zone.minimum_order||0)) throw new Error('Order does not meet this delivery zone minimum order');
-    const branch=await pool.query('select id,name,address,latitude,longitude from business_branches where business_id=$1 and active=true and accepting_orders=true order by name limit 1',[businessId]);
     const pickup=branch.rows[0]?.address || (await pool.query('select pickup_address from businesses where id=$1',[businessId])).rows[0]?.pickup_address || 'Restaurant';
     const distanceMeters=branch.rows[0] && Number.isFinite(Number(branch.rows[0].latitude))&&Number.isFinite(Number(branch.rows[0].longitude))
       ? Math.round(haversineKm(Number(branch.rows[0].latitude),Number(branch.rows[0].longitude),lat,lng)*1000) : 0;

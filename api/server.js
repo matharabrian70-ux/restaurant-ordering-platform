@@ -800,7 +800,7 @@ async function ensurePhaseASchema(){
       created_at timestamptz not null default now()
     );
     create index if not exists outbox_events_pending_idx on outbox_events(status,available_at,created_at);
-    do $
+    do $$
     begin
       if not exists(select 1 from pg_constraint where conname='payments_amount_nonnegative') then
         alter table payments add constraint payments_amount_nonnegative check (amount >= 0) not valid;
@@ -808,7 +808,7 @@ async function ensurePhaseASchema(){
       if not exists(select 1 from pg_constraint where conname='refunds_amount_nonnegative') then
         alter table refunds add constraint refunds_amount_nonnegative check (amount > 0) not valid;
       end if;
-    end $;
+    end $$;
   `);
 }
 

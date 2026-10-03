@@ -356,3 +356,31 @@ body[data-page="menu"]{
   .signature-favorite{width:38px;height:38px;font-size:27px}
   .menu-view-all{font-size:13px}
 }
+
+
+/* FINAL STICKY CATEGORY FIX
+   overflow-x:hidden on the page can create a scrolling mechanism that prevents
+   position:sticky from using the document viewport. Use clip instead. */
+html:has(body[data-page="menu"]){
+  overflow-x:clip!important;
+}
+body[data-page="menu"]{
+  overflow-x:clip!important;
+  overflow-y:visible!important;
+}
+.menu-mock-page{
+  overflow:visible!important;
+}
+.menu-discovery{
+  position:sticky!important;
+  top:78px!important;
+  z-index:95!important;
+  align-self:flex-start!important;
+}
+.menu-category-bar{
+  position:relative!important;
+  top:auto!important;
+}
+@media(max-width:700px){
+  .menu-discovery{top:70px!important}
+}

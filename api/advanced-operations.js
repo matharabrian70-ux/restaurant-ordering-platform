@@ -208,17 +208,51 @@ export function registerAdvancedOperations(app,pool){
     const r=await pool.query('select * from delivery_zones where business_id=$1 order by priority desc,created_at desc',[req.manager.businessId]);res.json(r.rows);
   });
   app.post('/api/manager/delivery-zones',manager,async(req,res)=>{
+    const packageState=await pool.query(`
+      select coalesce((p.features->>'riderModule')::boolean,false) as rider_module,
+             coalesce(bc.rider_connected,false) as rider_connected
+      from businesses b
+      left join platform_packages p on p.key=b.plan_key
+      left join business_connections bc on bc.business_id=b.id
+      where b.id=$1 limit 1
+    `,[req.manager.businessId]);
+    const riderModule=Boolean(packageState.rows[0]?.rider_module);
+    const riderConnected=Boolean(packageState.rows[0]?.rider_connected);
+    if(riderModule&&riderConnected)return res.status(403).json({error:'Automatic Rider Dashboard pricing is active; manual delivery zones are disabled'});
     const type=clean(req.body.zoneType,20).toUpperCase(),fee=Number(req.body.fee||0),minimum=Number(req.body.minimumOrder||0);
-    if(!['RADIUS','POLYGON'].includes(type)||!clean(req.body.name,100)||!Number.isFinite(fee)||fee<0||!Number.isFinite(minimum)||minimum<0)return res.status(400).json({error:'Valid zone name, type, fee and minimum order are required'});
-    if(type==='RADIUS'&&(!Number.isFinite(Number(req.body.centerLatitude))||!Number.isFinite(Number(req.body.centerLongitude))||!(Number(req.body.radiusMeters)>0)))return res.status(400).json({error:'Radius zones require center coordinates and radius'});
-    if(type==='POLYGON'&&(!Array.isArray(req.body.polygon)||req.body.polygon.length<3))return res.status(400).json({error:'Polygon zones require at least three points'});
-    const r=await pool.query('insert into delivery_zones(business_id,name,zone_type,fee,minimum_order,radius_meters,center_latitude,center_longitude,polygon,priority) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning *',[req.manager.businessId,clean(req.body.name,100),type,fee,minimum,type==='RADIUS'?Number(req.body.radiusMeters):null,type==='RADIUS'?Number(req.body.centerLatitude):null,type==='RADIUS'?Number(req.body.centerLongitude):null,type==='POLYGON'?req.body.polygon:null,Number(req.body.priority||0)]);res.status(201).json(r.rows[0]);
+    if(type!=='RADIUS'||!clean(req.body.name,100)||!Number.isFinite(fee)||fee<0||!Number.isFinite(minimum)||minimum<0)return res.status(400).json({error:'Valid radius zone name, fee and minimum order are required'});
+    let centerLatitude=Number(req.body.centerLatitude),centerLongitude=Number(req.body.centerLongitude);
+    if(!Number.isFinite(centerLatitude)||!Number.isFinite(centerLongitude)){
+      const branch=await pool.query('select latitude,longitude from business_branches where business_id=$1 and active=true order by name limit 1',[req.manager.businessId]);
+      centerLatitude=Number(branch.rows[0]?.latitude);centerLongitude=Number(branch.rows[0]?.longitude);
+    }
+    if(!Number.isFinite(centerLatitude)||!Number.isFinite(centerLongitude)||!(Number(req.body.radiusMeters)>0))return res.status(400).json({error:'A restaurant branch location and radius are required'});
+    const r=await pool.query('insert into delivery_zones(business_id,name,zone_type,fee,minimum_order,radius_meters,center_latitude,center_longitude,polygon,priority) values($1,$2,\'RADIUS\',$3,$4,$5,$6,$7,null,$8) returning *',[req.manager.businessId,clean(req.body.name,100),fee,minimum,Number(req.body.radiusMeters),centerLatitude,centerLongitude,Number(req.body.priority||0)]);
+    res.status(201).json(r.rows[0]);
   });
   app.patch('/api/manager/delivery-zones/:id',manager,async(req,res)=>{
+    const packageState=await pool.query(`
+      select coalesce((p.features->>'riderModule')::boolean,false) as rider_module,
+             coalesce(bc.rider_connected,false) as rider_connected
+      from businesses b
+      left join platform_packages p on p.key=b.plan_key
+      left join business_connections bc on bc.business_id=b.id
+      where b.id=$1 limit 1
+    `,[req.manager.businessId]);
+    if(Boolean(packageState.rows[0]?.rider_module&&packageState.rows[0]?.rider_connected))return res.status(403).json({error:'Automatic Rider Dashboard pricing is active; manual delivery zones are disabled'});
     const r=await pool.query('update delivery_zones set active=coalesce($1,active),fee=coalesce($2,fee),minimum_order=coalesce($3,minimum_order),priority=coalesce($4,priority),updated_at=now() where id=$5 and business_id=$6 returning *',[req.body.active===undefined?null:Boolean(req.body.active),req.body.fee===undefined?null:Number(req.body.fee),req.body.minimumOrder===undefined?null:Number(req.body.minimumOrder),req.body.priority===undefined?null:Number(req.body.priority),id(req.params.id),req.manager.businessId]);if(!r.rowCount)return res.status(404).json({error:'Delivery zone not found'});res.json(r.rows[0]);
   });
   app.post('/api/delivery/zones/quote',async(req,res)=>{
     const businessId=id(req.body.businessId),lat=Number(req.body.latitude),lng=Number(req.body.longitude),amount=Number(req.body.orderAmount||0);
+    const packageState=await pool.query(`
+      select coalesce((p.features->>'riderModule')::boolean,false) as rider_module,
+             coalesce(bc.rider_connected,false) as rider_connected
+      from businesses b
+      left join platform_packages p on p.key=b.plan_key
+      left join business_connections bc on bc.business_id=b.id
+      where b.id=$1 limit 1
+    `,[businessId]);
+    if(Boolean(packageState.rows[0]?.rider_module&&packageState.rows[0]?.rider_connected))return res.status(403).json({error:'Automatic Rider Dashboard pricing is active; zone pricing is not used'});
     if(!businessId||!Number.isFinite(lat)||!Number.isFinite(lng))return res.status(400).json({error:'Business, latitude and longitude are required'});
     const zones=await pool.query('select * from delivery_zones where business_id=$1 and active=true order by priority desc',[businessId]);
     const matches=zones.rows.filter(z=>z.zone_type==='RADIUS'?Number.isFinite(Number(z.center_latitude))&&haversineMeters(Number(z.center_latitude),Number(z.center_longitude),lat,lng)<=Number(z.radius_meters):pointInPolygon(lat,lng,z.polygon));

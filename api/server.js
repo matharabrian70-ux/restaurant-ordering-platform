@@ -3112,7 +3112,7 @@ app.post('/api/station/pair',stationPairRateLimit,async(req,res)=>{
   }catch(e){try{await client.query('rollback')}catch{}res.status(500).json({error:e.message||'Unable to pair station'});}
   finally{client.release();}
 });
-app.get('/api/station/me',requireStation,(req,res)=>res.json({id:req.station.station_id,businessId:req.station.business_id,name:req.station.name,deviceType:req.station.device_type,mode:req.station.mode,active:req.station.active}));
+app.get('/api/station/me',requireStation,async(req,res)=>{try{const b=await pool.query('select id,name,address from business_branches where id=$1 and business_id=$2',[req.station.branch_id,req.station.business_id]);res.json({id:req.station.station_id,businessId:req.station.business_id,branchId:req.station.branch_id,branch:b.rows[0]||null,name:req.station.name,deviceType:req.station.device_type,mode:req.station.mode,active:req.station.active});}catch(e){res.status(500).json({error:'Unable to load station details'});}});
 app.post('/api/station/heartbeat',requireStation,async(req,res)=>{
   try{await pool.query('update station_sessions set last_seen_at=now() where id=$1',[req.station.id]);await pool.query('update restaurant_order_stations set last_seen_at=now() where id=$1',[req.station.station_id]);res.json({ok:true});}
   catch(e){res.status(500).json({error:e.message||'Unable to update station heartbeat'});}

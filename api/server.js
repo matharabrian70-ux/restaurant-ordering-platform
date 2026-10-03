@@ -15,6 +15,7 @@ import { registerReceiptEngine, ensureReceipt } from './receipt-engine.js';
 import { runSelfHealingSweep } from './self-healing.js';
 import { registerProductionObservability } from './production-observability.js';
 import { ensureComplianceSchema, registerComplianceRoutes, runComplianceRetentionSweep, LEGAL_VERSIONS } from './compliance.js';
+import { ensureControlDataIsolationSchema, registerControlDataIsolation } from './control-data-isolation.js';
 
 const { Pool } = pg;
 const app = express();

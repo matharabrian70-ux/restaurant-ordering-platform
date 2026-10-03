@@ -1354,6 +1354,26 @@ async function requireManagerStation(req, res, next) {
     } catch { res.status(500).json({ error: 'Unable to verify station access' }); }
   });
 }
+// Manager governance audit: mutation requests are recorded with the authenticated manager identity.
+// Passwords, tokens and credentials are never stored in the audit metadata.
+app.use(async (req,res,next)=>{
+  const method=String(req.method||'').toUpperCase();
+  if(!['POST','PUT','PATCH','DELETE'].includes(method))return next();
+  try{
+    const manager=await getManagerFromSession(req);
+    if(!manager)return next();
+    const originalJson=res.json.bind(res);
+    res.json=payload=>{
+      const branchId=String(req.body?.branchId||req.query?.branchId||req.params?.branchId||'').trim()||null;
+      createManagerAuditEvent({manager,method,path:req.path,body:req.body,branchId,statusCode:res.statusCode||200})
+        .then(event=>event&&notifyManagersOfMajorChange(event))
+        .catch(error=>console.error('Manager audit warning:',error.message));
+      return originalJson(payload);
+    };
+  }catch{}
+  next();
+});
+
 async function getStationFromSession(req) {
   const raw = String(req.headers.authorization || '');
   const token = raw.startsWith('Bearer ') ? raw.slice(7).trim() : '';

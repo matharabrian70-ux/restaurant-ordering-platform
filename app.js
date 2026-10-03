@@ -128,7 +128,72 @@ async function renderProduct(){
     renderProductData(remote?{id:remote.id,name:remote.name,category:remote.category_name||remote.category||'Menu',price:Number(remote.price||0),image:remote.image_url||'',desc:remote.description||'',options:Array.isArray(remote.options)?remote.options:[]}:null);
   }catch{el.innerHTML='<div class="empty"><h2>Menu item unavailable.</h2><p>Please return to the menu and try again.</p><a class="btn" href="menu.html">Back to menu</a></div>'}
 }
-function renderCart(){const el=document.getElementById('cart-view');if(!el)return;const c=getCart();if(!c.length){el.innerHTML='<div class="empty"><h2>Your cart is empty.</h2><p>Add products from the menu or directly from the homepage.</p><a class="btn" href="menu.html">Browse menu</a></div>';return}const total=c.reduce((s,i)=>s+i.unit*i.qty,0);el.innerHTML=`<div class="cart-layout"><section><p class="eyebrow">YOUR ORDER</p><h1>Cart</h1>${c.map((i,n)=>`<article class="cart-item"><img src="${i.image}" alt=""><div class="cart-item-main"><h3>${i.name}</h3><p>${Object.entries(i.options||{}).map(x=>x[0]+': '+x[1]).join(' • ')||'Standard item'}</p><strong>${money(i.unit*i.qty)}</strong><div class="cart-controls"><button data-action="changeQty(${n},-1)">−</button><span>${i.qty}</span><button data-action="changeQty(${n},1)">+</button><button class="remove" data-action="removeItem(${n})">Remove</button></div></div></article>`).join('')}</section><aside class="panel cart-summary"><h2>Summary</h2><div class="summary-row"><span>Items</span><strong>${c.reduce((s,i)=>s+i.qty,0)}</strong></div><div class="summary-row total"><span>Total</span><strong>${money(total)}</strong></div><a class="btn wide" href="checkout.html">Continue to checkout</a><a class="text-link" href="menu.html">← Add more products</a></aside></div>`}
+function renderCart(){
+  const el=document.getElementById('cart-view');if(!el)return;
+  const c=getCart();
+  if(!c.length){el.innerHTML='<div class="cart-empty-premium"><div class="cart-empty-icon">🛒</div><p class="eyebrow">YOUR ORDER</p><h1>Your cart is waiting.</h1><p>Add something delicious from the menu and come back here when you are ready.</p><a class="cart-premium-btn" href="menu.html">Browse the menu <span>→</span></a></div>';return}
+  const total=c.reduce((s,i)=>s+i.unit*i.qty,0);
+  el.innerHTML=`<div class="cart-layout-premium">
+    <section class="cart-items-panel">
+      <div class="cart-section-head"><div><p class="eyebrow">YOUR ORDER</p><h1>Almost there!</h1><p class="cart-subtitle">Great food is just a few clicks away.</p></div><button class="clear-cart-btn" type="button" data-action="clearCart()"><span>⌫</span> Clear cart</button></div>
+      <div class="cart-items-list">${c.map((i,n)=>`<article class="cart-item-premium">
+        <img src="${escapeMenuHtml(i.image||'')}" alt="${escapeMenuHtml(i.name)}">
+        <div class="cart-item-premium-main"><div><h3>${escapeMenuHtml(i.name)}</h3><p>${escapeMenuHtml(Object.entries(i.options||{}).map(x=>x[0]+': '+x[1]).join(' • ')||'Standard item')}</p><strong>${money(i.unit*i.qty)}</strong></div>
+          <div class="cart-item-premium-actions"><div class="quantity-control"><button type="button" aria-label="Decrease quantity" data-action="changeQty(${n},-1)">−</button><span>${i.qty}</span><button type="button" aria-label="Increase quantity" data-action="changeQty(${n},1)">+</button></div><button class="remove-premium" type="button" data-action="removeItem(${n})">Remove</button></div>
+        </div>
+      </article>`).join('')}</div>
+      <a class="back-menu-link" href="menu.html">← Add more products</a>
+    </section>
+    <aside class="cart-summary-premium">
+      <div class="summary-top"><p class="eyebrow">ORDER SUMMARY</p><h2>Ready when you are.</h2></div>
+      <div class="summary-row-premium"><span>Items</span><strong>${c.reduce((s,i)=>s+i.qty,0)}</strong></div>
+      <div class="summary-row-premium"><span>Subtotal</span><strong>${money(total)}</strong></div>
+      <div class="summary-total-premium"><span>Total</span><strong>${money(total)}</strong></div>
+      <a class="cart-checkout-btn" href="checkout.html">Continue to checkout <span>→</span></a>
+      <div class="promo-field"><span>◇</span><input aria-label="Promo code" placeholder="Have a promo code?"><button type="button">Apply</button></div>
+      <div class="cart-assurances"><div><span>✓</span><strong>Secure<br>Checkout</strong></div><div><span>↗</span><strong>Freshly<br>Prepared</strong></div><div><span>✦</span><strong>Quality<br>Ingredients</strong></div></div>
+    </aside>
+  </div>`;
+}
+function clearCart(){localStorage.removeItem('doe_cart');updateCount();renderCart();}
+function renderCartHero(specials){
+  const hero=document.getElementById('cart-special-hero');if(!hero)return;
+  const items=(Array.isArray(specials)?specials:[]).filter(x=>x&&x.image);
+  if(!items.length)return;
+  let index=0,timer=null;
+  const paint=()=>{
+    const item=items[index%items.length];
+    const img=hero.querySelector('.cart-special-image');
+    const name=hero.querySelector('[data-special-name]');
+    const desc=hero.querySelector('[data-special-desc]');
+    const dots=hero.querySelector('[data-special-dots]');
+    if(img){img.classList.add('is-changing');setTimeout(()=>{img.src=item.image;img.alt=item.name||'Today’s special';img.onload=()=>img.classList.remove('is-changing');},140);}
+    if(name)name.textContent=item.name||'Today’s Special';
+    if(desc)desc.textContent=item.desc||'Freshly made. Unforgettable taste.';
+    if(dots)dots.innerHTML=items.map((_,i)=>'<button type="button" aria-label="Show special '+(i+1)+'" class="'+(i===index?'active':'')+'" data-special-dot="'+i+'"></button>').join('');
+  };
+  hero.onclick=e=>{const b=e.target.closest('[data-special-dot]');if(!b)return;index=Number(b.dataset.specialDot)||0;paint();reset();};
+  const reset=()=>{if(timer)clearInterval(timer);if(items.length>1)timer=setInterval(()=>{index=(index+1)%items.length;paint()},6000)};
+  paint();reset();
+}
+async function loadCartSpecials(){
+  const hero=document.getElementById('cart-special-hero');if(!hero)return;
+  try{
+    const businessId=window.TENANT_BUSINESS_ID || (typeof BUSINESS_ID!=='undefined'?BUSINESS_ID:'11111111-1111-4111-8111-111111111111');
+    const response=await fetch((window.PLATFORM_API_ORIGIN || 'https://restaurant-ordering-api-ow3p.onrender.com')+'/api/menu/public?businessId='+encodeURIComponent(businessId),{headers:{Accept:'application/json'}});
+    if(!response.ok)throw new Error('Menu API unavailable');
+    const data=await response.json();
+    const products=Array.isArray(data.products)?data.products:[];
+    const specials=products.filter(p=>{
+      const category=String(p.category_name||p.category||'').toLowerCase();
+      return Boolean(p.image_url&&(p.featured||p.is_featured||p.is_special||p.today_special||p.todaySpecial||/today.?s special|specials?/.test(category)));
+    }).map(p=>({name:p.name,image:p.image_url,desc:p.description||'Freshly made. Unforgettable taste.'}));
+    const fallback=products.filter(p=>p.image_url).slice(0,3).map(p=>({name:p.name,image:p.image_url,desc:p.description||'Freshly made. Unforgettable taste.'}));
+    renderCartHero(specials.length?specials:fallback);
+  }catch(error){
+    console.warn('Today’s specials could not be loaded.',error);
+  }
+}
 function renderCheckout(){if(document.body?.dataset.page==='checkout')return;const el=document.getElementById('checkout-view');if(!el)return;const c=getCart();if(!c.length){el.innerHTML='<div class="empty"><h2>Your cart is empty.</h2><a class="btn" href="menu.html">Browse menu</a></div>';return}const subtotal=c.reduce((s,i)=>s+i.unit*i.qty,0);el.innerHTML=`<div class="checkout-layout"><section><p class="eyebrow">CHECKOUT</p><h1>Complete your order.</h1><div class="panel"><h2>Your items</h2>${c.map(i=>`<div class="summary-row"><span>${i.qty} × ${i.name}<small style="display:block">${Object.entries(i.options||{}).map(x=>x[0]+': '+x[1]).join(' • ')}</small></span><strong>${money(i.unit*i.qty)}</strong></div>`).join('')}<div class="summary-row total"><span>Total</span><span>${money(subtotal)}</span></div></div></section><section class="panel"><h2>Customer details</h2><form id="checkout-form"><div class="field"><label>Name</label><input id="customer" required placeholder="Your name"></div><div class="field"><label>Phone</label><input id="phone" required placeholder="07xx xxx xxx"></div><div class="field"><label>Delivery / pickup note</label><input id="note" placeholder="e.g. Westlands, apartment 4B"></div><div class="option-group payment"><h4>Payment method</h4><label><input type="radio" name="payment" value="M-Pesa" checked> M-Pesa</label><label><input type="radio" name="payment" value="Card"> Card</label><label><input type="radio" name="payment" value="PayPal"> PayPal</label></div><button class="btn wide">Pay ${money(subtotal)} <small>(demo)</small></button></form></section></div>`;document.getElementById('checkout-form').onsubmit=e=>{e.preventDefault();const order={id:'SB-'+Date.now().toString().slice(-6),customer:document.getElementById('customer').value,phone:document.getElementById('phone').value,note:document.getElementById('note').value,payment:document.querySelector('input[name=payment]:checked').value,items:c,total:subtotal,status:'New',paymentStatus:'Demo paid',created:new Date().toISOString()};const orders=read('doe_orders',[]);orders.unshift(order);write('doe_orders',orders);write('doe_last_order',order.id);localStorage.removeItem('doe_cart');location.href='order.html?id='+order.id}}
 function statusIndex(status){return ['New','Preparing','Ready','Completed'].indexOf(status)}
 function renderOrder(){const el=document.getElementById('order-view');if(!el)return;const id=new URLSearchParams(location.search).get('id')||localStorage.getItem('doe_last_order');const o=read('doe_orders',[]).find(x=>x.id===id);if(!o){el.innerHTML='<div class="empty"><h2>Order not found.</h2><a class="btn" href="menu.html">Start an order</a></div>';return}const statuses=['New','Preparing','Ready','Completed'];el.innerHTML=`<div class="track-head"><p class="eyebrow">ORDER ${o.id}</p><h1>We have your order.</h1><p>Payment: <strong>${o.paymentStatus}</strong> · ${o.payment}</p></div><div class="panel tracking"><div class="timeline">${statuses.map((s,i)=>`<div class="timeline-step ${i<=statusIndex(o.status)?'active':''}"><span>${i+1}</span><strong>${s}</strong></div>`).join('')}</div><div class="order-details"><h2>Order summary</h2>${o.items.map(i=>`<div class="summary-row"><span>${i.qty} × ${i.name}<small style="display:block">${Object.entries(i.options||{}).map(x=>x[0]+': '+x[1]).join(' • ')}</small></span><strong>${money(i.unit*i.qty)}</strong></div>`).join('')}<div class="summary-row total"><span>Total</span><strong>${money(o.total)}</strong></div></div></div><p class="muted">Demo mode: the restaurant dashboard can change your order status, and refreshing this page will show the new status.</p>`}
@@ -156,3 +221,4 @@ const offer=(data.promotions||[])[0],hero=document.querySelector('.hero-card sma
 }
 updateCount();renderMenu();renderProduct();renderCart();renderCheckout();renderOrder();renderDashboard();
 loadLiveRestaurantMenu();
+loadCartSpecials();

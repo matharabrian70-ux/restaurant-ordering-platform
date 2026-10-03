@@ -360,3 +360,7 @@ body[data-page="cart"]{background:#f7f5ef!important}
 .clear-cart-btn svg{width:17px;height:17px}
 .remove-premium svg{width:16px;height:16px}
 .cart-assurances span svg{width:21px;height:21px;display:block}
+
+.promo-message{min-height:18px;margin:8px 4px 0;color:#197b37;font-size:11px;font-weight:800}
+.promo-message:empty{display:none}
+.promo-message:not(:empty){display:block}

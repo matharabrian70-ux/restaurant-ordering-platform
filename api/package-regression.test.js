@@ -84,7 +84,7 @@ test('Delivery packaging separates manual Starter zones from connected Rider Das
   has(delivery, "p.features->>'riderModule'");
   has(delivery, "bc.rider_connected");
   has(delivery, "pricingMode:'ZONE'");
-  assert.doesNotMatch(server, /manager\\/delivery-zones[^\\n]*advancedDelivery/);
+  assert.doesNotMatch(server, /manager\/delivery-zones[^\n]*advancedDelivery/);
 });
 
 test('Restaurant receives delivery money when Rider Dashboard is not connected', () => {

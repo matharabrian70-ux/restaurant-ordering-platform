@@ -605,3 +605,21 @@
 
 /* Customer Menu Hero studio */
 .manager-hero-panel{grid-column:1/-1;background:linear-gradient(135deg,#172019,#243228);color:#fff;border-color:#172019;overflow:hidden}.manager-hero-panel .panel-title p{color:#b9c3bb}.manager-hero-panel .mode-badge{background:#26372b;color:#b9f0c0;border-color:#3b5342}.manager-hero-editor{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(320px,.75fr);gap:18px;align-items:stretch}.manager-hero-live{min-height:280px;position:relative;border-radius:18px;overflow:hidden;background:#0c120d;border:1px solid #34463a}.manager-hero-live>img{width:100%;height:100%;min-height:280px;display:block;object-fit:cover}.manager-hero-live:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(5,10,6,.86),rgba(5,10,6,.2) 70%,rgba(5,10,6,.08))}.manager-hero-live-copy{position:absolute;z-index:2;left:32px;bottom:30px;display:grid;gap:8px;max-width:65%}.manager-hero-live-copy span{font:900 10px Arial,sans-serif;letter-spacing:.12em;color:#ffb05c}.manager-hero-live-copy strong{font:700 42px/1 Georgia,serif;letter-spacing:-.05em}.manager-hero-live-copy small{font:14px Arial,sans-serif;color:#e8ece8}.manager-hero-empty{height:100%;min-height:280px;display:grid;place-items:center;text-align:center;color:#9aa79d;font:700 13px Arial,sans-serif}.manager-hero-empty span{font-weight:400}.manager-hero-form{background:#fff;color:var(--ink);border-radius:16px;padding:20px;border:1px solid var(--line);display:grid;gap:10px;align-content:start}.manager-hero-form label{display:grid;gap:7px;font-size:10px;font-weight:900}.manager-hero-form input,.manager-hero-form select{width:100%;box-sizing:border-box;padding:12px;border:1px solid var(--line);border-radius:8px;background:#fff;font:inherit}.hero-photo-preview img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:10px;border:1px solid var(--line)}.hero-photo-meta{font-size:9px;color:var(--muted);line-height:1.45}.manager-hero-form .button-row{flex-wrap:wrap}.manager-hero-form .button-row .btn{flex:1;min-width:150px}@media(max-width:900px){.manager-hero-editor{grid-template-columns:1fr}.manager-hero-live-copy strong{font-size:34px}}
+
+/* Customer promo code manager */
+.promo-code-manager{margin-top:18px}
+.promo-code-manager .panel-title p{max-width:760px}
+.coupon-list{display:grid;gap:10px;margin-top:18px}
+.coupon-card{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:16px 18px;border:1px solid var(--line,#e4e6df);border-radius:14px;background:#fff}
+.coupon-card.off{opacity:.65}
+.coupon-main{display:grid;gap:5px;min-width:0}
+.coupon-main strong{font-size:14px}
+.coupon-main small{color:#6f776f;font-size:11px}
+.coupon-code{width:max-content;padding:6px 9px;border-radius:8px;background:#eef7ef;color:#197b37;font:900 12px/1 Arial,sans-serif;letter-spacing:.08em}
+.coupon-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:7px}
+.form-label{display:block;font-size:10px;font-weight:900;letter-spacing:.08em;margin:0 0 7px;color:#687168}
+@media(max-width:700px){
+  .coupon-card{align-items:flex-start;flex-direction:column}
+  .coupon-actions{width:100%;justify-content:flex-start}
+  .coupon-actions .btn{flex:1;min-width:92px}
+}

@@ -295,7 +295,7 @@ function renderCart(){
   const el=document.getElementById('cart-view');if(!el)return;
   const c=getCart();
   if(!c.length){el.innerHTML='<div class="cart-empty-premium"><div class="cart-empty-icon">🛒</div><p class="eyebrow">YOUR ORDER</p><h1>Your cart is waiting.</h1><p>Add something delicious from the menu and come back here when you are ready.</p><a class="cart-premium-btn" href="menu.html">Browse the menu <span>→</span></a></div>';return}
-  const subtotal=c.reduce((s,i)=>s+i.unit*i.qty,0),promo=getStoredPromo(),discount=Math.min(subtotal,Number(promo?.discount||0)),total=Math.max(0,subtotal-discount);
+  const subtotal=c.reduce((s,i)=>s+i.unit*i.qty,0),promo=getStoredPromo(),promoEligible=!promo?.minOrderAmount||subtotal>=Number(promo.minOrderAmount),discount=promoEligible?Math.min(subtotal,promo?.discountType==='PERCENT'?Math.round(subtotal*Number(promo.discountValue||0)/100*100)/100:Number(promo?.discountValue||0)):0,total=Math.max(0,subtotal-discount);
   el.innerHTML=`<div class="cart-layout-premium">
     <section class="cart-items-panel">
       <div class="cart-section-head"><div><h1>Cart <span class="cart-item-count">(${c.reduce((s,i)=>s+i.qty,0)} items)</span></h1></div><button class="clear-cart-btn" type="button" data-action="clearCart()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v6m4-6v6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg> Clear cart</button></div>

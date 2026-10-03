@@ -1,35 +1,47 @@
 <!doctype html>
 <html lang="en"><head>
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; script-src 'self' https://accounts.google.com https://unpkg.com; script-src-attr 'none'; script-src-elem 'self' https://accounts.google.com https://unpkg.com; trusted-types default; require-trusted-types-for 'script'; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' https://restaurant-ordering-api-ow3p.onrender.com https://accounts.google.com https://*.googleapis.com https://*.google.com https://*.gstatic.com; frame-src https://accounts.google.com; worker-src 'self' blob:;">
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Menu — Savanna Bites</title>
-  <link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="menu-signature.css?v=menu-experience-3">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; script-src 'self' https://accounts.google.com https://unpkg.com; script-src-attr 'none'; script-src-elem 'self' https://accounts.google.com https://unpkg.com; trusted-types default; require-trusted-types-for 'script'; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: blob: https:; font-src 'self' data: https:; connect-src 'self' https://restaurant-ordering-api-ow3p.onrender.com https://accounts.google.com https://*.googleapis.com https://*.google.com https://*.gstatic.com; frame-src https://accounts.google.com; worker-src 'self' blob:;">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Menu — Savanna Bites</title>
+<link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="menu-signature.css?v=menu-exact-mockup-1">
 </head>
 <body data-page="menu">
-<header class="nav">
-  <a class="brand" href="index.html" data-tenant-brand>Savanna Bites</a>
-  <nav><a class="active" href="menu.html">Menu</a><a class="cart-link" href="checkout.html">Cart <b id="cart-count">0</b></a></nav>
+<header class="menu-mock-nav">
+  <a class="menu-mock-brand" href="index.html" data-tenant-brand><span class="brand-leaf">◢</span><span>Savanna <b>Bites</b></span><small>GOOD FOOD · GREAT MOMENTS</small></a>
+  <nav><a class="active" href="menu.html">Menu</a><a class="menu-mock-cart" href="cart.html">Cart <b id="cart-count">0</b><span class="cart-icon">🛒</span></a></nav>
 </header>
-<main class="page menu-page">
-  <section class="menu-intro" aria-label="Savanna Bites menu">
-    <div class="menu-intro-copy">
-      <span class="menu-intro-kicker">SAVANNA BITES · MADE FRESH</span>
-      <h1>Good food.<br><em>One tap away.</em></h1>
-      <p>Pick a favourite, make it yours, and order in seconds.</p>
+<main class="menu-mock-page">
+  <section id="menu-special-hero" class="menu-special-hero" aria-label="Today's special">
+    <img class="menu-special-bg" src="" alt="" aria-hidden="true">
+    <div class="menu-special-overlay"></div>
+    <button class="menu-hero-arrow menu-hero-prev" type="button" data-hero-prev aria-label="Previous special">‹</button>
+    <button class="menu-hero-arrow menu-hero-next" type="button" data-hero-next aria-label="Next special">›</button>
+    <div class="menu-special-copy">
+      <div class="menu-special-pill">🔥 TODAY'S SPECIAL</div>
+      <h1 data-hero-title>Juicy <em>Nyama Choma</em></h1>
+      <p data-hero-desc>Grilled to perfection. Rich in flavour.</p>
+      <button class="menu-hero-order" type="button" data-hero-order>Order Now <span>→</span></button>
     </div>
-    <div class="menu-intro-visual" aria-hidden="true">
-      <img src="https://images.unsplash.com/photo-1532550907401-a500c9a57435?auto=format&fit=crop&w=1200&q=86" alt="" fetchpriority="high">
-      <div class="menu-intro-glow"></div>
+    <div class="menu-hero-dots" data-hero-dots></div>
+  </section>
+
+  <section class="menu-benefits" aria-label="Restaurant benefits">
+    <div><span>🍃</span><strong>Fresh Ingredients</strong><small>Quality you can taste</small></div>
+    <div><span>♨</span><strong>Made to Order</strong><small>Hot and fresh</small></div>
+    <div><span>⚡</span><strong>Fast Delivery</strong><small>Right to your doorstep</small></div>
+  </section>
+
+  <section class="menu-discovery">
+    <div id="menu-category-bar" class="menu-category-bar">
+      <nav id="menu-category-nav" class="menu-category-nav" aria-label="Menu categories">
+        <button type="button" class="menu-category-pill active" data-menu-category-nav="all">All</button>
+      </nav>
+      <label class="menu-search"><span>⌕</span><input id="menu-search-input" type="search" placeholder="Search for a dish..." autocomplete="off"></label>
     </div>
   </section>
-  <section id="promotions-strip" class="menu-promotions" aria-label="Restaurant offers"></section>
-  <div id="menu-category-bar" class="menu-category-bar">
-    <nav id="menu-category-nav" class="menu-category-nav" aria-label="Menu categories">
-      <button type="button" class="menu-category-pill active" data-menu-category-nav="all" aria-current="true">All</button>
-    </nav>
-  </div>
+
   <div id="menu-grid" class="menu-grid"></div>
 </main>
 <footer><span>Fresh food · Easy ordering</span><a href="menu.html">Back to menu</a></footer>
-<script src="safe-actions.js"></script><script src="api-config.js"></script><script src="tenant-theme.js"></script><script src="app.js?v=menu-experience-3"></script><script src="platform-telemetry.js?v=1"></script><script src="compliance-ui.js"></script>
+<script src="safe-actions.js"></script><script src="api-config.js"></script><script src="tenant-theme.js"></script><script src="app.js?v=menu-exact-mockup-1"></script><script src="platform-telemetry.js?v=1"></script><script src="compliance-ui.js"></script>
 </body></html>

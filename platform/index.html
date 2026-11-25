@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#111a19">
+  <meta name="description" content="A branded digital ordering platform for restaurants, takeaway operators and hospitality groups. Digital menus, configurable carts, checkout, order operations and plan-based delivery capabilities.">
+  <meta property="og:title" content="Mathara Digital — Direct Ordering for Restaurants">
+  <meta property="og:description" content="Your menu. Your brand. A direct ordering experience built around the way your restaurant operates.">
+  <title>Restaurant Direct Ordering — Mathara Digital</title>
+  <style>
+    :root{--night:#111a19;--night2:#182321;--cream:#f3f1e9;--ink:#182321;--muted:#a5b0a9;--lime:#c8f169;--mint:#a6d2bd;--line:rgba(243,241,233,.15);--white:#fff}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--night);color:var(--cream);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}a{color:inherit;text-decoration:none}button{font:inherit}
+    .wrap{width:min(1200px,calc(100% - 48px));margin:auto}.top{height:78px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line)}.brand{display:flex;align-items:center;gap:12px;font-size:12px;font-weight:900;letter-spacing:.18em;text-transform:uppercase}.mark{width:30px;height:30px;border:1px solid rgba(200,241,105,.6);display:grid;place-items:center;color:var(--lime);font-size:16px}.topnav{display:flex;gap:26px;align-items:center;color:#c7d0ca;font-size:12px}.topnav a:hover{color:var(--lime)}.pill{display:inline-flex;align-items:center;gap:9px;border:1px solid rgba(200,241,105,.35);border-radius:99px;padding:9px 13px;color:var(--lime);font-size:10px;letter-spacing:.12em;text-transform:uppercase}.dot{width:6px;height:6px;border-radius:50%;background:var(--lime);box-shadow:0 0 13px var(--lime)}
+    .hero{display:grid;grid-template-columns:1.02fr .98fr;gap:70px;align-items:center;padding:94px 0 82px;min-height:650px}.eyebrow{font-size:10px;font-weight:800;letter-spacing:.22em;text-transform:uppercase;color:var(--lime);margin:0 0 22px}.hero h1{font-size:clamp(48px,6.7vw,86px);line-height:.96;letter-spacing:-.075em;font-weight:650;max-width:670px;margin:0}.hero h1 span{color:var(--lime)}.lede{max-width:550px;color:#b9c4bd;line-height:1.8;font-size:16px;margin:28px 0 34px}.actions{display:flex;flex-wrap:wrap;gap:12px}.btn{display:inline-flex;align-items:center;justify-content:center;gap:16px;padding:15px 19px;background:var(--lime);color:var(--night);font-size:11px;font-weight:900;letter-spacing:.1em;text-transform:uppercase;border:1px solid var(--lime);transition:.2s}.btn:hover{transform:translateY(-2px);box-shadow:0 12px 32px #c8f16920}.btn.alt{background:transparent;color:var(--cream);border-color:rgba(243,241,233,.28)}.micro{color:#829089;font-size:11px;margin-top:20px}
+    .visual{position:relative;min-height:450px;border:1px solid rgba(200,241,105,.22);background:radial-gradient(circle at 65% 23%,#385046 0,#202e2a 32%,#17211f 69%);padding:24px;overflow:hidden}.visual:before{content:"";position:absolute;inset:0;background:linear-gradient(135deg,transparent 45%,#c8f1690c 45.1%,transparent 72%);pointer-events:none}.visual-top{display:flex;justify-content:space-between;color:#aebdb4;font-size:9px;letter-spacing:.13em;text-transform:uppercase;position:relative}.mock{position:relative;margin:32px auto 0;width:min(100%,390px);background:#f6f4ec;color:#182321;padding:21px;box-shadow:0 28px 80px #0007;transform:rotate(-1.2deg)}.mock-head{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #d9ded5;padding-bottom:14px;font-size:10px;font-weight:900;letter-spacing:.1em}.mock-head b{color:#64786a}.mock-label{font-size:8px;color:#7a8b7e;letter-spacing:.15em;text-transform:uppercase;margin:18px 0 6px}.mock h3{font-family:Georgia,serif;font-size:29px;line-height:1.03;letter-spacing:-.04em;margin:0 0 16px;font-weight:500}.food{height:112px;background:linear-gradient(125deg,#9a6c41,#e0b878 45%,#455c42);position:relative;overflow:hidden}.food:before{content:"";position:absolute;width:120px;height:80px;border-radius:50%;background:radial-gradient(ellipse,#f4d7a2,#96572f 70%);left:50%;top:50%;transform:translate(-50%,-50%) rotate(-9deg);box-shadow:0 10px 0 #49301e,0 20px 0 #e2ae5e}.food:after{content:"";position:absolute;width:140px;height:7px;background:#7a9b45;left:50%;top:36px;transform:translateX(-50%) rotate(5deg);border-radius:99px}.mock-row{display:flex;justify-content:space-between;align-items:center;padding:13px 0;border-bottom:1px solid #e2e4dc;font-size:10px}.mock-row strong{font-size:11px}.mock-cta{margin-top:14px;background:#1b342b;color:#f6f4ec;text-align:center;padding:13px;font-size:9px;font-weight:900;letter-spacing:.12em}.visual-foot{position:absolute;bottom:21px;left:24px;right:24px;display:flex;justify-content:space-between;color:#a3b5aa;font-size:9px;letter-spacing:.1em;text-transform:uppercase}
+    .ticker{border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:18px 0;color:#91a097;font-size:10px;letter-spacing:.16em;text-transform:uppercase;display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}.section{padding:100px 0}.section-head{display:flex;justify-content:space-between;gap:40px;align-items:end;margin-bottom:44px}.section-head h2{font-size:clamp(36px,5vw,58px);letter-spacing:-.065em;line-height:.98;margin:14px 0 0;max-width:650px}.section-head>p{max-width:390px;color:#a7b3ab;line-height:1.7;font-size:13px;margin:0}.journey{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.step{padding:26px 22px 32px 0;min-height:220px}.step+.step{border-left:1px solid var(--line);padding-left:22px}.step b{font-size:10px;letter-spacing:.15em;color:var(--lime)}.step h3{font-size:23px;letter-spacing:-.04em;margin:38px 0 10px}.step p{font-size:13px;line-height:1.7;color:#a7b3ab;margin:0}
+    .demo{background:var(--cream);color:var(--ink);padding:88px 0}.demo .section-head>p{color:#68756c}.demo .eyebrow{color:#5c7856}.demo .section-head h2{color:var(--ink)}.demo-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:24px}.demo-card{border:1px solid #d9ded5;background:#fbfaf5;padding:28px}.demo-card h3{font-family:Georgia,serif;font-weight:500;font-size:32px;letter-spacing:-.04em;margin:0 0 12px}.demo-card p{color:#68756c;font-size:13px;line-height:1.7}.demo-links{display:grid;gap:10px;margin-top:22px}.demo-links a{border:1px solid #d4dbd1;padding:16px 18px;display:flex;align-items:center;justify-content:space-between;font-size:12px;font-weight:800}.demo-links a:hover{border-color:#78916d;background:#f0f3e9}.notice{margin-top:18px;padding:13px 15px;background:#e9eee4;border-left:3px solid #748e61;color:#586858;font-size:11px;line-height:1.65}
+    .plans{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.plan{border:1px solid var(--line);padding:26px;min-height:310px;background:linear-gradient(150deg,#192521,#141e1c)}.plan.featured{border-color:#9ab85c;background:linear-gradient(150deg,#253a2e,#18231f);display:block}.plan small{color:var(--lime);font-size:9px;letter-spacing:.16em;text-transform:uppercase}.plan h3{font-size:28px;letter-spacing:-.05em;margin:18px 0 9px}.plan p{color:#acb8b0;font-size:12px;line-height:1.75}.plan ul{list-style:none;padding:0;margin:20px 0 0}.plan li{padding:9px 0;border-top:1px solid var(--line);color:#d3dbd5;font-size:11px}.plan li:before{content:"↗ ";color:var(--lime)}
+    .trust{display:grid;grid-template-columns:.9fr 1.1fr;gap:65px;background:#182321;border:1px solid var(--line);padding:40px}.trust h2{font-size:42px;letter-spacing:-.06em;line-height:1;margin:10px 0 0}.trust p{color:#a7b3ab;font-size:13px;line-height:1.8}.trust-list{display:grid;grid-template-columns:1fr 1fr;gap:14px}.trust-item{border-top:1px solid var(--line);padding-top:14px}.trust-item b{display:block;font-size:12px;margin-bottom:7px}.trust-item span{display:block;font-size:11px;color:#a7b3ab;line-height:1.6}
+    .cta{background:var(--lime);color:var(--night);padding:68px 0}.cta-inner{display:flex;align-items:center;justify-content:space-between;gap:30px}.cta h2{font-size:clamp(35px,5vw,58px);letter-spacing:-.07em;line-height:1;margin:0;max-width:700px}.cta p{font-size:13px;max-width:400px;line-height:1.65}.cta .btn{background:var(--night);color:var(--cream);border-color:var(--night)}footer{padding:30px 0;color:#85948b;font-size:10px}.foot{display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap}.foot a{color:var(--lime)}
+    @media(max-width:850px){.hero{grid-template-columns:1fr;gap:36px;padding:70px 0}.visual{min-height:420px}.journey{grid-template-columns:1fr 1fr}.step:nth-child(3){border-left:0;padding-left:0;border-top:1px solid var(--line)}.step:nth-child(4){border-top:1px solid var(--line)}.demo-grid,.trust{grid-template-columns:1fr}.plans{grid-template-columns:1fr}.trust{gap:28px}.cta-inner{display:block}.cta .btn{margin-top:18px}}
+    @media(max-width:560px){.wrap{width:calc(100% - 32px)}.top{height:68px}.topnav{gap:12px}.topnav a:not(.pill){display:none}.hero h1{font-size:54px}.visual{padding:16px;min-height:400px}.mock{margin-top:26px;padding:15px}.visual-foot{left:16px;right:16px;font-size:8px}.section{padding:72px 0}.section-head{display:block}.section-head>p{margin-top:22px}.journey{grid-template-columns:1fr}.step,.step+.step{padding:22px 0;min-height:0;border-left:0;border-top:1px solid var(--line)}.step:first-child{border-top:0}.step h3{margin:18px 0 8px}.demo{padding:72px 0}.demo-card{padding:22px}.trust{padding:24px}.trust-list{grid-template-columns:1fr}.ticker{gap:11px}.ticker span{width:100%}}
+  </style>
+</head>
+<body>
+  <header class="wrap top">
+    <a class="brand" href="#top"><span class="mark">M</span><span>Mathara Digital</span></a>
+    <nav class="topnav" aria-label="Main navigation">
+      <a href="#how">How it works</a><a href="#demo">Explore demo</a><a href="#plans">Packages</a>
+      <a class="pill" href="mailto:matharabrian70@gmail.com?subject=Restaurant%20ordering%20walkthrough">Book a walkthrough <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
+  <main id="top">
+    <section class="wrap hero">
+      <div>
+        <p class="eyebrow"><span class="dot" style="display:inline-block;margin-right:9px"></span> Restaurant digital ordering platform</p>
+        <h1>Your menu.<br><span>Your brand.</span><br>Your direct channel.</h1>
+        <p class="lede">Give guests a clearer way to discover your menu, configure what they want, place an order and follow its progress — through a branded digital experience built around your operation.</p>
+        <div class="actions">
+          <a class="btn" href="#demo">Explore the product <span>↘</span></a>
+          <a class="btn alt" href="mailto:matharabrian70@gmail.com?subject=Restaurant%20ordering%20walkthrough">Request a walkthrough <span>↗</span></a>
+        </div>
+        <p class="micro">For restaurants · takeaway operators · hotel food teams · multi-location groups</p>
+      </div>
+      <div class="visual" aria-label="Conceptual ordering interface illustration">
+        <div class="visual-top"><span>Customer ordering experience</span><span>Concept view / 01</span></div>
+        <div class="mock">
+          <div class="mock-head"><span>YOUR RESTAURANT</span><b>MENU&nbsp;&nbsp; CART</b></div>
+          <p class="mock-label">A focused menu experience</p>
+          <h3>Made for the<br>way you serve.</h3>
+          <div class="food" role="img" aria-label="Abstract food illustration"></div>
+          <div class="mock-row"><strong>Choose your favourites</strong><span>01 — 04</span></div>
+          <div class="mock-row"><span>Options & preferences</span><b>+</b></div>
+          <div class="mock-row"><span>Review your order</span><b>↗</b></div>
+          <div class="mock-cta">CONTINUE TO CHECKOUT&nbsp; ↗</div>
+        </div>
+        <div class="visual-foot"><span>Designed around the guest</span><span>01 / 04</span></div>
+      </div>
+    </section>
+    <div class="wrap ticker"><span>Branded customer journey</span><span>Manager order operations</span><span>Tenant-aware architecture</span><span>Plan-based capabilities</span></div>
+    <section class="wrap section" id="how">
+      <div class="section-head"><div><p class="eyebrow">The ordering journey</p><h2>Fewer hand-offs.<br>A clearer path to order.</h2></div><p>A good ordering experience should feel natural to the customer and manageable for the restaurant team. The platform connects the core steps into one flow.</p></div>
+      <div class="journey">
+        <article class="step"><b>01 / DISCOVER</b><h3>Explore the menu</h3><p>Present dishes and products in a digital menu built for your restaurant identity.</p></article>
+        <article class="step"><b>02 / CONFIGURE</b><h3>Make it theirs</h3><p>Support product-specific options and choices before items enter the cart.</p></article>
+        <article class="step"><b>03 / CHECK OUT</b><h3>Place the order</h3><p>Review configured items and move through the checkout flow. Payment options depend on the merchant's configured provider.</p></article>
+        <article class="step"><b>04 / OPERATE</b><h3>Keep service moving</h3><p>Restaurant teams receive and update orders through manager operations; customer tracking follows supported order states.</p></article>
+      </div>
+    </section>
+    <section class="demo" id="demo">
+      <div class="wrap">
+        <div class="section-head"><div><p class="eyebrow">Hands-on product preview</p><h2>Walk the actual demo.</h2></div><p>Open the working public front-end prototype. Sample menu data and simulated payment behaviour are used in this demo environment; it is not a live restaurant or a claim of processed customer payments.</p></div>
+        <div class="demo-grid">
+          <article class="demo-card">
+            <h3>Start with the guest.</h3>
+            <p>Explore the actual customer-facing demo pages, follow the menu-to-cart journey and see how product options are presented.</p>
+            <div class="demo-links">
+              <a href="../index.html">Open demo homepage <span>↗</span></a>
+              <a href="../menu.html">Explore digital menu <span>↗</span></a>
+              <a href="../cart.html">View cart experience <span>↗</span></a>
+              <a href="../checkout.html">View checkout demo <span>↗</span></a>
+            </div>
+            <div class="notice">Demo note: payment selections on this public prototype are simulated. Production payment activation requires the restaurant's selected provider configuration, credentials and end-to-end verification.</div>
+          </article>
+          <article class="demo-card">
+            <h3>Then see the operator side.</h3>
+            <p>The repository includes separate manager, rider and platform-operation surfaces. These links open the prototype pages; production access and modules are tenant- and deployment-dependent.</p>
+            <div class="demo-links">
+              <a href="../dashboard.html">Restaurant dashboard demo <span>↗</span></a>
+              <a href="../manager.html">Manager operations <span>↗</span></a>
+              <a href="../rider.html">Rider workflow preview <span>↗</span></a>
+              <a href="../platform-control.html">Platform Control Centre <span>↗</span></a>
+            </div>
+            <div class="notice">Rider operations require an eligible GROWTH/PRO plan and an active rider connection. Multi-branch management is a PRO capability. Each deployment must pass its production smoke checks before live customer use.</div>
+          </article>
+        </div>
+      </div>
+    </section>
+    <section class="wrap section" id="plans">
+      <div class="section-head"><div><p class="eyebrow">A fit for the operation</p><h2>Start with the core.<br>Expand when you're ready.</h2></div><p>Capabilities are enforced by the platform's canonical package entitlements. A walkthrough can map the right plan to your actual restaurant workflow.</p></div>
+      <div class="plans">
+        <article class="plan"><small>01 / CORE</small><h3>STARTER</h3><p>The direct ordering foundation for a single restaurant team.</p><ul><li>Digital ordering</li><li>Website integration</li><li>Tenant isolation & audit trail</li><li>Restaurant-managed delivery zones</li></ul></article>
+        <article class="plan featured"><small>02 / OPERATIONS</small><h3>GROWTH</h3><p>For teams ready to connect more operational capabilities.</p><ul><li>Everything in STARTER</li><li>Advanced delivery & branch routing</li><li>Rider module, tracking & SMS</li><li>Advanced analytics & integrations</li><li>Custom domain capability</li></ul></article>
+        <article class="plan"><small>03 / EXPANSION</small><h3>PRO</h3><p>For restaurant groups with a multi-location operating model.</p><ul><li>Everything in GROWTH</li><li>Multi-branch capability</li><li>Priority support capability</li><li>Automation capability</li></ul></article>
+      </div>
+      <p class="micro">Feature availability depends on the deployed configuration and the tenant's purchased plan. Rider tools also require the rider connection to be active.</p>
+    </section>
+    <section class="wrap section">
+      <div class="trust">
+        <div><p class="eyebrow">Built for responsible operation</p><h2>More than a menu page.</h2><p>The codebase includes tenant-scoped authorization, controlled package entitlements, audit foundations, payment reconciliation safeguards and a purpose-bound Control Centre approach. Those technical controls support safer operation, but each restaurant deployment still needs configuration, testing and its own legal and privacy review.</p></div>
+        <div class="trust-list">
+          <div class="trust-item"><b>Tenant boundaries</b><span>Access is resolved against authenticated tenant context and backend package rules.</span></div>
+          <div class="trust-item"><b>Payment integrity</b><span>Provider outcomes and server-side order totals remain authoritative; sandbox and production paths must be tested.</span></div>
+          <div class="trust-item"><b>Operational roles</b><span>Customer, manager, rider and platform surfaces follow distinct access and capability rules.</span></div>
+          <div class="trust-item"><b>Launch discipline</b><span>Production smoke tests, local merchant terms, data protection and provider setup remain go-live gates.</span></div>
+        </div>
+      </div>
+    </section>
+    <section class="cta">
+      <div class="wrap cta-inner"><div><p class="eyebrow" style="color:#40552a">See how it fits your restaurant</p><h2>Let's map the ordering journey to your operation.</h2><p>Tell us about your menu, branches, delivery model and service flow. We'll prepare a product walkthrough around your actual requirements.</p></div><a class="btn" href="mailto:matharabrian70@gmail.com?subject=Restaurant%20ordering%20platform%20walkthrough">Book a product walkthrough ↗</a></div>
+    </section>
+  </main>
+  <footer><div class="wrap foot"><span>© <span id="year">2026</span> Mathara Digital. Direct Ordering Engine for Restaurants.</span><span>Product demos use sample content. <a href="../privacy.html">Privacy information</a></span></div></footer>
+</body>
+</html>
